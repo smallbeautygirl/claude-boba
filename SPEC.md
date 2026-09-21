@@ -252,9 +252,37 @@ session_id, num_turns, duration_ms, is_error, result, terminal_reason
 
 cache read 與 cache creation 是分開的欄位，上面那個「算錯會灌水數倍」的風險解除。
 
-> 💡 **可能可以砍掉整張價格表**：既然 CLI 回傳 `total_cost_usd`，§7 的折算公式與自維護費率
-> 也許完全不需要。**但要先確認在 Team / 訂閱制下這個欄位回的是 API 等價金額還是 0**——
-> 若回 0，就退回用上面的分項 token 自行折算。列為 spike #1 的續問。
+**`total_cost_usd` 在 Team 訂閱下確實回 API 等價金額（2026-09-21 實測，spike #1b 已答）：**
+
+一次 `claude -p "Reply with exactly: pong" --model haiku` 的完整回傳：
+
+```
+total_cost_usd  0.0166103
+input_tokens                 10
+output_tokens                53   (thinking_tokens 45)
+cache_creation_input_tokens  7465 (全數 ephemeral_1h)
+cache_read_input_tokens      14053
+```
+
+不是 0。**§7 的自維護價格表可以砍掉**，直接採信 `total_cost_usd`，分項 token 只留作明細
+與稽核。這也連帶讓風險 #6（cache 費率）從「必查，不做會算錯錢」降級為「不影響計費」。
+
+> ⚠️ 保留一個退路：`total_cost_usd` 是 CLI 算的，若哪天某個 model 回 0 或缺欄位，
+> 要能 fallback 回分項折算。所以價格表的 schema 先留著，只是不再是計費主路徑。
+
+**這個數字對 §4.7 級距表的意義比對 §7 大：**
+
+上面那趟 job 的 prompt 是六個字，產出是四個字母，成本 US$0.0166 —— 其中
+21518 tokens（cache read + cache write）是**與任務內容無關的固定開銷**，真正的
+input 只有 10 tokens。也就是說：
+
+- 一個「小任務」的底價不是趨近於零，而是**大約一杯飲料的 1/100**
+- 級距表若以「跑幾次才夠一杯飲料」來想，答案是**上百次**，不是十幾次
+- 換句話說，真正會撞到級距的是長時間的 RD 任務，對話型任務幾乎永遠落在「不計債」
+
+這不推翻 §4.7 的粗級距設計（那是社交決策，不是成本決策），但**級距的門檻數字要在
+Phase 0 結束時用真實 job 重新校準** —— 現在的門檻若照「感覺」訂，會讓 99% 的 job
+都掛在最低級距，社交層就失去意義了。
 
 官方對 `.jsonl` 的警告：*"The entry format is internal to Claude Code and changes between versions, so scripts that parse these files directly can break on any release."* 若計費邏輯依賴 parse transcript，會週期性壞掉；改用 CLI 的 JSON 輸出，壞掉的頂多是看不到明細，不會算錯錢。
 
@@ -309,6 +337,10 @@ claude -p "$task" [--resume "$transcript"] \
 
 `--bare` 跳過 hook / skill / MCP 自動載入——不能讓借用者的 job 載到出租者的個人設定。
 
+> 🚨 **上面這條指令形狀目前跑不起來。** `--bare` 與「唯讀掛入 Claude Code 憑證」互斥，
+> 見 §11「`--bare` 與 OAuth 憑證互斥」。Phase 0 要先選定 apiKeyHelper 或 `--settings`
+> 其中一條路，這段指令才能定稿。
+
 ---
 
 ## 10. 通知（Teams webhook）
@@ -332,14 +364,61 @@ claude -p "$task" [--resume "$transcript"] \
 
 | # | 要驗什麼 | 失敗的話 |
 |---|---|---|
-| 0 | 🚨 **headless CLI 認證**：`claude -p` 在已登入的機器上仍回 `Not logged in`。組織政策有 `require_trusted_devices`。**若 headless 無法認證，§9 的整個 worker 架構沒有地基** | 全案停擺，需先與帳號管理員確認 |
+| 0 | ✅ **已答**：headless CLI 認證可以動。`Not logged in` 的成因是 `--bare`，不是組織政策，**也不是全案停擺** —— 但換來一個新阻斷項，見下方 | — |
+| 0b | 🚨 **`--bare` 與 OAuth 憑證互斥**：`--bare` 明文不讀 keychain 與 OAuth，只吃 `ANTHROPIC_API_KEY` 或 `apiKeyHelper`。這與 security.md 紅線 2 的兩條要求直接衝突 | §9 的指令形狀要改，三條候選路見下方 |
 | 1a | ✅ **已答**：CLI JSON 有分項 token 欄位，cache read / creation 分開（見 §7） | — |
-| 1b | `total_cost_usd` 在 Team 訂閱下回的是 API 等價金額還是 0；`modelUsage` 的實際結構 | 保留 §7 的自維護價格表；否則可整張砍掉 |
+| 1b | ✅ **已答**：`total_cost_usd` 在 Team 訂閱下回真實金額（US$0.0166 / 一趟 haiku），不是 0。§7 價格表可砍 | — |
 | 2 | `claude --resume <別台機器來的 .jsonl 絕對路徑>` 實際能不能跑 | Claude Code 那條路砍掉，只留貼上 |
 | 3 | **版本漂移**：借用者與出租者 Claude Code 版本不同時，resume 的行為。**漂移機制已實證，見下方** | 提交時強制比對版本，不符就擋下 |
 | ~~4~~ | ~~Observ service id~~ | ✅ 已取得：`e39940ea-1fdf-4527-a3b7-c8d6334e5d2e` |
 | 5 | egress 白名單下 Claude Code 能否正常運作（含 server-side 工具） | 放寬白名單或改設計 |
-| 6 | cache read / cache write 的官方費率 | — 必查，不做會算錯錢 |
+| 6 | ~~cache read / cache write 的官方費率~~ | 降級：#1b 已答，計費改採信 `total_cost_usd`，不再需要自算費率 |
+
+### `--bare` 與 OAuth 憑證互斥（2026-09-21 實測）
+
+風險 #0 原本的敘述是「`claude -p` 在已登入的機器上仍回 `Not logged in`，可能是組織政策
+`require_trusted_devices` 擋的，若如此全案停擺」。實測證明**不是政策問題，headless 本身
+完全能動** —— 但成因換來一個新的阻斷項。
+
+```bash
+# 失敗
+claude -p "Reply with exactly: pong" --output-format json --model haiku --bare
+#   is_error: true, terminal_reason: "api_error", total_cost_usd: 0
+#   result: "Not logged in · Please run /login"
+
+# 成功（只差一個 --bare）
+claude -p "Reply with exactly: pong" --output-format json --model haiku
+#   is_error: false, result: "pong", total_cost_usd: 0.0166103
+```
+
+`claude --help`（CLI 2.1.278）對 `--bare` 的說明就寫在那裡：
+
+> skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches,
+> **keychain reads**, and CLAUDE.md auto-discovery. Sets `CLAUDE_CODE_SIMPLE=1`.
+> **Anthropic auth is strictly `ANTHROPIC_API_KEY` or `apiKeyHelper` via `--settings`
+> (OAuth and keychain are never read).**
+
+這台機器的憑證是 `~/.claude/.credentials.json`（`claude /login` 產生的 OAuth token），
+環境裡沒有 `ANTHROPIC_API_KEY`。`--bare` 不讀它，所以直接 `Not logged in`。
+
+**衝突在哪：** `.claude/rules/security.md` 紅線 2 同時要求兩件現在互斥的事 ——
+「憑證以唯讀 volume 掛入」（掛的就是那份 OAuth 檔）與「worker 容器一律加 `--bare`」。
+`--bare` 會無視掛進去的憑證。§9 那段指令形狀照現在寫的樣子跑不起來。
+
+**三條候選路：**
+
+| 走法 | 代價 |
+|---|---|
+| 出租者提供 `ANTHROPIC_API_KEY` | ❌ 違反「憑證不離開出租者機器」的精神，且 API key 是另一套計費（跟 Team 座位額度無關），§7 與 §4.6「API 等價金額」的整個記帳前提要重寫 |
+| `apiKeyHelper` via `--settings` | ✅ 目前最相容：helper script 留在出租者機器上換 token，`--bare` 明文允許這條。**待驗**：helper 在 Team OAuth 帳號下能不能換出可用 token |
+| 放棄 `--bare`，改用 `--settings` 指向一份乾淨設定檔 | ⚠️ 要自己確認「乾淨設定檔」真的能擋掉個人 hook / skill / MCP —— `--bare` 是一個旗標包掉一整組行為，手動複製那組行為容易漏 |
+
+**建議**：先驗 `apiKeyHelper`（成本最低、最不動設計）；若它在 Team OAuth 下換不出 token，
+退到第三條，並且**在退之前把「乾淨設定檔擋掉了什麼」逐項列出來驗證**，不能只是換個旗標
+就宣告紅線 2 滿足了。第一條除非前兩條都死，否則不走。
+
+**在這題拍板前不要寫 worker 的執行程式碼** —— 三條路產出的憑證注入方式、Dockerfile
+與 compose 的 volume 配置都不一樣。
 
 ### 版本漂移的產生機制（2026-09-21 實測）
 

@@ -23,6 +23,12 @@ These rules are always active. Violations must be fixed before merging.
 - worker 容器一律加 `--bare`，避免載入出租者的個人 hook / skill / MCP 設定
 - job 容器跑完即銷毀
 
+> ⚠️ **上面兩條（唯讀掛載 + `--bare`）目前互斥**，2026-09-21 實測確認：`--bare` 明文
+> 不讀 OAuth 與 keychain，只吃 `ANTHROPIC_API_KEY` 或 `apiKeyHelper`，會無視掛進去的
+> 憑證。**這條規則的意圖不變**（憑證不進 image、不進環境變數、不載入個人設定），但達成
+> 手段要在 Phase 0 重新選定 —— 見 SPEC.md §11「`--bare` 與 OAuth 憑證互斥」。
+> 在那之前，不要為了讓指令跑起來而改用 `ANTHROPIC_API_KEY` 塞環境變數。
+
 ### 3. Egress 白名單是安全邊界，不是效能設定
 
 借用者提交的內容會在出租者機器上被 Claude 執行。容器能出網，就等於借用者能把
