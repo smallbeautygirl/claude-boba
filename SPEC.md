@@ -386,7 +386,7 @@ HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
 | ~~0b~~ | ✅ **已解**：`--bare` 確實不讀 OAuth，但它本來就不該用。隔離改由乾淨 HOME 達成，實測通過（見下方） | — |
 | 1a | ✅ **已答**：CLI JSON 有分項 token 欄位，cache read / creation 分開（見 §7） | — |
 | 1b | ✅ **已答**：`total_cost_usd` 在 Team 訂閱下回真實金額（US$0.0166 / 一趟 haiku），不是 0。§7 價格表可砍 | — |
-| 2 | `claude --resume <別台機器來的 .jsonl 絕對路徑>` 實際能不能跑 | Claude Code 那條路砍掉，只留貼上 |
+| ~~2~~ | ✅ **已解**：`--resume <任意路徑的 .jsonl>` 可行，換路徑、換檔名、乾淨 HOME 都正常完成（見下方） | — |
 | 3 | **版本漂移**：借用者與出租者 Claude Code 版本不同時，resume 的行為。**漂移機制已實證，見下方** | 提交時強制比對版本，不符就擋下 |
 | ~~4~~ | ~~Observ service id~~ | ✅ 已取得：`e39940ea-1fdf-4527-a3b7-c8d6334e5d2e` |
 | 5 | egress 白名單下 Claude Code 能否正常運作（含 server-side 工具） | 放寬白名單或改設計 |
@@ -453,6 +453,34 @@ claude -p "Reply with exactly: pong" --output-format json --model haiku
 
 > 這張表是為了回應一個正確的質疑：`--bare` 是一個旗標包掉一整組行為，
 > 換掉它就必須逐項確認替代方案沒有漏。上表即為該核對。
+
+### 跨機器 `--resume` 可行（2026-09-21 實測）
+
+模擬「從別台機器上傳過來」：把一份 transcript 複製到新路徑、改檔名、在一個只含
+`.credentials.json` 的乾淨 HOME 下 resume。
+
+```bash
+HOME=<乾淨目錄> claude -p "Now reply with exactly: pong2" \
+  --resume /任意路徑/uploaded-transcript.jsonl \
+  --output-format json --model haiku < /dev/null
+#   is_error: false, terminal_reason: "completed", result: "pong2"
+```
+
+**§4.2 的「Claude Code 走真 resume」成立**，不需要退回重建上下文。
+
+兩個連帶的設計約束：
+
+**1. `session_id` 會沿用原 transcript 的值。** 上例回傳的 `session_id` 與原始 session
+完全相同。**不能用 `session_id` 當 job 主鍵** —— 兩個出租者 resume 同一份上傳檔會撞號，
+同一個借用者重複提交同一份也會。job id 必須是 Hub 自己產生的 UUID
+（`.claude/rules/security.md` 已有此要求，這是它的具體理由）。
+
+**2. transcript 很大。** 一句 `"Reply with exactly: pong"` 的 session 存下來就 **224 KB**
+（系統提示與工具定義佔絕大部分）。真實的 RD session 上看數十 MB。
+
+- §6 的上傳大小限制要按這個量級訂，不能按「一段對話」的直覺
+- §8 的 MinIO 容量與 30 天保留期要重算
+- 上傳與下載都要考慮這個尺寸下的逾時
 
 ### 版本漂移的產生機制（2026-09-21 實測）
 
@@ -525,7 +553,8 @@ usages 計算、債務級距、帳本頁面、Observ 認證接上。
 > ⚠️ **這個順序是在「TA 只有 BD/PM」的假設下排的，該假設已經不成立。**
 > RD 也是 TA，而 RD 是 `.jsonl` 真續跑的唯一受眾。把它排在最後，等於讓半個 TA 一直用次等體驗。
 >
-> **建議**：Phase 0 的 spike #2（跨機器 resume 可行嗎）與 #3（版本漂移）結果出來後重排。
-> 若兩者都通過，把 Phase 4 併進 Phase 1 —— 兩條路共用同一個 job 提交流程，
-> 差別只在 worker 端多一個 `--resume` 參數，增量成本遠低於獨立做一個 Phase。
-> 若 #2 不通過，Phase 4 直接砍掉，RD 也走貼上路徑。
+> **#2 已通過（2026-09-21）**：跨機器 resume 可行。依原訂判準，**Phase 4 應併入 Phase 1** ——
+> 兩條路共用同一個 job 提交流程，差別只在 worker 端多一個 `--resume` 參數，
+> 增量成本遠低於獨立做一個 Phase。
+>
+> 仍待 #3（版本漂移的實際行為）確認是否需要在提交時加版本閘門。
