@@ -11,6 +11,16 @@
 
 **TA**：BD / PM **與 RD 混合**。這兩群人的使用型態差很多，是本專案最重要的設計張力——見 §4.2 與 §12。
 
+**方案現況**（2026-09-21 實測）：大家用的是公司的 **Team plan**，不是個人自費的 Max。
+成員之間的 rate limit tier 不一致——部分成員是 20x，其餘較低。**出租者池就是 tier 較高的那群人**，
+這個不對稱正是本專案存在的理由。
+
+> 兩件因此要注意的事：
+> 1. 借出的是**公司資源**，不是個人自費的額度。人情債的社交意義因此不同——這是刻意保留的設計，
+>    但值得先跟帳號管理員確認公司立場（見 §11）。
+> 2. 本機憑證檔回報的 tier 是 `default_claude_max_5x`，與「我們有人是 20x」的認知不符。
+>    **未解**，需要用 `/usage` 對帳。經濟模型建立在出租者有餘裕上，這個數字要準。
+
 **不是什麼：**
 
 - 不是帳號共享平台。憑證從頭到尾不離開出租者的機器。
@@ -225,6 +235,27 @@ job_usd = Σ over usages:
 
 **資料來源**：以 `claude -p --output-format json` 的回傳值為準（官方承諾給腳本使用的穩定介面），`.jsonl` 全份存進 MinIO 當明細與稽核。
 
+**實測確認的欄位**（2026-09-21，CLI 2.1.278）：
+
+```
+total_cost_usd          ← CLI 自己算好的成本
+modelUsage  {}          ← 多 model 分項（shape 未確認，需要一次成功執行）
+usage {
+  input_tokens, output_tokens,
+  cache_creation_input_tokens, cache_read_input_tokens,   ← 分開的，這是關鍵
+  output_tokens_details.thinking_tokens,
+  cache_creation.{ephemeral_1h,ephemeral_5m}_input_tokens,
+  service_tier, speed, server_tool_use
+}
+session_id, num_turns, duration_ms, is_error, result, terminal_reason
+```
+
+cache read 與 cache creation 是分開的欄位，上面那個「算錯會灌水數倍」的風險解除。
+
+> 💡 **可能可以砍掉整張價格表**：既然 CLI 回傳 `total_cost_usd`，§7 的折算公式與自維護費率
+> 也許完全不需要。**但要先確認在 Team / 訂閱制下這個欄位回的是 API 等價金額還是 0**——
+> 若回 0，就退回用上面的分項 token 自行折算。列為 spike #1 的續問。
+
 官方對 `.jsonl` 的警告：*"The entry format is internal to Claude Code and changes between versions, so scripts that parse these files directly can break on any release."* 若計費邏輯依賴 parse transcript，會週期性壞掉；改用 CLI 的 JSON 輸出，壞掉的頂多是看不到明細，不會算錯錢。
 
 ---
@@ -301,12 +332,24 @@ claude -p "$task" [--resume "$transcript"] \
 
 | # | 要驗什麼 | 失敗的話 |
 |---|---|---|
-| 1 | `claude -p --output-format json` 回傳值裡到底有沒有**分 model、分類型**的 token 用量與成本欄位 | 計費改回 parse `.jsonl`（§7 要改寫） |
+| 0 | 🚨 **headless CLI 認證**：`claude -p` 在已登入的機器上仍回 `Not logged in`。組織政策有 `require_trusted_devices`。**若 headless 無法認證，§9 的整個 worker 架構沒有地基** | 全案停擺，需先與帳號管理員確認 |
+| 1a | ✅ **已答**：CLI JSON 有分項 token 欄位，cache read / creation 分開（見 §7） | — |
+| 1b | `total_cost_usd` 在 Team 訂閱下回的是 API 等價金額還是 0；`modelUsage` 的實際結構 | 保留 §7 的自維護價格表；否則可整張砍掉 |
 | 2 | `claude --resume <別台機器來的 .jsonl 絕對路徑>` 實際能不能跑 | Claude Code 那條路砍掉，只留貼上 |
 | 3 | **版本漂移**：借用者與出租者 Claude Code 版本不同時，resume 的行為 | 提交時強制比對版本，不符就擋下 |
 | ~~4~~ | ~~Observ service id~~ | ✅ 已取得：`e39940ea-1fdf-4527-a3b7-c8d6334e5d2e` |
 | 5 | egress 白名單下 Claude Code 能否正常運作（含 server-side 工具） | 放寬白名單或改設計 |
 | 6 | cache read / cache write 的官方費率 | — 必查，不做會算錯錢 |
+
+### 非技術阻斷項
+
+**去問帳號管理員：用自己的 Team 座位幫同事跑 Claude，公司有沒有意見。**
+
+這不是合規性問題（沒有分享憑證，§1 已說明），是**資源分配政策**問題：這個工具在做的事，
+是把公司分配給 A 的額度挪給 B 用。組織政策確實存在（`~/.claude/policy-limits.json` 有
+`require_trusted_devices`，代表有 admin 在管），所以這題的答案不是技術決定的。
+
+**現在問，比做完再問便宜太多。**
 
 ### TA 橫跨 BD/PM 與 RD 的後果
 
