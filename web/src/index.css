@@ -112,10 +112,12 @@ button.secondary {
   background: var(--card); color: var(--ink); border-color: var(--line);
 }
 button.secondary:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-/* 列內的小動作：帳本的「他還了」、worker 的「暫停接單」。 */
+/* 列內的小動作：帳本的「他還了」、worker 的「暫停接單」。
+   底用 --card 不用 --bg —— 深色模式的 --bg 比卡片更深，可按的東西
+   會看起來像凹進去的洞。凹陷是留給程式碼區塊的語彙。 */
 button.small {
   padding: 7px 13px; font-size: 13px; font-weight: 400; border-radius: 999px;
-  background: var(--bg); color: var(--ink); border-color: var(--line);
+  background: var(--card); color: var(--ink); border-color: var(--line);
 }
 button.small:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
@@ -162,8 +164,16 @@ button.small:hover:not(:disabled) { background: var(--accent-soft); border-color
 .nav .tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
 .nav .spacer { flex: 1; }
 .nav .who { color: var(--muted); padding: 0 4px; }
-/* 換行後 spacer 會把名字推到第二行的最右邊，窄螢幕上就讓它不佔位。 */
-@media (max-width: 560px) { .nav .spacer { flex: 0; } }
+/* 窄螢幕：身分那組留在第一行，頁面藥丸整批換到第二行。
+   不重排的話名字與登出會夾在藥丸中間，三段結構就散了。 */
+@media (max-width: 560px) {
+  .nav .brand { order: 1; }
+  .nav .spacer { order: 2; }
+  .nav .who { order: 3; }
+  .nav .secondary { order: 4; }
+  .nav .sep { display: none; }
+  .nav .tab { order: 5; }
+}
 
 .card.narrow { max-width: 420px; margin: 40px auto; }
 h2 { margin: 24px 0 10px; font-size: 15px; color: var(--muted); }
@@ -184,7 +194,7 @@ h2 { margin: 24px 0 10px; font-size: 15px; color: var(--muted); }
 .cmd-group p { margin: 2px 0 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip-btn {
-  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  background: var(--card); color: var(--ink); border: 1px solid var(--line);
   padding: 4px 10px; font-size: 13px; font-weight: 400; border-radius: 999px;
 }
 .chip-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
