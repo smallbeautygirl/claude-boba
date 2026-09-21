@@ -413,6 +413,19 @@ HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
 > 會直接無視掛進去的 OAuth 憑證，回 `Not logged in · Please run /login`。
 > 這個錯誤特別危險，因為訊息把人導向「去登入」，真正的原因是旗標。
 
+**文件類 skill 的相依套件預裝在 image 裡。** `pptx`、`xlsx`、`docx`、`pdf`
+這些 org skill 在 Anthropic 自家沙箱是預裝的（skill 文件寫著 "preinstalled"），
+我們的容器沒有，而 egress 白名單只放行 `api.anthropic.com` —— 實測現象是
+`npm install pptxgenjs` 回 403，然後 Claude 退而求其次產 HTML 給使用者。
+
+預裝比放寬白名單安全：不用為了讓套件裝得起來，而讓借用者的 job 能連 npm。
+代價是 image 從 805MB 漲到 1.47GB。
+
+**沒有裝 LibreOffice。** 它是 skill 的 `thumbnail.py` 與 PDF 轉檔所需，
+但不是 `validate.py` 所需 —— 而 validate 才是 skill 明列為 required 的 QA。
+實測：deck 建得出來（3 頁、216KB、通過 validate），只是沒有截圖預覽。
+再加 500MB+ 換一個視覺 QA 不划算，想要的出租者可以自行加進 Dockerfile。
+
 **兩個容易漏的操作細節：**
 
 - **`< /dev/null` 是必要的。** 沒有它，CLI 會等 stdin 三秒才繼續並印警告。
