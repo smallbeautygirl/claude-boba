@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     observ_service_id: str = "e39940ea-1fdf-4527-a3b7-c8d6334e5d2e"
     observ_timeout: float = 15.0
 
+    # 通知裡連回 job 頁面用。
+    web_base_url: str = "http://localhost:5173"
+
     # 允許的前端來源，逗號分隔。開發時要把區網位址加進來，
     # 否則從別台機器開的瀏覽器會被 CORS 擋下。
     # 不要圖方便寫 ["*"]（.claude/rules/security.md）。

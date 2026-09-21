@@ -15,12 +15,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import events, storage
+from .. import events, notify, storage
 from ..config import settings
 from ..db import get_session
 from ..enums import DebtStatus, DebtTier, JobStatus
-from ..models import Artifact, Debt, Job, JobEvent, Usage, Worker
-from ..pricing import MIN_DEBT_USD, tier_for
+from ..models import Artifact, Debt, Job, JobEvent, Usage, User, Worker
+from ..pricing import LABELS, MIN_DEBT_USD, tier_for
 from ..schemas import (
     MAX_ARTIFACT_BYTES,
     ArtifactManifest,
@@ -248,14 +248,35 @@ async def push_result(
             )
         )
 
-    await _maybe_create_debt(job, worker, session)
+    debt = await _maybe_create_debt(job, worker, session)
 
     await session.commit()
+
+    borrower = await session.get(User, job.borrower_id)
+    notify.job_finished(
+        borrower.teams_webhook_url if borrower else None,
+        job.id,
+        str(job.status),
+        job.total_cost_usd,
+    )
+    if debt is not None:
+        lender = await session.get(User, worker.owner_user_id)
+        notify.debt_created(
+            borrower.teams_webhook_url if borrower else None,
+            lender.teams_webhook_url if lender else None,
+            borrower.display_name if borrower else "?",
+            lender.display_name if lender else "?",
+            LABELS[debt.tier],
+            debt.amount_usd,
+            job.id,
+        )
     _emit(job.id, -1, {"type": "stream_end", "status": str(job.status)})
     return {"ok": True}
 
 
-async def _maybe_create_debt(job: Job, worker: Worker, session: AsyncSession) -> None:
+async def _maybe_create_debt(
+    job: Job, worker: Worker, session: AsyncSession
+) -> Debt | None:
     """只有成功的 job 會掛債（SPEC.md §5），而且要超過最低級距。
 
     `< US$1 不用還` 是級距表最重要的一列：多數 job 會落在那一格，而讓多數互動
@@ -263,23 +284,23 @@ async def _maybe_create_debt(job: Job, worker: Worker, session: AsyncSession) ->
     這種 job 的成本仍完整記在 usages 表裡，只是不產生人情債。
     """
     if not job.status.creates_debt or job.total_cost_usd is None:
-        return
+        return None
     if job.borrower_id == worker.owner_user_id:
         # 自己跑自己的不算欠自己。
-        return
+        return None
     tier = tier_for(job.total_cost_usd)
     if tier is DebtTier.NONE:
-        return
-    session.add(
-        Debt(
-            job_id=job.id,
-            borrower_id=job.borrower_id,
-            lender_id=worker.owner_user_id,
-            amount_usd=job.total_cost_usd,
-            tier=tier,
-            status=DebtStatus.OPEN,
-        )
+        return None
+    debt = Debt(
+        job_id=job.id,
+        borrower_id=job.borrower_id,
+        lender_id=worker.owner_user_id,
+        amount_usd=job.total_cost_usd,
+        tier=tier,
+        status=DebtStatus.OPEN,
     )
+    session.add(debt)
+    return debt
 
 
 async def _owned_job(job_id: uuid.UUID, worker: Worker, session: AsyncSession) -> Job:

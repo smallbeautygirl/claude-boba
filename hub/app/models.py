@@ -56,6 +56,8 @@ class User(Base):
     observ_user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     email: Mapped[str] = mapped_column(String(200))
     display_name: Mapped[str] = mapped_column(String(120))
+    # 每個人自己在 Teams 建的 Workflows webhook。沒設就沒有通知。
+    teams_webhook_url: Mapped[str | None] = mapped_column(String(1024))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -60,6 +60,7 @@ export interface Me {
   id: string;
   email: string;
   display_name: string;
+  has_teams_webhook: boolean;
 }
 
 export interface WorkerRow {
@@ -161,6 +162,13 @@ export const api = {
   },
 
   me: () => fetch(`${HUB}/api/auth/me`, { headers: authed() }).then(json<Me>),
+
+  setTeamsWebhook: (url: string) =>
+    fetch(`${HUB}/api/auth/me/teams-webhook`, {
+      method: "PUT",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ url }),
+    }).then(json<{ has_teams_webhook: boolean }>),
 
   createJob: (body: CreateJobInput) =>
     fetch(`${HUB}/api/jobs`, {

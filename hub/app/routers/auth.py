@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import observ
+from .. import notify, observ
 from ..auth import require_user
+from ..db import get_session
 from ..models import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -32,4 +34,28 @@ async def me(user: User = Depends(require_user)) -> dict:
         "id": str(user.id),
         "email": user.email,
         "display_name": user.display_name,
+        "has_teams_webhook": bool(user.teams_webhook_url),
     }
+
+
+class WebhookBody(BaseModel):
+    # 空字串代表關掉通知。
+    url: str = Field(default="", max_length=1024)
+
+
+@router.put("/me/teams-webhook")
+async def set_teams_webhook(
+    body: WebhookBody,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """存下這個人的 Teams webhook，並立刻送一則測試訊息。
+
+    立刻測試是刻意的：貼錯網址的人不會發現，只會以為「這工具不會通知」。
+    """
+    url = body.url.strip()
+    user.teams_webhook_url = url or None
+    await session.commit()
+    if url:
+        notify.send(url, "🧋 claude-boba 通知已開啟", "之後 job 跑完會在這裡通知你。")
+    return {"has_teams_webhook": bool(url)}

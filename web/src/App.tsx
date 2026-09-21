@@ -4,6 +4,7 @@ import { JobDetail } from "./pages/JobDetail";
 import { Ledger } from "./pages/Ledger";
 import { Login } from "./pages/Login";
 import { MyWorker } from "./pages/MyWorker";
+import { Notifications } from "./pages/Notifications";
 import { Submit } from "./pages/Submit";
 
 export default function App() {
@@ -30,6 +31,7 @@ function Shell() {
         <Link to="/">丟 job</Link>
         <Link to="/ledger">帳本</Link>
         <Link to="/worker">我的 worker</Link>
+        <Link to="/notifications">通知</Link>
         <span className="spacer" />
         <span className="muted">{me.display_name}</span>
         <button className="link" onClick={signOut}>
@@ -41,6 +43,7 @@ function Shell() {
         <Route path="/jobs/:id" element={<JobDetail />} />
         <Route path="/ledger" element={<Ledger />} />
         <Route path="/worker" element={<MyWorker />} />
+        <Route path="/notifications" element={<Notifications />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
