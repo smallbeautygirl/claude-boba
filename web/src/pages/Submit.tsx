@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type WorkerRow } from "../api";
-import { CommandPicker, prependCommand } from "../CommandPicker";
+import { CommandPicker } from "../CommandPicker";
 
 // 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
 // 同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料（SPEC §9）。
@@ -112,7 +112,7 @@ export function Submit() {
         用 Claude Code 的話，上傳 <code>.jsonl</code> 可以真正接續。
       </p>
 
-      <CommandPicker onPick={(n) => setPrompt((p) => prependCommand(p, n))} />
+      <CommandPicker value={prompt} onChange={setPrompt} />
 
       <div className="row">
         <label>

@@ -198,6 +198,12 @@ h2 { margin: 24px 0 10px; font-size: 15px; color: var(--muted); }
   padding: 4px 10px; font-size: 13px; font-weight: 400; border-radius: 999px;
 }
 .chip-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+/* 選用中的指令。指令是「選一個」不是「插入」，所以它要有選取狀態 ——
+   沒有的話使用者只能從文字框開頭反推自己選了什麼。 */
+.chip-btn.on {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent); font-weight: 500;
+}
 
 .artifacts { margin-top: 20px; }
 .artifacts a.chip-btn { text-decoration: none; }
