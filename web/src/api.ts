@@ -22,6 +22,18 @@ export const TERMINAL: readonly JobStatus[] = [
   "over_budget",
 ];
 
+// 失敗分類由後端決定（hub/app/failures.py），前端只負責渲染。
+// 同一份判斷 Teams 通知也要用，放前端會有兩套。
+export interface Failure {
+  kind: "fixable" | "system" | "claude";
+  title: string;
+  hint: string | null;
+  // 系統問題的 stderr 對使用者沒有意義，後端會把這個設成 false。
+  show_detail: boolean;
+  // 被 egress 白名單擋掉。之後要據此顯示〔改送給開放網路的 worker〕。
+  blocked_by_network: boolean;
+}
+
 export interface JobDetail {
   id: string;
   status: JobStatus;
@@ -43,6 +55,8 @@ export interface JobDetail {
   lender_cli_version: string | null;
   borrower_cli_version: string | null;
   debt_label: string | null;
+  failure: Failure | null;
+  can_stop: boolean;
 }
 
 export interface StreamItem {
@@ -187,6 +201,15 @@ export const api = {
       method: "POST",
       headers: authed({ "content-type": "application/json" }),
       body: JSON.stringify(body),
+    }).then(json<JobDetail>),
+
+  // 只有正在跑這個 job 的出租者能停。note 選填，但它才是重點 ——
+  // 沒有那句話，停止會被讀成拒絕（web-spec §8）。
+  stopJob: (id: string, note: string) =>
+    fetch(`${HUB}/api/jobs/${id}/stop`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ note: note.trim() || null }),
     }).then(json<JobDetail>),
 
   followUp: (id: string, prompt: string) =>

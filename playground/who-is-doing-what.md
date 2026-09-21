@@ -50,6 +50,9 @@ git add -A                                 # ❌ 永遠不要
 這些後端都可用、有測試，UI 改版時照著接即可。詳細欄位見
 [`../docs/web-spec.md`](../docs/web-spec.md)。
 
+> ✅ 1 與 2 的前端已接（`web/src/JobOutcome.tsx`，2026-09-21）。
+> 那個元件自帶 CSS，沒有動 `index.css` —— UI 改版落地後可以把樣式併進設計系統。
+
 ### 1. 失敗分類 — `docs/web-spec.md` §5
 
 `GET /api/jobs/{id}` 回 `failure`：

@@ -1,0 +1,22 @@
+/* 這個元件自帶樣式，不動 index.css —— 那個檔案正在改版，兩邊同時改會撞。
+   改版落地後可以把這些併進設計系統。 */
+
+.stop-panel {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--bad);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.stop-panel .hint { margin: -6px 0 10px; }
+
+button.danger { background: var(--bad); }
+
+/* 出租者留的話。用引言樣式，讓它讀起來像一句人說的話，不是系統訊息。 */
+.stop-note {
+  margin: 10px 0;
+  padding: 8px 14px;
+  border-left: 3px solid var(--line);
+  color: var(--ink);
+  font-style: normal;
+}

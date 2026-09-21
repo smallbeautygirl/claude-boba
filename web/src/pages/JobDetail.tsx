@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CommandPicker } from "../CommandPicker";
+import { JobOutcome } from "../JobOutcome";
 import {
   TERMINAL,
   api,
@@ -147,7 +148,7 @@ export function JobDetail() {
         {!done && lines.length === 0 && <div className="muted">排隊中…</div>}
       </div>
 
-      {done && <Outcome job={job} />}
+      <JobOutcome job={job} onChange={setJob} />
       {done && <Artifacts jobId={job.id} />}
       {job.can_follow_up && <FollowUp jobId={job.id} />}
     </div>
@@ -243,50 +244,8 @@ function LineView({ line }: { line: Line }) {
   return null;
 }
 
-function Outcome({ job }: { job: Job }) {
-  if (job.status === "succeeded") {
-    return (
-      <div className="outcome ok">
-        <pre>{job.result_text}</pre>
-        <p className="cost">
-          花費 US${job.total_cost_usd} — {job.debt_label}
-        </p>
-        <VersionNote job={job} />
-      </div>
-    );
-  }
-  // 失敗一律不計債（SPEC §5），而且訊息要正經、要有下一步。
-  return (
-    <div className="outcome bad">
-      <p className="error">
-        <strong>{FAIL_TITLE[job.status] ?? "執行失敗"}</strong>
-      </p>
-      {job.stop_note && <p className="note">「{job.stop_note}」</p>}
-      {job.error_detail && <pre>{job.error_detail}</pre>}
-      <p className="muted">這次不計債。</p>
-      <VersionNote job={job} />
-    </div>
-  );
-}
 
-// 版本不符只警告、不擋下 —— 跨 81 版的 resume 實測雙向都可行（SPEC §11 spike 3）。
-function VersionNote({ job }: { job: Job }) {
-  const { borrower_cli_version: a, lender_cli_version: b } = job;
-  if (!a || !b || a === b) return null;
-  return (
-    <p className="warn">
-      ⚠️ 你的 Claude Code 是 {a}，出租者是 {b}。實測跨版本可行，但若結果怪怪的，這可能是原因。
-    </p>
-  );
-}
 
-const FAIL_TITLE: Partial<Record<Job["status"], string>> = {
-  failed: "執行失敗",
-  timeout: "超過時間上限，已中止",
-  cancelled: "出租者中止了這個 job",
-  over_budget: "超過花費上限，已中止",
-  expired: "目前沒人有空，這個 job 已作廢",
-};
 
 const STATUS_LABEL: Record<Job["status"], string> = {
   queued: "排隊中",
