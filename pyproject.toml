@@ -1,0 +1,6 @@
+[tool.ruff]
+# 與 lighthouse-saas-api 的設定一致，避免在兩個 repo 之間切換時養成不同習慣。
+lint.extend-select = ["B", "UP", "I"]
+# B008: flake8-bugbear 不喜歡 FastAPI 的 Depends() 預設值寫法
+lint.extend-ignore = ["B008"]
+target-version = "py311"

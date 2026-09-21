@@ -1,0 +1,33 @@
+# `pre-commit install` 一次裝好。
+#
+# 這份是 lighthouse-saas-api 那套的精簡版，刻意拿掉三樣東西：
+#   - 每個 hook 的 `files:` scope  —— 這裡是單一專案，不是 monorepo
+#   - AI code review pre-push hook —— 個人 side project，成本不划算
+#   - signed-commit 檢查          —— 沒有 branch protection 要求簽章
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff
+        args: [--target-version, py311]
+      - id: ruff-format
+        args: [--check, --target-version, py311]
+
+  # 這個專案會處理 Observ 密碼、Anthropic 憑證、MinIO key，
+  # secret scan 是所有 hook 裡最不能省的一個。
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-case-conflict
+      - id: mixed-line-ending
+      - id: detect-private-key
