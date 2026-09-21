@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://boba:boba@localhost:55432/boba"
 
     s3_endpoint: str = "http://localhost:9000"
+    # 預簽 URL 用的 endpoint。瀏覽器與 worker 都不在 Hub 的 localhost 上，
+    # 所以簽章必須用對外可達的位址。
+    #
+    # ⚠️ 不能簽完再把網址裡的 host 換掉 —— SigV4 的簽章涵蓋 Host header，
+    # 換了就驗不過。要用對外 endpoint 重新簽一份。
+    s3_public_endpoint: str = ""
     s3_access_key: str = "boba"
     s3_secret_key: str = "boba-secret"
     s3_bucket: str = "claude-boba"

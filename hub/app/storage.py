@@ -22,10 +22,10 @@ PRESIGN_TTL_SECONDS = 1200
 
 
 @functools.cache
-def _client():
+def _client(endpoint: str | None = None):
     return boto3.client(
         "s3",
-        endpoint_url=settings.s3_endpoint,
+        endpoint_url=endpoint or settings.s3_endpoint,
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name=settings.s3_region,
@@ -50,8 +50,16 @@ def artifact_key(job_id: uuid.UUID, name: str) -> str:
     return f"jobs/{job_id}/output/{name}"
 
 
+def _signer():
+    """簽預簽 URL 用的 client。
+
+    用對外 endpoint 簽，因為拿著這個網址的是瀏覽器或 worker，不是 Hub 自己。
+    """
+    return _client(settings.s3_public_endpoint or settings.s3_endpoint)
+
+
 def presign_put(key: str) -> str:
-    return _client().generate_presigned_url(
+    return _signer().generate_presigned_url(
         "put_object",
         Params={"Bucket": settings.s3_bucket, "Key": key},
         ExpiresIn=PRESIGN_TTL_SECONDS,
@@ -59,7 +67,7 @@ def presign_put(key: str) -> str:
 
 
 def presign_get(key: str) -> str:
-    return _client().generate_presigned_url(
+    return _signer().generate_presigned_url(
         "get_object",
         Params={"Bucket": settings.s3_bucket, "Key": key},
         ExpiresIn=PRESIGN_TTL_SECONDS,

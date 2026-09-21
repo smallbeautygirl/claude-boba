@@ -181,10 +181,15 @@ async def _prepare_workdir(
 
     resume_name = ""
     if url := job.get("resume_from_url"):
-        resume_name = "resume.jsonl"
+        # 放進 .home/ 而不是工作目錄根層。實測：`--resume <path>` 會把續跑的
+        # transcript 寫在**被 resume 檔案的同一個目錄**。放在根層的話那份
+        # 300KB 的 transcript 會被當成 job 的產出檔案上傳給使用者看。
+        resume_name = f"{HOME_DIR}/resume.jsonl"
+        target = workdir / resume_name
+        target.parent.mkdir(parents=True, exist_ok=True)
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()
-            with (workdir / resume_name).open("wb") as fh:
+            with target.open("wb") as fh:
                 async for chunk in resp.aiter_bytes():
                     fh.write(chunk)
     return workdir, resume_name
@@ -194,7 +199,8 @@ async def _prepare_workdir(
 #   .home/  是容器的 HOME，裡面掛著出租者的 .credentials.json ——
 #           上傳它等於把 Anthropic 憑證送上 S3
 #   .claude/ 是我們自己複製進去的 curated skills，不是 job 的產出
-_NEVER_UPLOAD = {".home", ".claude"}
+HOME_DIR = ".home"
+_NEVER_UPLOAD = {HOME_DIR, ".claude"}
 _NOT_OUTPUT = {"resume.jsonl"}
 
 
@@ -261,10 +267,24 @@ async def _upload_artifacts(
 def _find_transcript(workdir: Path) -> Path | None:
     """找出這次執行留下的 transcript。
 
-    Claude Code 把它寫到 $HOME/.claude/projects/<目錄slug>/<session>.jsonl。
-    取最新的一份 —— resume 時同一個 session 會被續寫，仍是同一個檔。
+    兩個位置都要找，因為 resume 與否落點不同：
+
+    - 一般執行：`$HOME/.claude/projects/<目錄slug>/<session>.jsonl`
+    - resume：寫在**被 resume 檔案的同一個目錄**，也就是 `$HOME/` 根層。
+      `projects/` 這時是空的
+
+    只找 `projects/` 的話，續問鏈的第二層以後永遠上傳不到新的 transcript，
+    於是每個後續 job 都接在鏈的最前面，中間的對話全部遺失。
     """
-    found = list((workdir / ".home" / ".claude" / "projects").glob("*/*.jsonl"))
+    home = workdir / HOME_DIR
+    found = [
+        f
+        for f in [
+            *(home / ".claude" / "projects").glob("*/*.jsonl"),
+            *home.glob("*.jsonl"),
+        ]
+        if f.name != "resume.jsonl"
+    ]
     return max(found, key=lambda f: f.stat().st_mtime) if found else None
 
 

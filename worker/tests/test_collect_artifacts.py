@@ -65,3 +65,41 @@ def test_symlink_escaping_the_workdir_is_refused(tmp_path: Path) -> None:
     (tmp_path / "innocent.txt").symlink_to(outside)
 
     assert _collect_artifacts(tmp_path) == []
+
+
+def test_finds_transcript_from_a_normal_run(tmp_path: Path) -> None:
+    from worker import _find_transcript
+
+    d = tmp_path / ".home" / ".claude" / "projects" / "-job"
+    d.mkdir(parents=True)
+    (d / "abc.jsonl").write_text("{}")
+
+    found = _find_transcript(tmp_path)
+    assert found is not None and found.name == "abc.jsonl"
+
+
+def test_finds_transcript_from_a_resumed_run(tmp_path: Path) -> None:
+    """resume 時續跑的 transcript 落在 $HOME 根層，`projects/` 是空的。
+
+    只找 projects/ 的話，續問鏈第二層以後永遠上傳不到新的 transcript，
+    於是每個後續 job 都接在鏈的最前面，中間的對話全部遺失。
+    """
+    from worker import _find_transcript
+
+    home = tmp_path / ".home"
+    (home / ".claude" / "projects").mkdir(parents=True)
+    (home / "resume.jsonl").write_text("{}")
+    (home / "continued-session.jsonl").write_text("{}")
+
+    found = _find_transcript(tmp_path)
+    assert found is not None and found.name == "continued-session.jsonl"
+
+
+def test_resume_file_is_never_uploaded_as_output(tmp_path: Path) -> None:
+    _scaffold(tmp_path)
+    (tmp_path / ".home" / "resume.jsonl").write_text("{}")
+    (tmp_path / ".home" / "continued.jsonl").write_text("{}")
+    (tmp_path / "real-output.md").write_text("x")
+
+    names = {str(p.relative_to(tmp_path)) for p in _collect_artifacts(tmp_path)}
+    assert names == {"real-output.md"}
