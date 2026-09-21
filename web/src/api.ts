@@ -88,6 +88,18 @@ export interface DebtRow {
   days: number;
 }
 
+export interface CommandGroup {
+  id: string;
+  title: string;
+  audience: string;
+  hint: string;
+  commands: { name: string; label: string; desc: string }[];
+}
+
+export interface CommandCatalog {
+  groups: CommandGroup[];
+}
+
 export interface Ledger {
   i_owe: DebtRow[];
   owed_to_me: DebtRow[];
@@ -175,6 +187,8 @@ export const api = {
     `${HUB}/api/jobs/${id}/stream?from_seq=${fromSeq}&token=${encodeURIComponent(
       tokenStore.get() ?? "",
     )}`,
+
+  commands: () => fetch(`${HUB}/api/commands`).then(json<CommandCatalog>),
 
   listWorkers: () => fetch(`${HUB}/api/workers`, { headers: authed() }).then(json<WorkerRow[]>),
 

@@ -1,0 +1,39 @@
+{
+  "note": "推薦清單，不是完整清單。CLI 內建的指令有 30 幾個，全列出來只會讓人不知所措 —— 這裡只挑對這個平台的使用情境真的有用的。新增前請先實測該指令在 job 容器裡跑得動。",
+  "groups": [
+    {
+      "id": "office",
+      "title": "產出文件",
+      "audience": "BD・PM",
+      "hint": "跑完會產出檔案，目前要用「接著問」請它把內容貼回來 —— 檔案下載還沒做。",
+      "commands": [
+        { "name": "/anthropic-skills:pptx", "label": "做簡報", "desc": "把內容整理成 PowerPoint" },
+        { "name": "/anthropic-skills:xlsx", "label": "做表格", "desc": "整理成 Excel，含公式與格式" },
+        { "name": "/anthropic-skills:docx", "label": "做 Word 文件", "desc": "報告、備忘錄、正式文件" },
+        { "name": "/anthropic-skills:pdf", "label": "處理 PDF", "desc": "讀取、合併、拆分、填表" }
+      ]
+    },
+    {
+      "id": "thinking",
+      "title": "整理與分析",
+      "audience": "所有人",
+      "hint": "純文字進出，不需要檔案 —— 目前最順的一類。",
+      "commands": [
+        { "name": "/dataviz", "label": "畫圖表", "desc": "把數字變成看得懂的圖" },
+        { "name": "/boba-help", "label": "這裡能做什麼", "desc": "列出這個平台目前的能力與限制" }
+      ]
+    },
+    {
+      "id": "engineering",
+      "title": "工程",
+      "audience": "RD",
+      "hint": "⚠️ 這些多半要有程式碼才有意義，而借用者目前還不能上傳檔案。等檔案上傳做完才會真正好用。",
+      "commands": [
+        { "name": "/code-review", "label": "審查程式碼", "desc": "找 bug 與可簡化處" },
+        { "name": "/simplify", "label": "簡化", "desc": "只做品質清理，不找 bug" },
+        { "name": "/security-review", "label": "安全審查", "desc": "檢查改動的安全問題" },
+        { "name": "/claude-api", "label": "Claude API 參考", "desc": "model id、定價、參數、串流" }
+      ]
+    }
+  ]
+}
