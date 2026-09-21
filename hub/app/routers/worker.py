@@ -253,22 +253,11 @@ async def push_result(
     await session.commit()
 
     borrower = await session.get(User, job.borrower_id)
-    notify.job_finished(
-        borrower.teams_webhook_url if borrower else None,
-        job.id,
-        str(job.status),
-        job.total_cost_usd,
-    )
+    notify.job_finished(borrower, job.id, str(job.status), job.total_cost_usd)
     if debt is not None:
         lender = await session.get(User, worker.owner_user_id)
         notify.debt_created(
-            borrower.teams_webhook_url if borrower else None,
-            lender.teams_webhook_url if lender else None,
-            borrower.display_name if borrower else "?",
-            lender.display_name if lender else "?",
-            LABELS[debt.tier],
-            debt.amount_usd,
-            job.id,
+            borrower, lender, LABELS[debt.tier], debt.amount_usd, job.id
         )
     _emit(job.id, -1, {"type": "stream_end", "status": str(job.status)})
     return {"ok": True}

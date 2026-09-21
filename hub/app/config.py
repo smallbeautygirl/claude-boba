@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # 通知裡連回 job 頁面用。
     web_base_url: str = "http://localhost:5173"
 
+    # 共用頻道的 Workflows webhook。沒設個人 webhook 的人走這裡，
+    # 用 @mention 讓當事人收到紅點通知。
+    teams_channel_webhook: str = ""
+    # 掛債通知要不要進頻道。開著比較符合這個產品的社交機制，
+    # 但也可能讓人不好意思借。
+    teams_channel_debts: bool = True
+
     # 允許的前端來源，逗號分隔。開發時要把區網位址加進來，
     # 否則從別台機器開的瀏覽器會被 CORS 擋下。
     # 不要圖方便寫 ["*"]（.claude/rules/security.md）。

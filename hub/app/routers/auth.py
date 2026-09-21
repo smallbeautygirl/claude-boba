@@ -57,5 +57,5 @@ async def set_teams_webhook(
     user.teams_webhook_url = url or None
     await session.commit()
     if url:
-        notify.send(url, "🧋 claude-boba 通知已開啟", "之後 job 跑完會在這裡通知你。")
+        notify.test_message(url)
     return {"has_teams_webhook": bool(url)}
