@@ -32,6 +32,18 @@ _LOAD = (
 )
 
 
+_PREVIEW_CHARS = 90
+
+
+def _preview(prompt: str) -> str:
+    """列表用的摘要。取第一行，太長就截斷。
+
+    貼上整段對話的 job，第一行通常就是最能認出它的那一句。
+    """
+    first = next((ln.strip() for ln in prompt.splitlines() if ln.strip()), "")
+    return first[:_PREVIEW_CHARS] + ("…" if len(first) > _PREVIEW_CHARS else "")
+
+
 def _detail(job: Job) -> JobDetail:
     debt = None
     if job.status.creates_debt and job.total_cost_usd is not None:
@@ -114,6 +126,8 @@ async def list_jobs(
             id=j.id,
             status=j.status,
             borrower=j.borrower.display_name,
+            preview=_preview(j.prompt),
+            is_follow_up=j.parent_job_id is not None,
             model=j.model,
             created_at=j.created_at,
             finished_at=j.finished_at,

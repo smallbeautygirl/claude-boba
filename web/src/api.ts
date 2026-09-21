@@ -89,6 +89,18 @@ export interface DebtRow {
   days: number;
 }
 
+export interface JobSummary {
+  id: string;
+  status: JobStatus;
+  borrower: string;
+  preview: string;
+  is_follow_up: boolean;
+  model: string;
+  created_at: string;
+  finished_at: string | null;
+  total_cost_usd: string | null;
+}
+
 export interface ArtifactRow {
   name: string;
   size_bytes: number;
@@ -184,7 +196,7 @@ export const api = {
       body: JSON.stringify({ prompt }),
     }).then(json<JobDetail>),
 
-  listJobs: () => fetch(`${HUB}/api/jobs`, { headers: authed() }).then(json<JobDetail[]>),
+  listJobs: () => fetch(`${HUB}/api/jobs`, { headers: authed() }).then(json<JobSummary[]>),
 
   getJob: (id: string) =>
     fetch(`${HUB}/api/jobs/${id}`, { headers: authed() }).then(json<JobDetail>),

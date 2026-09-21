@@ -31,6 +31,9 @@ class JobSummary(BaseModel):
     id: uuid.UUID
     status: JobStatus
     borrower: str
+    # 一段 prompt 摘要。沒有它，列表就是一排 UUID，使用者認不出哪個是哪個。
+    preview: str
+    is_follow_up: bool
     model: str
     created_at: datetime
     finished_at: datetime | None
