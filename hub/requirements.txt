@@ -1,0 +1,10 @@
+# 釘死版本。理由與 worker/Dockerfile 相同（SPEC.md §11「版本漂移」）：
+# 不釘的話每個人裝到的東西不一樣，而且不會有人發現。
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+sqlalchemy[asyncio]==2.0.54
+asyncpg==0.31.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+boto3==1.43.98
+httpx==0.28.1
