@@ -109,7 +109,25 @@ job 內容跑在出租者機器上，技術上出租者有能力看到。**不�
 
 **為什麼不用 token 數當單位**：同樣 100 萬 token，Opus 輸出比 Haiku 輸入貴 25 倍。token 數在記帳上沒有意義，必須先折算。
 
-**為什麼不用「吃掉多少額度」**：概念上更正確（Max 的邊際成本是零，真正的損失是額度被佔用），但 Max 的用量限制是滾動視窗制，換算出來既難算又難解釋。原始資料全存，未來想改隨時能重算。
+**為什麼記帳不用「吃掉多少額度」**：作為**債務單位**，百分比難以換算成飲料。
+原始資料全存，未來想改隨時能重算。
+
+> 📌 **但額度佔比本身是拿得到的**（2026-09-21 實測推翻了原本「滾動視窗難算」的判斷）。
+> `--output-format stream-json` 會吐 `rate_limit_event`：
+>
+> ```json
+> "unifiedWindows": {
+>   "five_hour": { "utilization": 0.02, "resetsAt": ... },
+>   "seven_day": { "utilization": 0.12, "resetsAt": ... }
+> }
+> ```
+>
+> 它**不用於記帳**，但用於三件事：
+> 1. §4.5 的出租者上限改用真實額度（「最多借到五小時窗口的 60%」比「最多借 $5」精準）
+> 2. 自動派單挑最有餘裕的人，而不是輪流
+> 3. Web 上顯示紅綠燈（`docs/web-spec.md` §3）
+>
+> 這個數字是相對各自 tier 計算的，所以不論出租者是 5x 或 20x 都適用。
 
 ### 4.7 人情債級距
 
@@ -169,6 +187,7 @@ queued ─┼──────────► expired   (15 分鐘無人接單�
         └─► claimed ─► running ─┬─► succeeded  ★ 唯一計債的狀態
                                 ├─► failed     (崩潰/拒答，不計債)
                                 ├─► timeout    (超過 10 分鐘，殺容器，不計債)
+                                ├─► over_budget(超過 --max-budget-usd，不計債)
                                 └─► cancelled  (跑到一半取消，不計債)
 ```
 
@@ -220,7 +239,14 @@ job_usd = total_cost_usd        # 等於 Σ modelUsage[*].costUSD
 原本規劃的自維護價格表（每個 model 的 input / output / cache 費率）**已刪除** ——
 不需要追著 model 改價維護它。
 
-**資料來源**：以 `claude -p --output-format json` 的回傳值為準（官方承諾給腳本使用的穩定介面），`.jsonl` 全份存進 MinIO 當明細與稽核。
+**資料來源**：worker 實際使用 `--output-format stream-json`（見下），其最後一個
+`result` 事件帶有與 `--output-format json` 相同的 `total_cost_usd` 與 `modelUsage`。
+完整事件流存進 MinIO 當明細與稽核。
+
+> 🚨 **worker 絕不可設定 `modelPricing`。** 這個設定鍵會把成本改用「組織合約價」計算，
+> 官方說明明寫它 *"Affects every spend figure Claude Code reports — … the SDK
+> `total_cost_usd`"*。目前 worker 用乾淨 HOME、沒有 settings.json，所以是 list price
+> （實測 `costBasis: "list"` 印證）。若有人「順手」加上合約價，整本帳會錯而且不會報錯。
 
 **實測確認的欄位**（2026-09-21，CLI 2.1.278）：
 
@@ -238,6 +264,25 @@ session_id, num_turns, duration_ms, is_error, result, terminal_reason
 ```
 
 cache read 與 cache creation 是分開的欄位，上面那個「算錯會灌水數倍」的風險解除。
+
+### 執行中是有進度的（2026-09-21 實測，推翻先前判斷）
+
+先前記錄為「`--output-format json` 是結束才一次回傳，執行中拿不到進度」。
+那句話只對 `json` 成立。改用 **`--output-format stream-json --verbose`** 會邊跑邊吐事件：
+
+```
+system/init
+rate_limit_event              ← 出租者的額度使用率，見 §4.6
+assistant/ thinking
+assistant/ tool_use:Read      ← 看得到 Claude 在讀哪個檔
+user/ tool_result
+assistant/ text:"…"
+result/success  cost=0.0256
+```
+
+**因此「借用者在畫面上看著 Claude 一步步做」是可行的**，這是 web 端 SSE 的
+真正理由（`docs/web-spec.md` §4）。worker 因此一律用 `stream-json`，
+把事件轉發給 Hub，最後一個 `result` 事件同時作為計費依據。
 
 **`modelUsage` 的實際結構**（同一趟實測）：
 
@@ -329,6 +374,8 @@ DAILY_JOB_LIMIT=10
 MAX_CONCURRENCY=1
 TIMEOUT_SECONDS=600
 ALLOW_FULL_NETWORK=false
+JOB_BUDGET_USD=5
+AVAILABLE_MODELS=sonnet,haiku
 ```
 
 Claude Code 憑證以 **唯讀 volume** 掛入 worker 容器。
@@ -337,12 +384,25 @@ worker 執行 job 的指令形狀：
 
 ```bash
 HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
-  --model "$model" --output-format json \
+  --model "$model" \
+  --output-format stream-json --verbose \
+  --max-budget-usd "$JOB_BUDGET_USD" \
+  --settings '{"availableModels": ["sonnet","haiku"]}' \
   --allowedTools "Read,Edit,Bash" \
   --permission-mode acceptEdits --permission-prompts none \
   --no-session-persistence \
   --add-dir "$workdir" < /dev/null
 ```
+
+**`--max-budget-usd` 是逾時之外的第二道防線。** 逾時只擋「跑太久」，擋不住「跑很貴」——
+一個 Opus job 在 8 分鐘內燒掉 US$25 是可能的，那會讓債務從一杯飲料跳到「你要挑餐廳」。
+預設 **US$5**（對應級距表的「一個便當」），出租者可在 `.env` 調整。
+超出即中止，依 §5 不計債 —— **這對借用者也是保護**。
+
+**`availableModels` 是 model 白名單**，吃家族別名（`"opus"` 涵蓋所有 opus 版本）。
+實際值是「站台白名單 ∩ 該出租者白名單」，由 Hub 算好後傳給 worker。
+**站台預設不含 Fable**：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
+同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料。想開放的出租者自己在 `.env` 加。
 
 **隔離手段是乾淨的 HOME，不是 `--bare`。** 容器的 `$HOME/.claude/` 裡**只有**唯讀掛入的
 `.credentials.json`，沒有 `settings.json`、`plugins/`、`skills/` 或 MCP 設定，所以出租者的
