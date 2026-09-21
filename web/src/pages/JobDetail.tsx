@@ -85,7 +85,8 @@ export function JobDetail() {
       </Link>
       <h1>Job {job.id.slice(0, 8)}</h1>
       <p className="lede">
-        {job.borrower_label} · {job.model} · <StatusChip status={job.status} />
+        {job.borrower} · {job.model}
+        {job.lender && ` · 由 ${job.lender} 代跑`} · <StatusChip status={job.status} />
       </p>
 
       {!done && (

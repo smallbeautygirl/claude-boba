@@ -18,16 +18,27 @@
 
 ## 現況
 
-**尚未實作。** 目前只有規格與工具設定。
+**Phase 0 與 Phase 1 完成，Phase 2 進行中。**
 
-下一步是 SPEC.md §11 的 Phase 0 spike。**在 spike 完成前不要開始寫功能程式碼。**
+- Phase 0：六項 spike 全數通過（SPEC.md §11），其中四項推翻了原本的設計
+- Phase 1：提交 job → worker 真的執行 → 事件即時串回畫面，端到端跑通
+- Phase 2：Observ 認證與人情債帳本已實作，尚未用真實帳號完整驗過
 
-§7（計價）的兩項假設已在 2026-09-21 驗完並收斂 —— CLI 的 JSON 有分項 token，
-`total_cost_usd` 在 Team 訂閱下回真實金額，自維護價格表可以砍掉。
+三個元件：`hub/`（FastAPI）、`worker/`（出租者端，跑在 host 上）、`web/`（React）。
+怎麼跑見 [README.md](README.md)。
 
-還沒答的是 §4.2（上下文交付）與新冒出來的 **spike #0b：`--bare` 與 OAuth 憑證互斥**。
-#0b 決定 worker 怎麼注入憑證，三條候選路的 Dockerfile 與 volume 配置都不同，
-**在它拍板前不要寫 worker 的執行程式碼**。
+尚未實作：排行榜、Teams 通知、檔案與 `.jsonl` 上傳、MinIO 實際接上。
+
+### 動手前要知道的幾個地雷
+
+這些都是實測踩出來的，寫在 SPEC.md §11 與 `hub/README.md`：
+
+- **不要給 worker 的 `claude` 加 `--bare`** —— 它不讀 OAuth，會回 `Not logged in`，
+  而錯誤訊息會把人導向「去登入」這條錯的路
+- **job 的 HOME 必須是每個 job 全新的 tmpfs** —— 共用會造成跨 job 的任意程式碼執行
+- **SQLAlchemy 的 enum 欄位要用 `_enum()`**，`String` 配 `Mapped[SomeEnum]` 不會轉型
+- **`NULL IN (...)` 在 SQL 裡永遠不為真** —— 自動派單的 job 會一筆都領不到且不報錯
+- **Observ 的身分端點用 `x-request-service-id`**，不是 `X-Service-Id`；送錯只會回 401
 
 ## 規則
 

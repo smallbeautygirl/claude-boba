@@ -47,3 +47,15 @@ class DebtTier(StrEnum):
     COFFEE = "coffee"
     BENTO = "bento"
     FEAST = "feast"
+
+
+class DebtStatus(StrEnum):
+    """債務狀態。
+
+    結清由債主按（SPEC.md §4.8）—— 現實中請客是出租者被請，他最清楚有沒有發生。
+    NUDGED 是借用者宣稱「我請過了」，把催促的責任放在欠債的人身上。
+    """
+
+    OPEN = "open"
+    NUDGED = "nudged"
+    SETTLED = "settled"

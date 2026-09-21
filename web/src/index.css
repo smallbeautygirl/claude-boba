@@ -80,3 +80,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .error { color: var(--bad); }
 .warn { color: var(--warn); font-size: 13px; }
 .note { font-style: italic; }
+
+.nav { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; font-size: 14px; }
+.nav a { color: var(--ink); text-decoration: none; }
+.nav a:hover { color: var(--accent); }
+.nav .spacer { flex: 1; }
+.nav .link { background: none; color: var(--muted); padding: 0; font-weight: 400; }
+.card.narrow { max-width: 420px; margin: 40px auto; }
+h2 { margin: 24px 0 10px; font-size: 15px; color: var(--muted); }
+button.small { padding: 5px 12px; font-size: 13px; }
+.debt, .worker {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--line);
+}
+.debt-label { font-size: 16px; }
+.consent pre { white-space: pre-wrap; word-break: break-all; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px; font-size: 12px; }

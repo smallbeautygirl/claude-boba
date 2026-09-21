@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import jobs, worker
+from .routers import auth, jobs, ledger, worker, workers
 
 
 @asynccontextmanager
@@ -30,8 +30,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(jobs.router)
+app.include_router(ledger.router)
 app.include_router(worker.router)
+app.include_router(workers.router)
 
 
 @app.get("/healthz")

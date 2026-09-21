@@ -15,7 +15,8 @@ MAX_PROMPT_CHARS = 2_000_000
 
 
 class JobCreate(BaseModel):
-    borrower_label: str = Field(min_length=1, max_length=120)
+    # 借用者身分由 Authorization header 決定，不接受從 body 指定 ——
+    # 否則任何人都能用別人的名義掛債。
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
     model: str = Field(default="sonnet", max_length=64)
     source_type: SourceType = SourceType.PASTE
@@ -26,7 +27,7 @@ class JobCreate(BaseModel):
 class JobSummary(BaseModel):
     id: uuid.UUID
     status: JobStatus
-    borrower_label: str
+    borrower: str
     model: str
     created_at: datetime
     finished_at: datetime | None
@@ -34,6 +35,7 @@ class JobSummary(BaseModel):
 
 
 class JobDetail(JobSummary):
+    lender: str | None
     prompt: str
     source_type: SourceType
     worker_id: uuid.UUID | None
@@ -46,8 +48,9 @@ class JobDetail(JobSummary):
     debt_label: str | None
 
 
-class WorkerRegister(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
+class WorkerConfig(BaseModel):
+    """worker 啟動時回報自己的設定。身分已由 token 決定，所以沒有 name。"""
+
     allow_full_network: bool = False
     available_models: list[str] = Field(default_factory=lambda: ["sonnet", "haiku"])
     job_budget_usd: Decimal = Decimal(5)

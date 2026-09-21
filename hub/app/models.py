@@ -1,8 +1,4 @@
-"""資料模型。SPEC.md §6 的 Phase 1 子集。
-
-users 與 debts 留到 Phase 2（認證與記帳）。這裡只放讓一個 job 端到端跑完
-所需的四張表。
-"""
+"""資料模型。SPEC.md §6。"""
 
 from __future__ import annotations
 
@@ -27,7 +23,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
-from .enums import JobStatus, SourceType
+from .enums import DebtStatus, DebtTier, JobStatus, SourceType
 
 
 def _uuid() -> uuid.UUID:
@@ -49,14 +45,38 @@ def _enum(enum_cls: type) -> SAEnum:
     )
 
 
+class User(Base):
+    """由 Observ 提供身分。我們不管密碼，只記 Observ 的 user id 與 email。"""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    observ_user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(200))
+    display_name: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Worker(Base):
     __tablename__ = "workers"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=_uuid
     )
-    name: Mapped[str] = mapped_column(String(80), unique=True)
+    # worker 的身分是 Hub 發的 token，不是出租者的 Observ 帳密 ——
+    # 把公司密碼寫進 worker 的 .env 是不必要的風險。出租者在網頁按「產生 token」，
+    # 貼進 .env 就好，worker 完全不碰 Observ。
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    name: Mapped[str] = mapped_column(String(80))
     token: Mapped[str] = mapped_column(String(128), unique=True)
+
+    owner: Mapped[User] = relationship()
 
     online: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -85,8 +105,10 @@ class Job(Base):
         _enum(JobStatus), default=JobStatus.QUEUED, index=True
     )
 
-    # Phase 1 尚無認證，借用者先用顯示名稱識別。Phase 2 換成 Observ 的 user id。
-    borrower_label: Mapped[str] = mapped_column(String(120))
+    borrower_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    borrower: Mapped[User] = relationship(foreign_keys=[borrower_id])
 
     source_type: Mapped[SourceType] = mapped_column(_enum(SourceType))
     prompt: Mapped[str] = mapped_column(Text)
@@ -122,6 +144,7 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    worker: Mapped[Worker | None] = relationship(foreign_keys=[worker_id])
     events: Mapped[list[JobEvent]] = relationship(
         back_populates="job", order_by="JobEvent.seq"
     )
@@ -179,3 +202,44 @@ class Usage(Base):
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal(0))
 
     job: Mapped[Job] = relationship(back_populates="usages")
+
+
+class Debt(Base):
+    """一筆人情債。
+
+    只有 succeeded 的 job 會產生（SPEC.md §5）。金額是 API 等價金額，
+    級距換算見 pricing.py —— 級距刻意做得很粗，精確數字會讓人開始計較。
+
+    不設到期日，但顯示欠了幾天：比自動勾銷更有社交壓力，也更好笑（SPEC.md §4.8）。
+    """
+
+    __tablename__ = "debts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), unique=True
+    )
+    borrower_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    lender_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+
+    amount_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    tier: Mapped[DebtTier] = mapped_column(_enum(DebtTier))
+    status: Mapped[DebtStatus] = mapped_column(
+        _enum(DebtStatus), default=DebtStatus.OPEN
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    nudged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    job: Mapped[Job] = relationship()
+    borrower: Mapped[User] = relationship(foreign_keys=[borrower_id])
+    lender: Mapped[User] = relationship(foreign_keys=[lender_id])

@@ -6,7 +6,6 @@ Hub 從不主動連 worker。
 
 from __future__ import annotations
 
-import secrets
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -19,9 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import events
 from ..config import settings
 from ..db import get_session
-from ..enums import JobStatus
-from ..models import Job, JobEvent, Usage, Worker
-from ..schemas import EventBatch, JobResult, WorkerJob, WorkerRegister
+from ..enums import DebtStatus, DebtTier, JobStatus
+from ..models import Debt, Job, JobEvent, Usage, Worker
+from ..pricing import tier_for
+from ..schemas import EventBatch, JobResult, WorkerConfig, WorkerJob
 
 router = APIRouter(prefix="/api/worker", tags=["worker"])
 
@@ -38,27 +38,26 @@ async def require_worker(
     return worker
 
 
-@router.post("/register", status_code=201)
-async def register(
-    body: WorkerRegister, session: AsyncSession = Depends(get_session)
+@router.post("/config")
+async def report_config(
+    body: WorkerConfig,
+    worker: Worker = Depends(require_worker),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """安裝時呼叫一次，取得 worker token。與借用者的 Observ token 分開。"""
-    worker = await session.scalar(select(Worker).where(Worker.name == body.name))
-    if worker is None:
-        worker = Worker(name=body.name, token=secrets.token_urlsafe(32))
-        session.add(worker)
+    """worker 啟動時回報自己的設定。
+
+    這裡沒有註冊行為 —— worker 的身分是出租者在網頁按「產生 token」拿到的。
+    這樣 worker 完全不需要出租者的 Observ 帳密，不用把公司密碼寫進 .env。
+    """
     worker.allow_full_network = body.allow_full_network
     worker.available_models = body.available_models
     worker.job_budget_usd = body.job_budget_usd
     worker.max_concurrency = body.max_concurrency
     worker.claude_code_version = body.claude_code_version
     await session.commit()
-    await session.refresh(worker)
-    return {"worker_id": str(worker.id), "token": worker.token}
+    return {"worker_id": str(worker.id), "name": worker.name}
 
 
-# response_model=None：回傳型別是 WorkerJob 或 204 Response，
-# FastAPI 無法從這種聯集推導出回應模型。
 @router.get("/poll", response_model=None)
 async def poll(
     response: Response,
@@ -197,9 +196,38 @@ async def push_result(
             )
         )
 
+    await _maybe_create_debt(job, worker, session)
+
     await session.commit()
     _emit(job.id, -1, {"type": "stream_end", "status": str(job.status)})
     return {"ok": True}
+
+
+async def _maybe_create_debt(job: Job, worker: Worker, session: AsyncSession) -> None:
+    """只有成功的 job 會掛債（SPEC.md §5），而且要超過最低級距。
+
+    `< US$1 不用還` 是級距表最重要的一列：多數 job 會落在那一格，而讓多數互動
+    不欠債，真正欠債時才顯得慎重；每次都掛帳，債務會變成沒人理的噪音。
+    這種 job 的成本仍完整記在 usages 表裡，只是不產生人情債。
+    """
+    if not job.status.creates_debt or job.total_cost_usd is None:
+        return
+    if job.borrower_id == worker.owner_user_id:
+        # 自己跑自己的不算欠自己。
+        return
+    tier = tier_for(job.total_cost_usd)
+    if tier is DebtTier.NONE:
+        return
+    session.add(
+        Debt(
+            job_id=job.id,
+            borrower_id=job.borrower_id,
+            lender_id=worker.owner_user_id,
+            amount_usd=job.total_cost_usd,
+            tier=tier,
+            status=DebtStatus.OPEN,
+        )
+    )
 
 
 async def _owned_job(job_id: uuid.UUID, worker: Worker, session: AsyncSession) -> Job:

@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     hub_url: str = "http://127.0.0.1:8787"
-    worker_name: str = "worker"
+    # 在網頁「我的 worker」按「產生 token」拿到，貼進 .env。
+    # worker 因此完全不碰出租者的 Observ 帳密。
+    worker_token: str = ""
     claude_credentials: str = ""
     job_budget_usd: Decimal = Decimal(5)
     timeout_seconds: int = 600
@@ -40,7 +42,6 @@ class Settings(BaseSettings):
     allow_full_network: bool = False
     worker_image: str = "claude-boba-worker:2.1.278"
     job_root: Path = Path(".jobs")
-    token_file: Path = Path(".worker-token")
 
 
 settings = Settings()
@@ -67,14 +68,13 @@ def _cli_version() -> str | None:
         return None
 
 
-async def register(client: httpx.AsyncClient) -> str:
-    """取得 worker token。存在檔案裡，重啟後沿用同一個身分。"""
+async def report_config(client: httpx.AsyncClient) -> str:
+    """回報自己的設定，順便確認 token 有效。回傳 worker 名稱。"""
     global LENDER_CLI_VERSION
     LENDER_CLI_VERSION = _cli_version()
     resp = await client.post(
-        "/api/worker/register",
+        "/api/worker/config",
         json={
-            "name": settings.worker_name,
             "allow_full_network": settings.allow_full_network,
             "available_models": [m for m in settings.available_models.split(",") if m],
             "job_budget_usd": str(settings.job_budget_usd),
@@ -82,10 +82,10 @@ async def register(client: httpx.AsyncClient) -> str:
             "claude_code_version": LENDER_CLI_VERSION,
         },
     )
+    if resp.status_code == 401:
+        sys.exit("WORKER_TOKEN 無效。請到網頁的「我的 worker」重新產生一組。")
     resp.raise_for_status()
-    token = resp.json()["token"]
-    settings.token_file.write_text(token)
-    return token
+    return resp.json()["name"]
 
 
 async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
@@ -255,13 +255,16 @@ async def _drain(stream: asyncio.StreamReader | None, state: _JobState) -> None:
 async def main() -> None:
     if not settings.claude_credentials:
         sys.exit("CLAUDE_CREDENTIALS 未設定。見 worker/.env.example")
+    if not settings.worker_token:
+        sys.exit("WORKER_TOKEN 未設定。到網頁的「我的 worker」產生一組，貼進 .env。")
 
     async with httpx.AsyncClient(
-        base_url=settings.hub_url, timeout=POLL_TIMEOUT_SECONDS
+        base_url=settings.hub_url,
+        timeout=POLL_TIMEOUT_SECONDS,
+        headers={"X-Worker-Token": settings.worker_token},
     ) as client:
-        token = await register(client)
-        client.headers["X-Worker-Token"] = token
-        print(f"[worker] 已註冊為 {settings.worker_name}，開始領單", flush=True)
+        name = await report_config(client)
+        print(f"[worker] 以 {name} 的身分開始領單", flush=True)
 
         while True:
             try:

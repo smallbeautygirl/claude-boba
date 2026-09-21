@@ -3,12 +3,21 @@
 // 使用情境是「我額度爆了，很急」，所以最短路徑優先：一個框、一個下拉、一個勾選。
 // 不做精靈式多步驟 —— 拆成三頁只是增加三次點擊（web-spec §3）。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../api";
+import { api, type WorkerRow } from "../api";
 
 // 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
 // 同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料（SPEC §9）。
+// 額度只給紅綠燈，不給百分比：精確數字會讓人盤算「他還有 66%，再送一個沒差」，
+// 把人情變成資源計算（web-spec §3）。
+const QUOTA: Record<WorkerRow["quota"], string> = {
+  green: "🟢",
+  yellow: "🟡",
+  red: "🔴",
+  unknown: "⚪️",
+};
+
 const MODELS = [
   { value: "sonnet", label: "Sonnet（預設）" },
   { value: "haiku", label: "Haiku（最省）" },
@@ -16,14 +25,19 @@ const MODELS = [
 
 export function Submit() {
   const navigate = useNavigate();
-  const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("sonnet");
+  const [workerId, setWorkerId] = useState("");
+  const [workers, setWorkers] = useState<WorkerRow[]>([]);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const ready = name.trim() && prompt.trim() && consented && !busy;
+  useEffect(() => {
+    api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
+  }, []);
+
+  const ready = prompt.trim() && consented && !busy;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,7 +45,11 @@ export function Submit() {
     setBusy(true);
     setError(null);
     try {
-      const job = await api.createJob({ borrower_label: name, prompt, model });
+      const job = await api.createJob({
+        prompt,
+        model,
+        requested_worker_id: workerId || null,
+      });
       navigate(`/jobs/${job.id}`);
     } catch (err) {
       // 錯誤訊息一律正經，不用俏皮話 —— 使用者要的是「發生什麼事、我該怎麼辦」。
@@ -44,16 +62,6 @@ export function Submit() {
     <form className="card" onSubmit={submit}>
       <h1>丟一個 job 出去 🧋</h1>
       <p className="lede">額度用完了？找還有額度的同事幫你跑。跑完請他喝一杯就好。</p>
-
-      <label>
-        你是誰
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="例如：BD Kevin"
-          maxLength={120}
-        />
-      </label>
 
       <label>
         對話內容
@@ -72,8 +80,14 @@ export function Submit() {
       <div className="row">
         <label>
           出租者
-          <select disabled>
-            <option>自動（推薦）</option>
+          <select value={workerId} onChange={(e) => setWorkerId(e.target.value)}>
+            <option value="">自動（推薦）</option>
+            {workers.map((w) => (
+              <option key={w.id} value={w.id} disabled={!w.online}>
+                {w.owner} · {w.online ? "🟢" : "⚫️"} ·{" "}
+                {w.allow_full_network ? "🌐 開放網路" : "🔒 白名單"} · 額度 {QUOTA[w.quota]}
+              </option>
+            ))}
           </select>
         </label>
         <label>

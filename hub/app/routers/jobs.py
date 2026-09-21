@@ -1,4 +1,4 @@
-"""借用者面向的 API。Phase 1 尚無認證（SPEC.md §12）。"""
+"""借用者面向的 API。身分由 Observ 提供（SPEC.md §4.10）。"""
 
 from __future__ import annotations
 
@@ -11,11 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .. import events
+from ..auth import require_user
 from ..db import get_session
 from ..enums import JobStatus
-from ..models import Job, JobEvent
+from ..models import Job, JobEvent, User, Worker
 from ..pricing import label_for
 from ..schemas import JobCreate, JobDetail, JobSummary
 
@@ -23,6 +25,11 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 # SSE 心跳。沒有它，中介的 proxy 會把閒置連線切掉，而 job 可能十分鐘沒有事件。
 _HEARTBEAT_SECONDS = 15.0
+
+_LOAD = (
+    selectinload(Job.borrower),
+    selectinload(Job.worker).selectinload(Worker.owner),
+)
 
 
 def _detail(job: Job) -> JobDetail:
@@ -32,7 +39,8 @@ def _detail(job: Job) -> JobDetail:
     return JobDetail(
         id=job.id,
         status=job.status,
-        borrower_label=job.borrower_label,
+        borrower=job.borrower.display_name,
+        lender=job.worker.owner.display_name if job.worker else None,
         model=job.model,
         created_at=job.created_at,
         finished_at=job.finished_at,
@@ -50,19 +58,25 @@ def _detail(job: Job) -> JobDetail:
     )
 
 
-async def _get_job(job_id: uuid.UUID, session: AsyncSession) -> Job:
-    job = await session.get(Job, job_id)
+async def _get_job(job_id: uuid.UUID, session: AsyncSession, user: User) -> Job:
+    job = await session.scalar(select(Job).options(*_LOAD).where(Job.id == job_id))
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
+    # 只有借用者本人與執行該 job 的出租者能讀內容（.claude/rules/security.md）。
+    lender_id = job.worker.owner_user_id if job.worker else None
+    if user.id not in (job.borrower_id, lender_id):
+        raise HTTPException(status_code=403, detail="這不是你的 job")
     return job
 
 
 @router.post("", response_model=JobDetail, status_code=201)
 async def create_job(
-    body: JobCreate, session: AsyncSession = Depends(get_session)
+    body: JobCreate,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
     job = Job(
-        borrower_label=body.borrower_label,
+        borrower_id=user.id,
         prompt=body.prompt,
         model=body.model,
         source_type=body.source_type,
@@ -73,35 +87,57 @@ async def create_job(
     session.add(job)
     await session.commit()
     await session.refresh(job)
+    job.borrower = user
     events.notify_new_job()
     return _detail(job)
 
 
 @router.get("", response_model=list[JobSummary])
 async def list_jobs(
-    session: AsyncSession = Depends(get_session), limit: int = Query(default=50, le=200)
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(default=50, le=200),
 ) -> list[JobSummary]:
+    """只列自己送出的 job。"""
     rows = await session.scalars(
-        select(Job).order_by(Job.created_at.desc()).limit(limit)
+        select(Job)
+        .options(selectinload(Job.borrower))
+        .where(Job.borrower_id == user.id)
+        .order_by(Job.created_at.desc())
+        .limit(limit)
     )
-    return [JobSummary.model_validate(j, from_attributes=True) for j in rows]
+    return [
+        JobSummary(
+            id=j.id,
+            status=j.status,
+            borrower=j.borrower.display_name,
+            model=j.model,
+            created_at=j.created_at,
+            finished_at=j.finished_at,
+            total_cost_usd=j.total_cost_usd,
+        )
+        for j in rows
+    ]
 
 
 @router.get("/{job_id}", response_model=JobDetail)
 async def get_job(
-    job_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+    job_id: uuid.UUID,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
-    return _detail(await _get_job(job_id, session))
+    return _detail(await _get_job(job_id, session, user))
 
 
 @router.get("/{job_id}/events")
 async def get_events(
     job_id: uuid.UUID,
     from_seq: int = Query(default=0, ge=0),
+    user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """Poll fallback。SSE 斷線時前端改打這裡，資料與串流完全相同。"""
-    await _get_job(job_id, session)
+    await _get_job(job_id, session, user)
     rows = await session.scalars(
         select(JobEvent)
         .where(JobEvent.job_id == job_id, JobEvent.seq >= from_seq)
@@ -114,14 +150,17 @@ async def get_events(
 async def stream(
     job_id: uuid.UUID,
     from_seq: int = Query(default=0, ge=0),
+    token: str = Query(default=""),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     """SSE。先重播已存事件，再接上即時流。
 
-    「先重播再接上」是為了讓使用者能關掉分頁再回來（docs/web-spec.md §4）。
-    重連時帶上最後看到的 seq，從那裡續傳。
+    token 走 query string 而不是 Authorization header，因為瀏覽器的 `EventSource`
+    無法設定自訂 header。這是 SSE 的已知限制，不是偷懶 —— 代價是 token 會出現在
+    伺服器的 access log，所以 Hub 不記錄 query string（見 main.py）。
     """
-    job = await _get_job(job_id, session)
+    user = await _user_from_query_token(token, session)
+    job = await _get_job(job_id, session, user)
     replay = list(
         await session.scalars(
             select(JobEvent)
@@ -160,6 +199,19 @@ async def stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+async def _user_from_query_token(token: str, session: AsyncSession) -> User:
+    from .. import observ
+    from ..auth import upsert_user
+
+    if not token:
+        raise HTTPException(status_code=401, detail="請先登入")
+    try:
+        who = await observ.whoami(token)
+    except observ.ObservError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return await upsert_user(session, who)
 
 
 def _sse(item: dict) -> str:
