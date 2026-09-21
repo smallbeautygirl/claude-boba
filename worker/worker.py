@@ -90,6 +90,74 @@ async def report_config(client: httpx.AsyncClient) -> str:
     return resp.json()["name"]
 
 
+# org 層級的 skill（pptx / xlsx / docx / pdf …）由 Claude Code 在背景同步進 HOME。
+# 問題是：那是背景預抓，第一次執行時來不及 —— 而每個 job 都是全新 HOME，
+# 所以每個 job 都是「第一次」，那些 skill 永遠用不到，還每次白抓 4.3MB。
+#
+# 解法：worker 啟動時暖一個 template HOME，之後每個 job 從它複製。
+# 只複製 org 同步下來的內容，不複製出租者的任何個人設定
+# （見 .claude/rules/security.md 紅線 2 的明細）。
+# 相對於 HOME 底下的 .claude/
+_SYNCED_SUBDIRS = ("skills/synced", "plugins/synced")
+# template 的內部結構與 job 工作目錄相同（<template>/.home/.claude），
+# 因為同步只在「工作目錄是掛載進來的專案目錄」時才會觸發 —— 實測確認。
+TEMPLATE_HOME = Path(".home-template")
+_WARM_TIMEOUT_SECONDS = 180
+
+
+def _template_claude() -> Path:
+    return (settings.job_root / TEMPLATE_HOME).resolve() / ".home" / ".claude"
+
+
+async def warm_template_home() -> bool:
+    """跑一次拋棄式的 job 讓 org skill 同步下來，之後每個 job 重複使用。
+
+    成本是啟動時一次很便宜的 haiku 呼叫。不做的話，BD/PM 最主力的
+    「做簡報」「做表格」在每個 job 都會回「這個指令沒安裝」。
+    """
+    template = _template_claude()
+    if any((template / sub).is_dir() for sub in _SYNCED_SUBDIRS):
+        print("[worker] org skills template 已存在，沿用", flush=True)
+        return True
+    template.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        str(HERE / "warm-home.sh"),
+        str((settings.job_root / TEMPLATE_HOME).resolve()),
+        env={
+            "CLAUDE_CREDENTIALS": settings.claude_credentials,
+            "WORKER_IMAGE": settings.worker_image,
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+        },
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_WARM_TIMEOUT_SECONDS)
+    except TimeoutError:
+        proc.kill()
+    ok = any((template / sub).is_dir() for sub in _SYNCED_SUBDIRS)
+    print(
+        "[worker] org skills 已就緒"
+        if ok
+        else "[worker] org skills 暖機失敗，pptx/xlsx 這類指令在這台 worker 上會不可用",
+        flush=True,
+    )
+    return ok
+
+
+def _seed_synced(home: Path) -> None:
+    """把 template 裡 org 同步下來的內容複製給這個 job。
+
+    只複製 `_SYNCED_SUBDIRS` 這兩個目錄 —— 不是整個 .claude。
+    出租者的 settings.json、個人 plugins、個人 skills 一律不進來。
+    """
+    template = _template_claude()
+    for sub in _SYNCED_SUBDIRS:
+        src = template / sub
+        if src.is_dir():
+            shutil.copytree(src, home / sub, dirs_exist_ok=True, symlinks=False)
+
+
 async def _prepare_workdir(
     client: httpx.AsyncClient, job: dict[str, Any]
 ) -> tuple[Path, str]:
@@ -101,6 +169,7 @@ async def _prepare_workdir(
     """
     workdir = (settings.job_root / job["job_id"]).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
+    _seed_synced(workdir / ".home" / ".claude")
 
     # 站台 curated 的 commands 與 skills（worker/job-claude/）。
     # 後複製、覆蓋同名檔 —— 不讓借用者用自己的版本蓋掉團隊審過的內容。
@@ -401,6 +470,7 @@ async def main() -> None:
         headers={"X-Worker-Token": settings.worker_token},
     ) as client:
         name = await report_config(client)
+        await warm_template_home()
         print(f"[worker] 以 {name} 的身分開始領單", flush=True)
 
         while True:

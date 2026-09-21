@@ -20,9 +20,18 @@ These rules are always active. Violations must be fixed before merging.
 出租者的 Anthropic 憑證是這整個系統裡最敏感的東西 —— 它被盜等於帳號被停權。
 
 - 唯讀掛載，不 `COPY` 進 image，不寫進環境變數
-- 容器的 `HOME` 必須是**每個 job 全新的目錄**（目前是工作目錄底下的 `.home/`），
-  裡面只有唯讀掛入的 `.credentials.json`，不得出現出租者的 `settings.json`、
-  `plugins/`、`skills/` 或 MCP 設定
+- 容器的 `HOME` 必須是**每個 job 全新的目錄**（目前是工作目錄底下的 `.home/`）
+- HOME 裡**只允許**這三樣，其餘一概不得出現：
+
+  | 允許 | 為什麼 |
+  |---|---|
+  | 唯讀掛入的 `.credentials.json` | 認證必需 |
+  | `.claude/skills/synced/` | 組織層級、由 Anthropic 同步的 skill（pptx、xlsx…）。借用者與出租者同一個 org，不是出租者的個人內容 |
+  | `.claude/plugins/synced/` | 同上 |
+
+  **明確禁止**：出租者的 `settings.json`（可含 hooks）、`plugins/cache/`、
+  個人 `skills/`、MCP 設定、`projects/`、`history.jsonl`。
+  複製時用白名單列舉，不要用「排除法」—— 上游新增一個目錄，排除法就漏了。
 - job 容器跑完即銷毀，worker 接著刪掉整個工作目錄（含 `.home/`）
 
 > 🚨 **HOME 絕不可在 job 之間共用。** 2026-09-21 實測：一次 job 跑完後，容器會在

@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { CommandPicker, prependCommand } from "../CommandPicker";
 import {
   TERMINAL,
   api,
@@ -190,6 +191,10 @@ function FollowUp({ jobId }: { jobId: string }) {
           placeholder="沿用上面的對話繼續問…"
         />
       </label>
+      <CommandPicker
+        label="指令（點一下插入）"
+        onPick={(n) => setText((p) => prependCommand(p, n))}
+      />
       {error && <p className="error">{error}</p>}
       <button onClick={send} disabled={busy || !text.trim()}>
         {busy ? "送出中…" : "送出"}

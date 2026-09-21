@@ -5,7 +5,8 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type CommandCatalog, type WorkerRow } from "../api";
+import { api, type WorkerRow } from "../api";
+import { CommandPicker, prependCommand } from "../CommandPicker";
 
 // 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
 // 同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料（SPEC §9）。
@@ -29,21 +30,14 @@ export function Submit() {
   const [model, setModel] = useState("sonnet");
   const [workerId, setWorkerId] = useState("");
   const [workers, setWorkers] = useState<WorkerRow[]>([]);
-  const [catalog, setCatalog] = useState<CommandCatalog | null>(null);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
-    api.commands().then(setCatalog).catch(() => setCatalog(null));
   }, []);
 
-  // 點一下把指令插到輸入框最前面，游標留在後面讓人接著打。
-  // 不直接送出 —— 多數指令要搭配內容才有意義。
-  function insert(name: string) {
-    setPrompt((prev) => (prev.startsWith(name) ? prev : `${name} ${prev}`.trimEnd() + " "));
-  }
 
   const ready = prompt.trim() && consented && !busy;
 
@@ -85,32 +79,7 @@ export function Submit() {
         用 Claude Code 的話，上傳 <code>.jsonl</code> 可以真正接續。
       </p>
 
-      {catalog && (
-        <details className="cmds">
-          <summary>可以用的指令（點一下插入）</summary>
-          {catalog.groups.map((g) => (
-            <div key={g.id} className="cmd-group">
-              <div className="cmd-head">
-                {g.title} <span className="muted">· {g.audience}</span>
-              </div>
-              <p className="muted">{g.hint}</p>
-              <div className="chips">
-                {g.commands.map((c) => (
-                  <button
-                    type="button"
-                    key={c.name}
-                    className="chip-btn"
-                    title={`${c.name} — ${c.desc}`}
-                    onClick={() => insert(c.name)}
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </details>
-      )}
+      <CommandPicker onPick={(n) => setPrompt((p) => prependCommand(p, n))} />
 
       <div className="row">
         <label>
