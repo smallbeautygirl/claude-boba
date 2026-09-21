@@ -419,6 +419,42 @@ HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
 - **認證失敗會重試 11 次、指數退避，掛住約 3 分鐘才放棄。** worker 不能假設認證問題
   會快速失敗，§5 的逾時是唯一防線。
 
+### Hub ↔ Worker 協定
+
+worker 跑在出租者的機器上（可能在 NAT 後、可能隨時關機），所以**一律由 worker 主動連出**，
+Hub 從不主動連 worker。
+
+```
+worker                                   Hub
+  │  GET /api/worker/poll  (long-poll 30s)  │   領單。沒單就 hold 住，逾時回 204
+  │ ◄───────────────────────────────────── │   有單回 job payload + 預簽 URL
+  │                                         │
+  │  POST /api/worker/jobs/{id}/events      │   串流事件，每 ~500ms 批次送一次
+  │  { from_seq, events: [...] }            │   帶序號，Hub 據此去重與續傳
+  │ ─────────────────────────────────────► │
+  │                                         │
+  │  POST /api/worker/jobs/{id}/result      │   最後的 result 事件 + 用量 + 輸出位置
+  │ ─────────────────────────────────────► │
+  │                                         │
+  │  GET /api/worker/jobs/{id}/control      │   夾在 events 的回應裡：出租者按了停止
+  │ ◄───────────────────────────────────── │
+```
+
+**設計理由：**
+
+- **long-poll 而非 WebSocket**：worker 要傳的東西是單向批次（事件流），
+  Hub 要回的只有「停止」這一個指令 —— 夾在 events 的 HTTP 回應裡就夠。
+  為此維持一條雙向長連線不划算，而且 long-poll 天然容忍 worker 重啟。
+- **事件帶序號**：Hub 存整份事件流（`docs/web-spec.md` §4 的「離開後回來」要用），
+  序號同時解決 worker 重送的去重、與瀏覽器 SSE 斷線續傳。
+- **檔案不走 Hub**：job 的輸入輸出用 MinIO 預簽 URL，worker 直接對 MinIO 讀寫。
+  transcript 可能 50 MB，沒理由讓它穿過 Hub 兩次。
+
+**瀏覽器端**：`GET /api/jobs/{id}/stream?from=<seq>`（SSE）。Hub 先重播已存的事件，
+再接上即時流。斷線重連帶上最後看到的 seq。poll fallback 打同一組資料的非 SSE 版本。
+
+**認證**：worker 帶自己的 token（安裝時產生，存在 `.env`），與借用者的 Observ token 分開。
+
 ---
 
 ## 10. 通知（Teams webhook）
