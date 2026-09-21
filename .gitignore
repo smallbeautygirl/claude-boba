@@ -23,6 +23,8 @@ logs/
 
 # Local job scratch (worker 的工作目錄)
 .jobs/
+# worker 的身分 token，安裝時產生
+.worker-token
 
 # OS / editor
 .DS_Store
