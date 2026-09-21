@@ -44,6 +44,29 @@ function offeredModels(workers: WorkerRow[], workerId: string) {
   return offered.length ? offered : SITE_MODELS;
 }
 
+// 前端先擋，不要讓人上傳三分鐘才說太大（web-spec §3）。
+// 依據：一句 "pong" 的 transcript 就 224 KB，真實 RD session 估 10–50 MB；
+// 超過 50 MB 的 session，`--resume` 本身也會慢到不實用。
+const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
+
+function fmtSize(n: number): string {
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// 只看第一行。整份 50 MB 在瀏覽器裡解析，只為了確認它是 JSONL，划不來。
+async function looksLikeSession(file: File): Promise<boolean> {
+  const head = await file.slice(0, 64 * 1024).text();
+  const first = head.split("\n").find((l) => l.trim());
+  if (!first) return false;
+  try {
+    JSON.parse(first);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function Submit() {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
@@ -53,6 +76,12 @@ export function Submit() {
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 上傳的 session 檔。一選好就上傳，不是等到按送出 ——
+  // 50 MB 的檔案在按下送出之後才開始傳，使用者會盯著一顆沒反應的按鈕。
+  const [session, setSession] = useState<{ name: string; size: number; key: string } | null>(
+    null,
+  );
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
@@ -72,7 +101,35 @@ export function Submit() {
     setConsented(false);
   }
 
-  const ready = prompt.trim() && consented && !busy;
+  const ready = prompt.trim() && consented && !busy && !uploading;
+
+  async function pickFile(file: File | undefined) {
+    if (!file) return;
+    setError(null);
+    if (file.size > MAX_TRANSCRIPT_BYTES) {
+      setError(
+        `這個 session 檔 ${fmtSize(file.size)}，超過 50 MB 的上限。` +
+          "這麼大的 session，--resume 本身也會慢到不實用。",
+      );
+      return;
+    }
+    if (!(await looksLikeSession(file))) {
+      setError(
+        "這不像 Claude Code 的 session 檔。它在 ~/.claude/projects/<專案>/ 底下，" +
+          "副檔名 .jsonl，每行是一個 JSON。",
+      );
+      return;
+    }
+    setUploading(true);
+    try {
+      const key = await api.uploadTranscript(file);
+      setSession({ name: file.name, size: file.size, key });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "上傳失敗，請再試一次");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -84,6 +141,7 @@ export function Submit() {
         prompt,
         model: chosen,
         requested_worker_id: workerId || null,
+        transcript_key: session?.key ?? null,
       });
       navigate(`/jobs/${job.id}`);
     } catch (err) {
@@ -98,19 +156,67 @@ export function Submit() {
       <h1>丟一個 job 出去 🧋</h1>
       <p className="lede">額度用完了？找還有額度的同事幫你跑。跑完請他喝一杯就好。</p>
 
+      {/* 帶了 session 檔之後，這個框的意思就變了：上下文在檔案裡，
+          這裡要填的是「接下來做什麼」，不再是「把對話貼進來」。 */}
       <label>
-        對話內容
+        {session ? "接下來要它做什麼" : "對話內容"}
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          rows={12}
-          placeholder="把你的對話貼進來，或直接寫你要它做什麼"
+          rows={session ? 5 : 12}
+          placeholder={
+            session
+              ? "沿用上傳的 session 繼續問…"
+              : "把你的對話貼進來，或直接寫你要它做什麼"
+          }
         />
       </label>
       <p className="hint">
-        ⚠️ 貼上的對話會被「讀過」，但 Claude 不會真的記得當時的環境。
-        用 Claude Code 的話，上傳 <code>.jsonl</code> 可以真正接續。
+        {session ? (
+          <>
+            ✅ 這是真的續跑 —— 出租者那邊會用 <code>--resume</code> 接上你這份 session，
+            不是把對話當文字重讀一次。
+          </>
+        ) : (
+          <>
+            ⚠️ 貼上的對話會被「讀過」，但 Claude 不會真的記得當時的環境。
+            用 Claude Code 的話，上傳 <code>.jsonl</code> 可以真正接續。
+          </>
+        )}
       </p>
+
+      <div className="session">
+        {session ? (
+          <>
+            <div className="session-file">
+              <strong>{session.name}</strong>
+              <span className="muted"> · {fmtSize(session.size)}</span>
+            </div>
+            <button type="button" className="small" onClick={() => setSession(null)}>
+              移除
+            </button>
+          </>
+        ) : (
+          <>
+            <label className="session-pick">
+              {uploading ? "上傳中…" : "上傳 .jsonl"}
+              <input
+                type="file"
+                accept=".jsonl"
+                disabled={uploading}
+                onChange={(e) => {
+                  void pickFile(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <span className="muted">
+              在自己電腦上跑到一半、額度用完了？那份 session 檔在{" "}
+              <code>~/.claude/projects/</code> 底下。
+            </span>
+          </>
+        )}
+      </div>
 
       <CommandPicker value={prompt} onChange={setPrompt} />
 

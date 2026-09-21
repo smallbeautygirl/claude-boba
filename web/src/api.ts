@@ -68,6 +68,15 @@ export interface CreateJobInput {
   prompt: string;
   model: string;
   requested_worker_id?: string | null;
+  // 上傳的 Claude Code session 檔。有帶的話這個 job 走 `claude --resume`，
+  // 是真的續跑，不是把對話當文字重貼一次。
+  transcript_key?: string | null;
+}
+
+export interface UploadTicket {
+  key: string;
+  put_url: string;
+  max_bytes: number;
 }
 
 export interface Me {
@@ -195,6 +204,19 @@ export const api = {
       headers: authed({ "content-type": "application/json" }),
       body: JSON.stringify({ url }),
     }).then(json<{ has_teams_webhook: boolean }>),
+
+  // 檔案直接 PUT 進 MinIO，不經過 Hub —— 產出檔案的下載已經是這個模式，
+  // 50 MB 的 session 檔沒有理由在 Hub 的記憶體裡轉一手。
+  uploadTranscript: async (file: File): Promise<string> => {
+    const ticket = await fetch(`${HUB}/api/uploads/transcript`, {
+      method: "POST",
+      headers: authed(),
+    }).then(json<UploadTicket>);
+
+    const res = await fetch(ticket.put_url, { method: "PUT", body: file });
+    if (!res.ok) throw new Error("上傳失敗，請再試一次");
+    return ticket.key;
+  },
 
   createJob: (body: CreateJobInput) =>
     fetch(`${HUB}/api/jobs`, {

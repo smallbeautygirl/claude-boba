@@ -27,7 +27,7 @@
 三個元件：`hub/`（FastAPI）、`worker/`（出租者端，跑在 host 上）、`web/`（React）。
 怎麼跑見 [README.md](README.md)。
 
-尚未實作：排行榜、借用者上傳檔案與 `.jsonl`。
+尚未實作：排行榜、借用者上傳**附件**（`.jsonl` 的 session 檔已可上傳，走 `claude --resume`）。
 
 ### 動手前要知道的幾個地雷
 

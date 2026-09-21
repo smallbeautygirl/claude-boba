@@ -86,6 +86,25 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .field-row label { flex-grow: 1; margin-bottom: 0; }
 
 .hint { margin: -8px 0 20px; font-size: 13px; color: var(--muted); }
+
+/* 上傳 session 檔。原生的 file input 在每個瀏覽器上長得都不一樣而且都很醜，
+   所以藏起來、用 label 當按鈕 —— label 點下去會觸發它，不需要 JS。 */
+.session {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  margin: -8px 0 20px; font-size: 13px;
+}
+.session-pick {
+  display: inline-block; margin: 0; cursor: pointer;
+  padding: 7px 13px; font-size: 13px; font-weight: 500; border-radius: 999px;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line);
+}
+.session-pick:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.session-pick:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+.session-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.session-file {
+  flex-grow: 1; padding: 8px 12px; border-radius: 8px;
+  background: var(--accent-soft); font-size: 13px;
+}
 .hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 
 /* 隱私警告刻意不用玩笑語氣。整個介面很鬆，嚴肅的地方才顯得嚴肅（web-spec §9）。

@@ -15,6 +15,13 @@ MAX_PROMPT_CHARS = 2_000_000
 # 產出檔案的上限。超出的部分會被略過並在 UI 說明 —— 悄悄丟掉比擋下更糟。
 MAX_ARTIFACTS = 50
 MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
+# 上傳的 session 檔。50 MB 以上的 session，`--resume` 本身就慢到不實用，
+# 擋在這裡比讓人等三分鐘再說太大好。
+MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024
+# 驗格式只看開頭這幾行。整份 50 MB 拉進 Hub 解析，只為了確認它是 JSONL，
+# 代價與收益不成比例 —— 壞掉的檔案 worker 那邊會明確報錯。
+TRANSCRIPT_SNIFF_BYTES = 64 * 1024
+TRANSCRIPT_SNIFF_LINES = 5
 
 
 class JobCreate(BaseModel):
@@ -23,8 +30,18 @@ class JobCreate(BaseModel):
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
     model: str = Field(default="sonnet", max_length=64)
     source_type: SourceType = SourceType.PASTE
+    # 上傳的 session 檔，來自 POST /api/uploads/transcript。
+    # 有帶的話這個 job 就是 `--resume`，不是把對話當文字重貼一次。
+    transcript_key: str | None = Field(default=None, max_length=512)
     requested_worker_id: uuid.UUID | None = None
     borrower_cli_version: str | None = Field(default=None, max_length=32)
+
+
+class UploadTicket(BaseModel):
+    key: str
+    # 預簽 URL 本身就是憑證：效期短，不寫進 log（security.md）。
+    put_url: str
+    max_bytes: int
 
 
 class JobSummary(BaseModel):

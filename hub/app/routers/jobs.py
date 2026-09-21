@@ -17,11 +17,20 @@ from sqlalchemy.orm import selectinload
 from .. import events, notify, storage
 from ..auth import require_user
 from ..db import get_session
-from ..enums import JobStatus
+from ..enums import JobStatus, SourceType
 from ..failures import classify
 from ..models import Artifact, Job, JobEvent, User, Worker
 from ..pricing import label_for
-from ..schemas import FollowUp, JobCreate, JobDetail, JobSummary, StopJob
+from ..schemas import (
+    MAX_TRANSCRIPT_BYTES,
+    TRANSCRIPT_SNIFF_BYTES,
+    TRANSCRIPT_SNIFF_LINES,
+    FollowUp,
+    JobCreate,
+    JobDetail,
+    JobSummary,
+    StopJob,
+)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -100,17 +109,58 @@ async def _get_job(job_id: uuid.UUID, session: AsyncSession, user: User) -> Job:
     return job
 
 
+def _check_transcript(key: str, user: User) -> None:
+    """驗上傳的 session 檔：是你的、存在、不過大、看起來像 JSONL。
+
+    **第一項是存取控制，不是整理。** key 由客戶端指定，不檢查 prefix 的話
+    任何人都能把它指到 `jobs/<別人的 job>/transcript.jsonl` —— worker 會把
+    那份 transcript resume 出來，等於讀到別人的對話（security.md：只有借用者
+    本人與執行該 job 的出租者能讀該 job 的內容）。
+    """
+    if not storage.owns_upload(key, user.id):
+        # 不分「不是你的」與「不存在」—— 分開講等於給人探測別人 job id 的工具。
+        raise HTTPException(404, "找不到這個上傳的檔案，請重新上傳")
+
+    size = storage.stat(key)
+    if size is None:
+        raise HTTPException(404, "找不到這個上傳的檔案，請重新上傳")
+    if size == 0:
+        raise HTTPException(400, "這個檔案是空的")
+    if size > MAX_TRANSCRIPT_BYTES:
+        mb = MAX_TRANSCRIPT_BYTES // (1024 * 1024)
+        raise HTTPException(413, f"session 檔超過 {mb} MB，無法續跑")
+
+    head = storage.read_head(key, min(size, TRANSCRIPT_SNIFF_BYTES))
+    lines = head.split(b"\n")
+    # 最後一行可能被 Range 切斷，不驗它。整份只有一行時就驗那一行。
+    candidates = [ln for ln in lines[:-1] if ln.strip()] or [lines[0]]
+    for line in candidates[:TRANSCRIPT_SNIFF_LINES]:
+        try:
+            json.loads(line)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(
+                400,
+                "這不像 Claude Code 的 session 檔。"
+                "它應該在 ~/.claude/projects/<專案>/ 底下，每行是一個 JSON。",
+            ) from exc
+
+
 @router.post("", response_model=JobDetail, status_code=201)
 async def create_job(
     body: JobCreate,
     user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
+    if body.transcript_key:
+        _check_transcript(body.transcript_key, user)
+
     job = Job(
         borrower_id=user.id,
         prompt=body.prompt,
         model=body.model,
-        source_type=body.source_type,
+        # 帶了 session 檔就是真的續跑，不是把對話當文字重貼一次。
+        source_type=SourceType.TRANSCRIPT if body.transcript_key else body.source_type,
+        transcript_key=body.transcript_key,
         requested_worker_id=body.requested_worker_id,
         borrower_cli_version=body.borrower_cli_version,
         status=JobStatus.QUEUED,

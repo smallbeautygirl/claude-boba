@@ -14,6 +14,7 @@ import uuid
 
 import boto3
 from botocore.client import Config
+from botocore.exceptions import ClientError
 
 from .config import settings
 
@@ -48,6 +49,37 @@ def transcript_key(job_id: uuid.UUID) -> str:
 
 def artifact_key(job_id: uuid.UUID, name: str) -> str:
     return f"jobs/{job_id}/output/{name}"
+
+
+def upload_key(user_id: uuid.UUID) -> str:
+    """借用者上傳的 transcript。
+
+    prefix 帶 user id **是存取控制的一部分**，不只是整理。建立 job 時會檢查
+    key 的 prefix 與呼叫者相符 —— 否則任何人都能把 transcript_key 指到
+    `jobs/<別人的 job>/transcript.jsonl`，讓 worker 把別人的對話 resume 出來。
+    """
+    return f"uploads/{user_id}/{uuid.uuid4()}.jsonl"
+
+
+def owns_upload(key: str, user_id: uuid.UUID) -> bool:
+    return key.startswith(f"uploads/{user_id}/") and key.endswith(".jsonl")
+
+
+def stat(key: str) -> int | None:
+    """回傳物件大小；不存在回 None。"""
+    try:
+        head = _client().head_object(Bucket=settings.s3_bucket, Key=key)
+    except ClientError:
+        return None
+    return int(head["ContentLength"])
+
+
+def read_head(key: str, nbytes: int) -> bytes:
+    """讀開頭幾個 byte。用來驗格式 —— 不把 50 MB 整份拉進 Hub 的記憶體。"""
+    obj = _client().get_object(
+        Bucket=settings.s3_bucket, Key=key, Range=f"bytes=0-{nbytes - 1}"
+    )
+    return obj["Body"].read()
 
 
 def _signer():
