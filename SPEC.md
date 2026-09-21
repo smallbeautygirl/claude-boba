@@ -336,10 +336,33 @@ claude -p "$task" [--resume "$transcript"] \
 | 1a | ✅ **已答**：CLI JSON 有分項 token 欄位，cache read / creation 分開（見 §7） | — |
 | 1b | `total_cost_usd` 在 Team 訂閱下回的是 API 等價金額還是 0；`modelUsage` 的實際結構 | 保留 §7 的自維護價格表；否則可整張砍掉 |
 | 2 | `claude --resume <別台機器來的 .jsonl 絕對路徑>` 實際能不能跑 | Claude Code 那條路砍掉，只留貼上 |
-| 3 | **版本漂移**：借用者與出租者 Claude Code 版本不同時，resume 的行為 | 提交時強制比對版本，不符就擋下 |
+| 3 | **版本漂移**：借用者與出租者 Claude Code 版本不同時，resume 的行為。**漂移機制已實證，見下方** | 提交時強制比對版本，不符就擋下 |
 | ~~4~~ | ~~Observ service id~~ | ✅ 已取得：`e39940ea-1fdf-4527-a3b7-c8d6334e5d2e` |
 | 5 | egress 白名單下 Claude Code 能否正常運作（含 server-side 工具） | 放寬白名單或改設計 |
 | 6 | cache read / cache write 的官方費率 | — 必查，不做會算錯錢 |
+
+### 版本漂移的產生機制（2026-09-21 實測）
+
+風險 #3 原本寫的是「版本不同時 resume 可能失敗」。實測發現漂移**是無聲產生的**：
+
+```
+@anthropic-ai/claude-code@2.1.278   engines: { node: '>=22.0.0' }
+@anthropic-ai/claude-code@2.1.197   engines: { node: '>=18.0.0' }
+```
+
+在 node 20 的機器上跑 `npm install -g @anthropic-ai/claude-code`，npm **不會報錯**，
+它會往回裝到最新相容版 2.1.197 —— 比 latest 舊 81 個版本。開發機上因此同時存在
+兩個版本（VSCode extension 的 2.1.278 與 npm 的 2.1.197）。
+
+**對 §9 worker 的直接要求：**
+
+1. Dockerfile 必須**同時釘 node 版本與 Claude Code 版本**，不可用 `latest`
+2. Worker 啟動時回報自己的 CLI 版本給 Hub，寫進 `jobs.claude_code_version_lender`
+3. 提交 `.jsonl` 時記錄借用者版本，兩者不符時在 UI 明確警告
+   （擋下或放行是產品決策，但**不能無聲執行**）
+
+沒有第 1 點的話，每個出租者的 worker 會依自己 base image 的 node 版本裝到不同的
+Claude Code，而且沒有任何人會發現。
 
 ### 非技術阻斷項
 
