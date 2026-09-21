@@ -7,10 +7,26 @@
       "audience": "BD・PM",
       "hint": "跑完會產出檔案，目前要用「接著問」請它把內容貼回來 —— 檔案下載還沒做。",
       "commands": [
-        { "name": "/anthropic-skills:pptx", "label": "做簡報", "desc": "把內容整理成 PowerPoint" },
-        { "name": "/anthropic-skills:xlsx", "label": "做表格", "desc": "整理成 Excel，含公式與格式" },
-        { "name": "/anthropic-skills:docx", "label": "做 Word 文件", "desc": "報告、備忘錄、正式文件" },
-        { "name": "/anthropic-skills:pdf", "label": "處理 PDF", "desc": "讀取、合併、拆分、填表" }
+        {
+          "name": "/anthropic-skills:pptx",
+          "label": "做簡報",
+          "desc": "把內容整理成 PowerPoint"
+        },
+        {
+          "name": "/anthropic-skills:xlsx",
+          "label": "做表格",
+          "desc": "整理成 Excel，含公式與格式"
+        },
+        {
+          "name": "/anthropic-skills:docx",
+          "label": "做 Word 文件",
+          "desc": "報告、備忘錄、正式文件"
+        },
+        {
+          "name": "/anthropic-skills:pdf",
+          "label": "處理 PDF",
+          "desc": "讀取、合併、拆分、填表"
+        }
       ]
     },
     {
@@ -19,8 +35,72 @@
       "audience": "所有人",
       "hint": "純文字進出，不需要檔案 —— 目前最順的一類。",
       "commands": [
-        { "name": "/dataviz", "label": "畫圖表", "desc": "把數字變成看得懂的圖" },
-        { "name": "/boba-help", "label": "這裡能做什麼", "desc": "列出這個平台目前的能力與限制" }
+        {
+          "name": "/dataviz",
+          "label": "畫圖表",
+          "desc": "把數字變成看得懂的圖"
+        },
+        {
+          "name": "/boba-help",
+          "label": "這裡能做什麼",
+          "desc": "列出這個平台目前的能力與限制"
+        }
+      ]
+    },
+    {
+      "id": "thinking-tools",
+      "title": "把想法想清楚",
+      "audience": "所有人",
+      "hint": "純對話，不需要檔案 —— 在這個平台上最順的一類。來自 mattpocock/skills（MIT）。",
+      "commands": [
+        {
+          "name": "/grilling",
+          "label": "拷問我的想法",
+          "desc": "把計畫或決策一輪一輪問到清楚"
+        },
+        {
+          "name": "/grill-with-docs",
+          "label": "拷問並產出文件",
+          "desc": "同上，最後整理成規格（檔案目前拿不回來，用「接著問」請它貼出來）"
+        },
+        {
+          "name": "/to-questionnaire",
+          "label": "變成問卷",
+          "desc": "把答不出來的決策轉成可以問別人的題目"
+        },
+        {
+          "name": "/teach",
+          "label": "教我",
+          "desc": "把一個概念從頭講清楚"
+        },
+        {
+          "name": "/wait-what",
+          "label": "重講一次",
+          "desc": "上一段沒聽懂？要它換個方式說"
+        }
+      ]
+    },
+    {
+      "id": "writing",
+      "title": "寫東西",
+      "audience": "BD・PM",
+      "hint": "三步驟的寫作流程，依序用。來自 mattpocock/skills（MIT）。",
+      "commands": [
+        {
+          "name": "/writing-fragments",
+          "label": "① 先散著寫",
+          "desc": "把腦中的原料倒出來，不管結構"
+        },
+        {
+          "name": "/writing-shape",
+          "label": "② 抓形狀",
+          "desc": "把原料整理成一篇文章的骨架"
+        },
+        {
+          "name": "/writing-beats",
+          "label": "③ 鋪節奏",
+          "desc": "把骨架展開成有起伏的段落"
+        }
       ]
     },
     {
@@ -29,10 +109,26 @@
       "audience": "RD",
       "hint": "⚠️ 這些多半要有程式碼才有意義，而借用者目前還不能上傳檔案。等檔案上傳做完才會真正好用。",
       "commands": [
-        { "name": "/code-review", "label": "審查程式碼", "desc": "找 bug 與可簡化處" },
-        { "name": "/simplify", "label": "簡化", "desc": "只做品質清理，不找 bug" },
-        { "name": "/security-review", "label": "安全審查", "desc": "檢查改動的安全問題" },
-        { "name": "/claude-api", "label": "Claude API 參考", "desc": "model id、定價、參數、串流" }
+        {
+          "name": "/code-review",
+          "label": "審查程式碼",
+          "desc": "找 bug 與可簡化處"
+        },
+        {
+          "name": "/simplify",
+          "label": "簡化",
+          "desc": "只做品質清理，不找 bug"
+        },
+        {
+          "name": "/security-review",
+          "label": "安全審查",
+          "desc": "檢查改動的安全問題"
+        },
+        {
+          "name": "/claude-api",
+          "label": "Claude API 參考",
+          "desc": "model id、定價、參數、串流"
+        }
       ]
     }
   ]

@@ -100,14 +100,13 @@ async def _prepare_workdir(
     workdir = (settings.job_root / job["job_id"]).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
 
-    # 站台 curated skills。後複製、覆蓋同名檔 ——
-    # 不讓借用者用自己的版本蓋掉團隊審過的指令。
-    curated = HERE / "skills" / "commands"
+    # 站台 curated 的 commands 與 skills（worker/job-claude/）。
+    # 後複製、覆蓋同名檔 —— 不讓借用者用自己的版本蓋掉團隊審過的內容。
+    curated = HERE / "job-claude"
     if curated.is_dir():
-        target = workdir / ".claude" / "commands"
-        target.mkdir(parents=True, exist_ok=True)
-        for src in curated.glob("*.md"):
-            shutil.copy2(src, target / src.name)
+        shutil.copytree(curated, workdir / ".claude", dirs_exist_ok=True)
+        # README 是給我們看的，不該被 Claude 當成 job 的一部分讀進去。
+        (workdir / ".claude" / "README.md").unlink(missing_ok=True)
 
     resume_name = ""
     if url := job.get("resume_from_url"):
