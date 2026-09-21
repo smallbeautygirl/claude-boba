@@ -390,7 +390,7 @@ HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
 | ~~3~~ | ✅ **已解**：2.1.197 ↔ 2.1.278 雙向 resume 都成功且上下文連續。閘門降級為「記錄 + 警告」，不擋下（見下方） | — |
 | ~~4~~ | ~~Observ service id~~ | ✅ 已取得：`e39940ea-1fdf-4527-a3b7-c8d6334e5d2e` |
 | ~~5~~ | ✅ **已解**：內部網路 + tinyproxy 白名單實測通過，Claude Code 吃 `HTTPS_PROXY`（見下方） | — |
-| 5b | ⚠️ **新增**：worker 要啟動 job 容器，掛 `docker.sock` 等同 root。誰來啟動、用什麼權限 | 見 §9「誰啟動 job 容器」 |
+| ~~5b~~ | ✅ **已決**：worker 跑在 host 上，自己 `docker run` job。不掛 docker.sock | — |
 | 6 | ~~cache read / cache write 的官方費率~~ | 降級：#1b 已答，計費改採信 `total_cost_usd`，不再需要自算費率 |
 
 ### ~~`--bare` 與 OAuth 憑證互斥~~ → 已解（2026-09-21 實測）
@@ -552,7 +552,7 @@ Claude Code，而且沒有任何人會發現。
 
 驗證：job 內嘗試覆寫憑證 → `Read-only file system`；host 上的憑證檔未變更。
 
-### 誰啟動 job 容器（未決）
+### 誰啟動 job 容器 → 已決：worker 跑在 host 上
 
 `run-job.sh` 需要能執行 `docker run`。目前 `docker-compose.yml` 是把 `/var/run/docker.sock`
 掛進 worker，**而掛 docker.sock 等同給該容器 root 權限** —— 一個能操作 docker 的程序
@@ -566,18 +566,35 @@ Claude Code，而且沒有任何人會發現。
 | worker 在容器內 + 掛 docker.sock | 部署最乾淨，但等於把 root 給了 worker 容器 |
 | rootless Docker 或 socket proxy（只放行 `container create/start`） | 最安全，設定最麻煩 |
 
-**傾向第一條**：worker 是自己寫的程式、不執行借用者的內容，跑在 host 上的風險遠低於
-把 docker.sock 交出去；而「出租者要裝 Python」這個代價，用一個安裝腳本就能吸收。
+**決定：第一條。** worker 是自己寫的程式、不執行借用者的內容，跑在 host 上的風險遠低於
+把 docker.sock 交出去。「出租者要裝 Python」這個代價由安裝腳本吸收。
+
+**連帶影響 §9**：`docker-compose.yml` 只負責 egress proxy，不再包含 worker service，
+也不掛 `docker.sock`。worker 改由安裝腳本裝在 host 上。
+
+> 📌 要裝 Python 的是**出租者**（跑 worker 的人），不是借用者。
+> 借用者只用網頁，不安裝任何東西。
 
 ### 非技術阻斷項
 
-**去問帳號管理員：用自己的 Team 座位幫同事跑 Claude，公司有沒有意見。**
+**決定（2026-09-21）：先不正式報備，限少數同事試用。**
+
+原本的建議是先問帳號管理員。經評估後決定先以小規模試用起步，等實際有人在用、
+有真實數據之後再視情況處理。以下記錄為什麼這個決定在小規模下是合理的，
+以及**什麼情況下必須回頭補問**。
+
+原本要問的問題是：
 
 這不是合規性問題（沒有分享憑證，§1 已說明），是**資源分配政策**問題：這個工具在做的事，
 是把公司分配給 A 的額度挪給 B 用。組織政策確實存在（`~/.claude/policy-limits.json` 有
 `require_trusted_devices`，代表有 admin 在管），所以這題的答案不是技術決定的。
 
-**現在問，比做完再問便宜太多。**
+**觸發回頭補問的條件**（任一成立就該主動去問，不要等被發現）：
+
+- 使用者超出「少數同事」的範圍（例如跨部門、或超過 10 人）
+- 有人開始把它當成日常工作流程的固定環節，而非偶發救急
+- 單月累積的 API 等價金額達到會被注意的量級
+- 組織政策（`policy-limits.json`）出現新的限制項
 
 ### TA 橫跨 BD/PM 與 RD 的後果
 

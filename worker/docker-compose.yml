@@ -21,17 +21,8 @@ services:
     restart: unless-stopped
     networks: [jobnet, egress]
 
-  worker:
-    build:
-      context: .
-      args:
-        NODE_VERSION: "22.23.2"
-        CLAUDE_CODE_VERSION: "2.1.278"
-    image: claude-boba-worker:2.1.278
-    restart: unless-stopped
-    env_file: .env
-    networks: [egress]
-    volumes:
-      # worker 需要啟動 job 容器。掛 docker.sock 等同 root 權限 ——
-      # 這是目前未決的設計項，見 SPEC.md §9「誰啟動 job 容器」。
-      - /var/run/docker.sock:/var/run/docker.sock
+# worker 本身**不在這裡**。它跑在 host 上（由安裝腳本裝），自己呼叫 docker run
+# 啟動 job 容器。原因：若把 worker 放進容器，它就需要 /var/run/docker.sock，
+# 而掛 docker.sock 等同給該容器 root —— 見 SPEC.md §11「誰啟動 job 容器」。
+#
+# 這裡只起 egress proxy 與兩張網路；job 容器的形狀見 worker/run-job.sh。
