@@ -1,0 +1,37 @@
+# 出租者端。`docker compose up -d` 起 egress proxy 與 worker。
+#
+# job 不在這裡定義 —— 每個 job 是一個**用完即丟的獨立容器**，由 worker 在收到工作時
+# 動態啟動。理由見 SPEC.md §11「per-job HOME」：HOME 若在 job 之間共用，
+# 前一個 job 可以在 ~/.claude/ 寫入 settings.json（含 hooks）或 skill，
+# 下一個 job 執行時就會載入它。job 容器的完整形狀見 worker/run-job.sh。
+
+name: claude-boba-worker
+
+networks:
+  # job 容器只接這張網，internal 代表完全沒有對外路由。
+  jobnet:
+    internal: true
+  # 只有 proxy 接得到外網。
+  egress:
+
+services:
+  egress-proxy:
+    build: ./egress
+    image: claude-boba-egress:1
+    restart: unless-stopped
+    networks: [jobnet, egress]
+
+  worker:
+    build:
+      context: .
+      args:
+        NODE_VERSION: "22.23.2"
+        CLAUDE_CODE_VERSION: "2.1.278"
+    image: claude-boba-worker:2.1.278
+    restart: unless-stopped
+    env_file: .env
+    networks: [egress]
+    volumes:
+      # worker 需要啟動 job 容器。掛 docker.sock 等同 root 權限 ——
+      # 這是目前未決的設計項，見 SPEC.md §9「誰啟動 job 容器」。
+      - /var/run/docker.sock:/var/run/docker.sock

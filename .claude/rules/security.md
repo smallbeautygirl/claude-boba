@@ -20,9 +20,14 @@ These rules are always active. Violations must be fixed before merging.
 出租者的 Anthropic 憑證是這整個系統裡最敏感的東西 —— 它被盜等於帳號被停權。
 
 - 唯讀掛載，不 `COPY` 進 image，不寫進環境變數
-- 容器的 `HOME` 必須是乾淨的：`$HOME/.claude/` 裡**只有**唯讀掛入的 `.credentials.json`，
-  不得出現 `settings.json`、`plugins/`、`skills/` 或 MCP 設定
+- 容器的 `HOME` 必須是**每個 job 全新的**（`--tmpfs`），裡面只有唯讀掛入的
+  `.credentials.json`，不得出現 `settings.json`、`plugins/`、`skills/` 或 MCP 設定
 - job 容器跑完即銷毀
+
+> 🚨 **HOME 絕不可在 job 之間共用。** 2026-09-21 實測：一次 job 跑完後，容器會在
+> `~/.claude/` 留下 `plugins/`、`skills/`、`settings` 類檔案。若 HOME 共用，借用者 A
+> 能寫入帶 hooks 的 `settings.json` 或塞一個 skill，**借用者 B 的 job 執行時就會載入它**
+> —— 跨 job 的任意程式碼執行。用 `--tmpfs` 是唯一可接受的做法。
 
 > ⚠️ **不要用 `--bare` 來做隔離。** 它不讀 OAuth 與 keychain（只吃 `ANTHROPIC_API_KEY`
 > 或 `apiKeyHelper`），會無視掛進去的憑證並回 `Not logged in`。隔離由上面那條乾淨 HOME
