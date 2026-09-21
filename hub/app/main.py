@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .config import settings
 from .db import Base, engine
 from .routers import jobs, worker
 
@@ -20,11 +21,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="claude-boba hub", lifespan=lifespan)
 
-# Phase 1：前端跑在 vite dev server，與 Hub 不同 port。
-# 上線前要收斂成明確的來源（.claude/rules/security.md：CORS 不用 ["*"]）。
+# 前端跑在 vite dev server，與 Hub 不同 port，所以需要 CORS。
+# 來源從設定讀（見 config.py），不寫死也不用 ["*"]。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
