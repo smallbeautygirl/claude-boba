@@ -16,7 +16,6 @@ import {
 import { describe, toLine, type Line } from "../events";
 
 const POLL_MS = 5000;
-const SITE_TITLE = "claude-boba 🧋";
 
 export function JobDetail() {
   const { id = "" } = useParams();
@@ -92,14 +91,16 @@ export function JobDetail() {
     return () => clearInterval(t);
   }, [id, done, live]);
 
-  // 分頁標題就是狀態列。「可以離開」的心智模型（web-spec §4）靠 Teams 通知撐著，
-  // 但開著的分頁本身是更便宜的一條 —— 跑完時分頁上的字自己會變，不用切回來看。
+  // 這一頁的標題再加上狀態。基準標題由 App 的 useDocumentTitle 依路徑設定，
+  // 這裡只覆寫掉它 —— 離開這一頁時路徑會變，那邊會自己蓋回去，不需要 cleanup。
+  //
+  // 「可以離開」的心智模型（web-spec §4）靠 Teams 通知撐著，但開著的分頁本身是更便宜
+  // 的一條：跑完時分頁上的字自己會變，不用切回來看。狀態放最前面，因為分頁很窄，
+  // 被截掉的一定是後面。
   useEffect(() => {
     if (!job) return;
-    document.title = `${MARK[job.status] ?? "⏳"} ${STATUS_LABEL[job.status]} · job ${job.id.slice(0, 8)}`;
-    return () => {
-      document.title = SITE_TITLE;
-    };
+    const status = `${MARK[job.status] ?? "⏳"} ${STATUS_LABEL[job.status]}`;
+    document.title = `${status} · job ${job.id.slice(0, 8)} · claude-boba`;
   }, [job]);
 
   if (loadError) {
