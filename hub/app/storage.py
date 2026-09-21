@@ -46,6 +46,10 @@ def transcript_key(job_id: uuid.UUID) -> str:
     return f"jobs/{job_id}/transcript.jsonl"
 
 
+def artifact_key(job_id: uuid.UUID, name: str) -> str:
+    return f"jobs/{job_id}/output/{name}"
+
+
 def presign_put(key: str) -> str:
     return _client().generate_presigned_url(
         "put_object",

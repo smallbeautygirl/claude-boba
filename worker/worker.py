@@ -21,6 +21,8 @@ from typing import Any
 import httpx
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 單一 job 最多上傳幾個產出檔案。與 Hub 的 MAX_ARTIFACTS 一致。
+MAX_ARTIFACTS = 50
 # 事件批次回報的間隔。太短會把 Hub 打爆，太長使用者會覺得畫面卡住。
 FLUSH_INTERVAL_SECONDS = 0.5
 # long-poll 的 client timeout 要比 Hub 的 hold 時間長，否則每次都是客戶端先斷。
@@ -119,6 +121,74 @@ async def _prepare_workdir(
     return workdir, resume_name
 
 
+# 這兩個目錄絕對不能上傳。
+#   .home/  是容器的 HOME，裡面掛著出租者的 .credentials.json ——
+#           上傳它等於把 Anthropic 憑證送上 S3
+#   .claude/ 是我們自己複製進去的 curated skills，不是 job 的產出
+_NEVER_UPLOAD = {".home", ".claude"}
+_NOT_OUTPUT = {"resume.jsonl"}
+
+
+def _collect_artifacts(workdir: Path) -> list[Path]:
+    """挑出這個 job 真正產出的檔案。
+
+    排除規則寫得保守，因為錯一次的後果是把出租者的憑證上傳到 S3：
+
+    - 跳過 `.home/`、`.claude/` 整棵樹
+    - 跳過 symlink。job 可以做一個指向 `.home/.claude/.credentials.json`
+      的連結，光看副檔名是看不出來的
+    - 解析後的真實路徑必須仍在 workdir 內
+    """
+    out: list[Path] = []
+    for path in workdir.rglob("*"):
+        rel = path.relative_to(workdir)
+        if rel.parts[0] in _NEVER_UPLOAD or rel.name in _NOT_OUTPUT:
+            continue
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(workdir.resolve())
+        except (OSError, ValueError):
+            continue
+        out.append(path)
+    return out
+
+
+async def _upload_artifacts(
+    client: httpx.AsyncClient, job_id: str, workdir: Path
+) -> int:
+    files = _collect_artifacts(workdir)
+    if not files:
+        return 0
+
+    manifest = [
+        {"name": str(f.relative_to(workdir)), "size_bytes": f.stat().st_size}
+        for f in files[:MAX_ARTIFACTS]
+    ]
+    resp = await client.post(
+        f"/api/worker/jobs/{job_id}/artifacts", json={"files": manifest}
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    if skipped := body.get("skipped"):
+        print(f"[worker] 這些檔案太大，略過：{skipped}", flush=True)
+
+    uploaded = 0
+    for item in body.get("uploads", []):
+        target = workdir / item["name"]
+        try:
+            put = await client.put(
+                item["put_url"], content=target.read_bytes(), timeout=180.0
+            )
+            put.raise_for_status()
+        except (httpx.HTTPError, OSError) as exc:
+            print(f"[worker] 上傳 {item['name']} 失敗：{exc!r}", flush=True)
+            continue
+        uploaded += 1
+    return uploaded
+
+
 def _find_transcript(workdir: Path) -> Path | None:
     """找出這次執行留下的 transcript。
 
@@ -179,6 +249,14 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     put_url = job.get("transcript_put_url")
     if put_url and (found := _find_transcript(workdir)):
         uploaded = await _upload_transcript(client, put_url, found)
+
+    try:
+        n = await _upload_artifacts(client, job_id, workdir)
+        if n:
+            print(f"[worker] 上傳了 {n} 個產出檔案", flush=True)
+    except (httpx.HTTPError, OSError) as exc:
+        # 檔案上傳失敗不該讓 job 算失敗 —— 結果文字已經拿到了。
+        print(f"[worker] 產出檔案上傳失敗：{exc!r}", flush=True)
 
     await state.finish(proc.returncode or 0, transcript_uploaded=uploaded)
     shutil.rmtree(workdir, ignore_errors=True)

@@ -19,9 +19,16 @@ from .. import events, storage
 from ..config import settings
 from ..db import get_session
 from ..enums import DebtStatus, DebtTier, JobStatus
-from ..models import Debt, Job, JobEvent, Usage, Worker
+from ..models import Artifact, Debt, Job, JobEvent, Usage, Worker
 from ..pricing import MIN_DEBT_USD, tier_for
-from ..schemas import EventBatch, JobResult, WorkerConfig, WorkerJob
+from ..schemas import (
+    MAX_ARTIFACT_BYTES,
+    ArtifactManifest,
+    EventBatch,
+    JobResult,
+    WorkerConfig,
+    WorkerJob,
+)
 
 router = APIRouter(prefix="/api/worker", tags=["worker"])
 
@@ -171,6 +178,36 @@ async def push_events(
     await session.commit()
     # 出租者按了停止 → 這裡回 True，worker 殺掉容器。SPEC §9 的控制通道。
     return {"next_seq": seq, "cancel": job.status is JobStatus.CANCELLED}
+
+
+@router.post("/jobs/{job_id}/artifacts")
+async def declare_artifacts(
+    job_id: uuid.UUID,
+    body: ArtifactManifest,
+    worker: Worker = Depends(require_worker),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """worker 宣告產出檔案，換回預簽 PUT URL。
+
+    Hub 是唯一持有 MinIO 憑證的一方；worker 只拿短效期的 URL。
+    """
+    job = await _owned_job(job_id, worker, session)
+
+    uploads: list[dict] = []
+    skipped: list[str] = []
+    for decl in body.files:
+        if decl.size_bytes > MAX_ARTIFACT_BYTES:
+            # 略過但要說 —— 悄悄丟掉檔案比擋下更糟。
+            skipped.append(decl.name)
+            continue
+        key = storage.artifact_key(job.id, decl.name)
+        session.add(
+            Artifact(job_id=job.id, name=decl.name, key=key, size_bytes=decl.size_bytes)
+        )
+        uploads.append({"name": decl.name, "put_url": storage.presign_put(key)})
+
+    await session.commit()
+    return {"uploads": uploads, "skipped": skipped}
 
 
 @router.post("/jobs/{job_id}/result")

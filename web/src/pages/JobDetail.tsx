@@ -5,7 +5,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { TERMINAL, api, type JobDetail as Job, type StreamItem } from "../api";
+import {
+  TERMINAL,
+  api,
+  type ArtifactRow,
+  type JobDetail as Job,
+  type StreamItem,
+} from "../api";
 import { describe, toLine, type Line } from "../events";
 
 const POLL_MS = 5000;
@@ -111,9 +117,44 @@ export function JobDetail() {
       </div>
 
       {done && <Outcome job={job} />}
+      {done && <Artifacts jobId={job.id} />}
       {job.can_follow_up && <FollowUp jobId={job.id} />}
     </div>
   );
+}
+
+// 產出檔案。下載連結是短效期的預簽 URL，每次載入這一頁才現開 ——
+// 它本身就是憑證，不該被存起來或轉貼。
+function Artifacts({ jobId }: { jobId: string }) {
+  const [files, setFiles] = useState<ArtifactRow[]>([]);
+
+  useEffect(() => {
+    api.artifacts(jobId).then(setFiles).catch(() => setFiles([]));
+  }, [jobId]);
+
+  if (files.length === 0) return null;
+  return (
+    <div className="artifacts">
+      <h2>產出的檔案</h2>
+      {files.map((f) => (
+        <div key={f.name} className="debt">
+          <div>
+            <div>{f.name}</div>
+            <div className="muted">{fmtSize(f.size_bytes)}</div>
+          </div>
+          <a className="chip-btn" href={f.download_url} download>
+            下載
+          </a>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function fmtSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 // 接著問：帶著上一個 job 的 transcript 真的 resume，不是把對話重貼一次

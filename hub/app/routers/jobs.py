@@ -13,11 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import events
+from .. import events, storage
 from ..auth import require_user
 from ..db import get_session
 from ..enums import JobStatus
-from ..models import Job, JobEvent, User, Worker
+from ..models import Artifact, Job, JobEvent, User, Worker
 from ..pricing import label_for
 from ..schemas import FollowUp, JobCreate, JobDetail, JobSummary
 
@@ -172,6 +172,31 @@ async def follow_up(
     job.borrower = user
     events.notify_new_job()
     return _detail(job)
+
+
+@router.get("/{job_id}/artifacts")
+async def artifacts(
+    job_id: uuid.UUID,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """產出檔案清單，附短效期下載連結。
+
+    預簽 URL 本身就是憑證，所以每次請求現開，不存下來也不寫進通知
+    （.claude/rules/security.md）。
+    """
+    await _get_job(job_id, session, user)
+    rows = await session.scalars(
+        select(Artifact).where(Artifact.job_id == job_id).order_by(Artifact.name)
+    )
+    return [
+        {
+            "name": a.name,
+            "size_bytes": a.size_bytes,
+            "download_url": storage.presign_get(a.key),
+        }
+        for a in rows
+    ]
 
 
 @router.get("/{job_id}/events")

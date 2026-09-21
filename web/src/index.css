@@ -110,3 +110,6 @@ button.small { padding: 5px 12px; font-size: 13px; }
   padding: 4px 10px; font-size: 13px; font-weight: 400; border-radius: 999px;
 }
 .chip-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.artifacts { margin-top: 20px; }
+.artifacts a.chip-btn { text-decoration: none; }

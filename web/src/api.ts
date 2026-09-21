@@ -88,6 +88,12 @@ export interface DebtRow {
   days: number;
 }
 
+export interface ArtifactRow {
+  name: string;
+  size_bytes: number;
+  download_url: string;
+}
+
 export interface CommandGroup {
   id: string;
   title: string;
@@ -189,6 +195,11 @@ export const api = {
     )}`,
 
   commands: () => fetch(`${HUB}/api/commands`).then(json<CommandCatalog>),
+
+  artifacts: (id: string) =>
+    fetch(`${HUB}/api/jobs/${id}/artifacts`, { headers: authed() }).then(
+      json<ArtifactRow[]>,
+    ),
 
   listWorkers: () => fetch(`${HUB}/api/workers`, { headers: authed() }).then(json<WorkerRow[]>),
 

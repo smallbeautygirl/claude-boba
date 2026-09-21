@@ -12,6 +12,9 @@ from .enums import JobStatus, SourceType
 # 上傳限制。SPEC.md §11：一句 "pong" 的 transcript 就 224 KB，真實 RD session
 # 估 10–50 MB。超過 50 MB 的 session，--resume 本身也會慢到不實用。
 MAX_PROMPT_CHARS = 2_000_000
+# 產出檔案的上限。超出的部分會被略過並在 UI 說明 —— 悄悄丟掉比擋下更糟。
+MAX_ARTIFACTS = 50
+MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 
 
 class JobCreate(BaseModel):
@@ -88,6 +91,17 @@ class EventBatch(BaseModel):
 
     from_seq: int = Field(ge=0)
     events: list[dict[str, Any]]
+
+
+class ArtifactDeclaration(BaseModel):
+    """worker 宣告它打算上傳哪些檔案，換取預簽 URL。"""
+
+    name: str = Field(min_length=1, max_length=512)
+    size_bytes: int = Field(ge=0)
+
+
+class ArtifactManifest(BaseModel):
+    files: list[ArtifactDeclaration] = Field(max_length=MAX_ARTIFACTS)
 
 
 class JobResult(BaseModel):

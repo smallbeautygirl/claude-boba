@@ -248,3 +248,28 @@ class Debt(Base):
     job: Mapped[Job] = relationship()
     borrower: Mapped[User] = relationship(foreign_keys=[borrower_id])
     lender: Mapped[User] = relationship(foreign_keys=[lender_id])
+
+
+class Artifact(Base):
+    """job 產出的檔案。
+
+    檔案本身在 MinIO，這裡只記 metadata。下載一律走短效期的預簽 URL
+    （.claude/rules/security.md）。
+    """
+
+    __tablename__ = "artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(512))
+    key: Mapped[str] = mapped_column(String(768))
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    job: Mapped[Job] = relationship()
