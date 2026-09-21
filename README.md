@@ -11,10 +11,35 @@
 
 ## 現在的狀態
 
-**設計完成，尚未實作。** 所有決策與理由寫在 [SPEC.md](SPEC.md)。
+**Phase 1 可跑。** 提交一個 job，它會真的在出租者的機器上執行，事件即時串回畫面。
 
-下一步是 SPEC.md §11 的 Phase 0 spike —— 有六項未驗證的假設，其中兩項失敗會直接推翻設計，
-在驗完之前寫任何功能程式碼都有白工的風險。
+所有決策與理由在 [SPEC.md](SPEC.md)（系統）與 [docs/web-spec.md](docs/web-spec.md)（畫面）。
+Phase 0 的六項 spike 全數通過，紀錄在 SPEC.md §11 —— 其中四項推翻了原本的設計。
+
+尚未實作：認證（Observ）、人情債帳本、排行榜、Teams 通知、檔案上傳。
+
+## 跑起來
+
+三個元件，三個終端機：
+
+```bash
+# 1. Hub（含 postgres + minio）
+cd hub && docker compose up -d
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn app.main:app --reload --port 8787
+
+# 2. Worker（出租者端。跑在 host 上，不在容器裡）
+cd worker && docker compose up -d          # egress 白名單 proxy
+docker build -t claude-boba-worker:2.1.278 .
+cp .env.example .env                       # 填 CLAUDE_CREDENTIALS
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python worker.py
+
+# 3. Web
+cd web && npm install && npm run dev        # http://localhost:5173
+```
+
+`hub/smoke.sh` 可以在沒有 worker 的情況下打過一遍協定。
 
 ## 這不是什麼
 
