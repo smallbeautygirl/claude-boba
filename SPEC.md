@@ -387,7 +387,7 @@ HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
 | 1a | ✅ **已答**：CLI JSON 有分項 token 欄位，cache read / creation 分開（見 §7） | — |
 | 1b | ✅ **已答**：`total_cost_usd` 在 Team 訂閱下回真實金額（US$0.0166 / 一趟 haiku），不是 0。§7 價格表可砍 | — |
 | ~~2~~ | ✅ **已解**：`--resume <任意路徑的 .jsonl>` 可行，換路徑、換檔名、乾淨 HOME 都正常完成（見下方） | — |
-| 3 | **版本漂移**：借用者與出租者 Claude Code 版本不同時，resume 的行為。**漂移機制已實證，見下方** | 提交時強制比對版本，不符就擋下 |
+| ~~3~~ | ✅ **已解**：2.1.197 ↔ 2.1.278 雙向 resume 都成功且上下文連續。閘門降級為「記錄 + 警告」，不擋下（見下方） | — |
 | ~~4~~ | ~~Observ service id~~ | ✅ 已取得：`e39940ea-1fdf-4527-a3b7-c8d6334e5d2e` |
 | 5 | egress 白名單下 Claude Code 能否正常運作（含 server-side 工具） | 放寬白名單或改設計 |
 | 6 | ~~cache read / cache write 的官方費率~~ | 降級：#1b 已答，計費改採信 `total_cost_usd`，不再需要自算費率 |
@@ -500,10 +500,28 @@ HOME=<乾淨目錄> claude -p "Now reply with exactly: pong2" \
 1. Dockerfile 必須**同時釘 node 版本與 Claude Code 版本**，不可用 `latest`
 2. Worker 啟動時回報自己的 CLI 版本給 Hub，寫進 `jobs.claude_code_version_lender`
 3. 提交 `.jsonl` 時記錄借用者版本，兩者不符時在 UI 明確警告
-   （擋下或放行是產品決策，但**不能無聲執行**）
+   —— **警告，不擋下**（理由見下）
 
 沒有第 1 點的話，每個出租者的 worker 會依自己 base image 的 node 版本裝到不同的
 Claude Code，而且沒有任何人會發現。
+
+**實測：跨版本 resume 雙向都可行（2026-09-21）**
+
+用相隔 81 個版本的兩份 CLI 互相 resume：
+
+| 方向 | 結果 |
+|---|---|
+| 2.1.197 resume 2.1.278 產生的 transcript | ✅ `terminal_reason: completed` |
+| 2.1.278 resume 2.1.197 產生的 transcript | ✅ completed，**且上下文語意連續** |
+
+第二項是強驗證：在舊版 session 裡埋入 codeword `banana`，用新版 resume 後詢問，
+正確答出 `banana`。不只是「沒有崩潰」，是上下文真的被接上了。
+
+**因此版本閘門定為「記錄 + 警告」，不擋下。** 擋下會把一條實測可用的路徑無謂關閉。
+
+> ⚠️ 限制：只測過這一組版本，且官方仍聲明 transcript 格式是內部的、會隨版本改變。
+> 記錄版本的用途因此是**出事時能診斷**，不是預防性封鎖。若日後真的出現版本相關的
+> 失敗，屆時再依實際失敗的版本區間收緊閘門。
 
 ### 非技術阻斷項
 
