@@ -34,6 +34,10 @@ python3 -m venv .venv
 
 `ruff` 釘在 0.16.1 —— 跟 `lighthouse-saas-api` 同一版，換版本會格式化出不同結果。
 
+本機 venv 目前是 Python 3.12，而部署目標是 3.11（見 SPEC.md §3）。`pyproject.toml`
+的 `target-version = "py311"` 會擋下 3.12-only 的語法，所以這個落差不致於讓東西
+溜進去；但等 Dockerfile 出現時，image 要用 3.11。
+
 ## 給 agent 的說明
 
 見 [CLAUDE.md](CLAUDE.md) 與 [.claude/rules/](.claude/rules/)。
