@@ -52,6 +52,8 @@ def _detail(job: Job) -> JobDetail:
         id=job.id,
         status=job.status,
         borrower=job.borrower.display_name,
+        preview=_preview(job.prompt),
+        is_follow_up=job.parent_job_id is not None,
         lender=job.worker.owner.display_name if job.worker else None,
         parent_job_id=job.parent_job_id,
         # 只有成功且留下 transcript 的 job 能被接續。

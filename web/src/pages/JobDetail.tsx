@@ -20,6 +20,7 @@ const POLL_MS = 5000;
 export function JobDetail() {
   const { id = "" } = useParams();
   const [job, setJob] = useState<Job | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [live, setLive] = useState(true);
@@ -48,11 +49,18 @@ export function JobDetail() {
       if (next.length) setLines((prev) => [...prev, ...next]);
     };
 
-    api.getJob(id).then((j) => {
-      if (cancelled) return;
-      setJob(j);
-      startRef.current = new Date(j.created_at).getTime();
-    });
+    api
+      .getJob(id)
+      .then((j) => {
+        if (cancelled) return;
+        setJob(j);
+        startRef.current = new Date(j.created_at).getTime();
+      })
+      // 沒有這個 catch，任何載入失敗都會永遠停在「載入中…」——
+      // 使用者看不出是壞了還是慢。
+      .catch((e: Error) => {
+        if (!cancelled) setLoadError(e.message);
+      });
 
     const source = new EventSource(api.streamUrl(id, 0));
     source.onmessage = (e) => absorb([JSON.parse(e.data) as StreamItem]);
@@ -83,6 +91,16 @@ export function JobDetail() {
     return () => clearInterval(t);
   }, [id, done, live]);
 
+  if (loadError) {
+    return (
+      <div className="card">
+        <Link className="back" to="/jobs">
+          ← 我的 job
+        </Link>
+        <p className="error">這個 job 載入失敗：{loadError}</p>
+      </div>
+    );
+  }
   if (!job) return <div className="card">載入中…</div>;
 
   return (
