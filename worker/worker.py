@@ -88,10 +88,62 @@ async def report_config(client: httpx.AsyncClient) -> str:
     return resp.json()["name"]
 
 
+async def _prepare_workdir(
+    client: httpx.AsyncClient, job: dict[str, Any]
+) -> tuple[Path, str]:
+    """建好這個 job 的工作目錄，回傳 (目錄, 要 resume 的檔名)。
+
+    每個 job 一個全新目錄，跑完刪掉。HOME 也在裡面（`.home/`），所以出租者的
+    個人設定一樣不存在 —— 隔離性與先前的 tmpfs 相同，差別只在 transcript
+    活得過容器，那是「接著問」的前提（SPEC.md §4.2）。
+    """
+    workdir = (settings.job_root / job["job_id"]).resolve()
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    # 站台 curated skills。後複製、覆蓋同名檔 ——
+    # 不讓借用者用自己的版本蓋掉團隊審過的指令。
+    curated = HERE / "skills" / "commands"
+    if curated.is_dir():
+        target = workdir / ".claude" / "commands"
+        target.mkdir(parents=True, exist_ok=True)
+        for src in curated.glob("*.md"):
+            shutil.copy2(src, target / src.name)
+
+    resume_name = ""
+    if url := job.get("resume_from_url"):
+        resume_name = "resume.jsonl"
+        async with client.stream("GET", url) as resp:
+            resp.raise_for_status()
+            with (workdir / resume_name).open("wb") as fh:
+                async for chunk in resp.aiter_bytes():
+                    fh.write(chunk)
+    return workdir, resume_name
+
+
+def _find_transcript(workdir: Path) -> Path | None:
+    """找出這次執行留下的 transcript。
+
+    Claude Code 把它寫到 $HOME/.claude/projects/<目錄slug>/<session>.jsonl。
+    取最新的一份 —— resume 時同一個 session 會被續寫，仍是同一個檔。
+    """
+    found = list((workdir / ".home" / ".claude" / "projects").glob("*/*.jsonl"))
+    return max(found, key=lambda f: f.stat().st_mtime) if found else None
+
+
+async def _upload_transcript(client: httpx.AsyncClient, url: str, path: Path) -> bool:
+    try:
+        resp = await client.put(url, content=path.read_bytes(), timeout=120.0)
+        resp.raise_for_status()
+    except (httpx.HTTPError, OSError) as exc:
+        # 上傳失敗只代表不能接著問，不該讓整個 job 算失敗 —— 結果已經跑出來了。
+        print(f"[worker] transcript 上傳失敗（此 job 無法接續）：{exc!r}", flush=True)
+        return False
+    return True
+
+
 async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     job_id = job["job_id"]
-    workdir = (settings.job_root / job_id).resolve()
-    workdir.mkdir(parents=True, exist_ok=True)
+    workdir, resume_name = await _prepare_workdir(client, job)
 
     env = {
         "JOB_WORKDIR": str(workdir),
@@ -108,7 +160,7 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         job_id,
         job["prompt"],
         job.get("model") or "sonnet",
-        job.get("transcript_key") or "",
+        resume_name,
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -124,7 +176,12 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     finally:
         await state.flush()
 
-    await state.finish(proc.returncode or 0)
+    uploaded = False
+    put_url = job.get("transcript_put_url")
+    if put_url and (found := _find_transcript(workdir)):
+        uploaded = await _upload_transcript(client, put_url, found)
+
+    await state.finish(proc.returncode or 0, transcript_uploaded=uploaded)
     shutil.rmtree(workdir, ignore_errors=True)
 
 
@@ -175,10 +232,13 @@ class _JobState:
             )
             await killer.wait()
 
-    async def finish(self, returncode: int) -> None:
+    async def finish(
+        self, returncode: int, *, transcript_uploaded: bool = False
+    ) -> None:
         payload = _result_payload(
             self.result, returncode, self.cancelled, self.stderr_tail
         )
+        payload["transcript_uploaded"] = transcript_uploaded
         resp = await self.client.post(
             f"/api/worker/jobs/{self.job_id}/result", json=payload
         )

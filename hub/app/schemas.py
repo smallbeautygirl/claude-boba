@@ -36,6 +36,8 @@ class JobSummary(BaseModel):
 
 class JobDetail(JobSummary):
     lender: str | None
+    parent_job_id: uuid.UUID | None
+    can_follow_up: bool
     prompt: str
     source_type: SourceType
     worker_id: uuid.UUID | None
@@ -58,16 +60,27 @@ class WorkerConfig(BaseModel):
     claude_code_version: str | None = None
 
 
+class FollowUp(BaseModel):
+    """接著問。上下文由被接續 job 的 transcript 提供。"""
+
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+
+
 class WorkerJob(BaseModel):
-    """Hub 派給 worker 的工作。"""
+    """Hub 派給 worker 的工作。
+
+    檔案都走預簽 URL，worker 因此不需要 MinIO 憑證，job 容器更是完全碰不到。
+    """
 
     job_id: uuid.UUID
     prompt: str
     model: str
     source_type: SourceType
-    transcript_key: str | None
     job_budget_usd: Decimal
     available_models: list[str]
+    # 要接續的 transcript（下載用），與這次跑完要把 transcript 放哪（上傳用）。
+    resume_from_url: str | None = None
+    transcript_put_url: str | None = None
 
 
 class EventBatch(BaseModel):
@@ -87,3 +100,4 @@ class JobResult(BaseModel):
     error_kind: str | None = None
     error_detail: str | None = None
     lender_cli_version: str | None = None
+    transcript_uploaded: bool = False

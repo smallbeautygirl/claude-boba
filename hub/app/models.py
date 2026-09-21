@@ -122,6 +122,11 @@ class Job(Base):
         UUID(as_uuid=True), ForeignKey("workers.id")
     )
 
+    # 續問：指向被接續的那個 job，以及它留下的 transcript。
+    # 為了支援續問，job 容器不再用 --no-session-persistence（SPEC.md §4.2）。
+    parent_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id")
+    )
     transcript_key: Mapped[str | None] = mapped_column(String(512))
     output_prefix: Mapped[str | None] = mapped_column(String(512))
 

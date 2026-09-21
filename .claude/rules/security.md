@@ -20,14 +20,20 @@ These rules are always active. Violations must be fixed before merging.
 出租者的 Anthropic 憑證是這整個系統裡最敏感的東西 —— 它被盜等於帳號被停權。
 
 - 唯讀掛載，不 `COPY` 進 image，不寫進環境變數
-- 容器的 `HOME` 必須是**每個 job 全新的**（`--tmpfs`），裡面只有唯讀掛入的
-  `.credentials.json`，不得出現 `settings.json`、`plugins/`、`skills/` 或 MCP 設定
-- job 容器跑完即銷毀
+- 容器的 `HOME` 必須是**每個 job 全新的目錄**（目前是工作目錄底下的 `.home/`），
+  裡面只有唯讀掛入的 `.credentials.json`，不得出現出租者的 `settings.json`、
+  `plugins/`、`skills/` 或 MCP 設定
+- job 容器跑完即銷毀，worker 接著刪掉整個工作目錄（含 `.home/`）
 
 > 🚨 **HOME 絕不可在 job 之間共用。** 2026-09-21 實測：一次 job 跑完後，容器會在
 > `~/.claude/` 留下 `plugins/`、`skills/`、`settings` 類檔案。若 HOME 共用，借用者 A
 > 能寫入帶 hooks 的 `settings.json` 或塞一個 skill，**借用者 B 的 job 執行時就會載入它**
-> —— 跨 job 的任意程式碼執行。用 `--tmpfs` 是唯一可接受的做法。
+> —— 跨 job 的任意程式碼執行。
+>
+> **這條的重點是「每個 job 全新」，不是「用 tmpfs」。** 最初的實作用 tmpfs，
+> 後來改成工作目錄底下的 `.home/` —— 因為 tmpfs 隨容器消失，連 transcript 也一起沒了，
+> 而「接著問」需要它（SPEC.md §4.2）。隔離性完全相同：仍是每個 job 一個全新目錄、
+> 跑完刪除。**要改這裡之前先確認新方案仍然滿足「全新」這個條件。**
 
 > ⚠️ **不要用 `--bare` 來做隔離。** 它不讀 OAuth 與 keychain（只吃 `ANTHROPIC_API_KEY`
 > 或 `apiKeyHelper`），會無視掛進去的憑證並回 `Not logged in`。隔離由上面那條乾淨 HOME

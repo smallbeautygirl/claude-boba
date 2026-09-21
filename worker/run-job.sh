@@ -23,19 +23,25 @@ PROXY="${EGRESS_PROXY:-http://egress-proxy:8888}"
 resume=()
 [[ -n "$TRANSCRIPT" ]] && resume=(--resume "/job/$TRANSCRIPT")
 
+mkdir -p "$WORKDIR/.home/.claude"
+
 # availableModels 吃 JSON 陣列
 models_json=$(printf '%s' "$MODELS" | python3 -c \
   'import sys,json;print(json.dumps([m for m in sys.stdin.read().split(",") if m]))')
 
+# HOME 是工作目錄底下的 .home，不是 tmpfs。
+#
+# 隔離性完全相同 —— 每個 job 一個全新目錄，worker 跑完就刪，出租者的個人
+# settings / plugins / skills 一樣不存在。差別只在 transcript 活得過容器，
+# 這是「接著問」的前提（SPEC.md §4.2）。
 exec timeout --signal=TERM --kill-after=20 "$TIMEOUT" \
   docker run --rm \
     --name "boba-job-$JOB_ID" \
     --network "$NETWORK" \
     -e HTTPS_PROXY="$PROXY" -e HTTP_PROXY="$PROXY" \
     --user "$(id -u):$(id -g)" \
-    -e HOME=/home/runner \
-    --tmpfs "/home/runner:rw,size=256m,uid=$(id -u),gid=$(id -g)" \
-    -v "$CREDS:/home/runner/.claude/.credentials.json:ro" \
+    -e HOME=/job/.home \
+    -v "$CREDS:/job/.home/.claude/.credentials.json:ro" \
     -v "$WORKDIR:/job" \
     -w /job \
     "$IMAGE" \
@@ -46,5 +52,4 @@ exec timeout --signal=TERM --kill-after=20 "$TIMEOUT" \
       --settings "{\"availableModels\": $models_json}" \
       --allowedTools "Read,Edit,Bash" \
       --permission-mode acceptEdits --permission-prompts none \
-      --no-session-persistence \
       < /dev/null

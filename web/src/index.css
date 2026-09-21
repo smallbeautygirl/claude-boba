@@ -96,3 +96,5 @@ button.small { padding: 5px 12px; font-size: 13px; }
 .debt-label { font-size: 16px; }
 .consent pre { white-space: pre-wrap; word-break: break-all; background: var(--bg);
   border: 1px solid var(--line); border-radius: 6px; padding: 10px; font-size: 12px; }
+
+.followup { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }

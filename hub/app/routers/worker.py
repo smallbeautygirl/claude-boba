@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import events
+from .. import events, storage
 from ..config import settings
 from ..db import get_session
 from ..enums import DebtStatus, DebtTier, JobStatus
@@ -91,9 +91,12 @@ async def poll(
         prompt=job.prompt,
         model=job.model,
         source_type=job.source_type,
-        transcript_key=job.transcript_key,
         job_budget_usd=worker.job_budget_usd,
         available_models=worker.available_models,
+        resume_from_url=(
+            storage.presign_get(job.transcript_key) if job.transcript_key else None
+        ),
+        transcript_put_url=storage.presign_put(storage.transcript_key(job.id)),
     )
 
 
@@ -186,6 +189,9 @@ async def push_result(
     job.error_detail = body.error_detail
     job.lender_cli_version = body.lender_cli_version
     job.finished_at = datetime.now(UTC)
+    if body.transcript_uploaded:
+        # 成功上傳才記 key，否則續問會指向一個不存在的物件。
+        job.transcript_key = storage.transcript_key(job.id)
 
     # 金額直接採信 CLI 的 costUSD（SPEC §7）。我們不自己算費率 ——
     # costBasis 為 "list" 表示它已經是 API 標價，正是 §4.6 要的「API 等價金額」。

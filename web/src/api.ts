@@ -27,6 +27,8 @@ export interface JobDetail {
   status: JobStatus;
   borrower: string;
   lender: string | null;
+  parent_job_id: string | null;
+  can_follow_up: boolean;
   model: string;
   created_at: string;
   finished_at: string | null;
@@ -147,6 +149,13 @@ export const api = {
       method: "POST",
       headers: authed({ "content-type": "application/json" }),
       body: JSON.stringify(body),
+    }).then(json<JobDetail>),
+
+  followUp: (id: string, prompt: string) =>
+    fetch(`${HUB}/api/jobs/${id}/follow-up`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ prompt }),
     }).then(json<JobDetail>),
 
   listJobs: () => fetch(`${HUB}/api/jobs`, { headers: authed() }).then(json<JobDetail[]>),

@@ -4,7 +4,7 @@
 // 跑完會通知，等待感就消失了。回來時 Hub 會先重播歷史事件再接上即時流。
 
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { TERMINAL, api, type JobDetail as Job, type StreamItem } from "../api";
 import { describe, toLine, type Line } from "../events";
 
@@ -84,6 +84,11 @@ export function JobDetail() {
         ← 再丟一個
       </Link>
       <h1>Job {job.id.slice(0, 8)}</h1>
+      {job.parent_job_id && (
+        <p className="hint">
+          接續自 <Link to={`/jobs/${job.parent_job_id}`}>{job.parent_job_id.slice(0, 8)}</Link>
+        </p>
+      )}
       <p className="lede">
         {job.borrower} · {job.model}
         {job.lender && ` · 由 ${job.lender} 代跑`} · <StatusChip status={job.status} />
@@ -106,6 +111,48 @@ export function JobDetail() {
       </div>
 
       {done && <Outcome job={job} />}
+      {job.can_follow_up && <FollowUp jobId={job.id} />}
+    </div>
+  );
+}
+
+// 接著問：帶著上一個 job 的 transcript 真的 resume，不是把對話重貼一次
+// （跨機器 resume 已於 SPEC §11 spike #2 驗證可行）。
+function FollowUp({ jobId }: { jobId: string }) {
+  const navigate = useNavigate();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function send() {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await api.followUp(jobId, text);
+      navigate(`/jobs/${next.id}`);
+      setText("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "送出失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="followup">
+      <label>
+        接著問
+        <textarea
+          rows={3}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="沿用上面的對話繼續問…"
+        />
+      </label>
+      {error && <p className="error">{error}</p>}
+      <button onClick={send} disabled={busy || !text.trim()}>
+        {busy ? "送出中…" : "送出"}
+      </button>
     </div>
   );
 }

@@ -27,7 +27,7 @@
 三個元件：`hub/`（FastAPI）、`worker/`（出租者端，跑在 host 上）、`web/`（React）。
 怎麼跑見 [README.md](README.md)。
 
-尚未實作：排行榜、Teams 通知、檔案與 `.jsonl` 上傳、MinIO 實際接上。
+尚未實作：排行榜、Teams 通知、借用者上傳檔案與 `.jsonl`。
 
 ### 動手前要知道的幾個地雷
 
@@ -35,7 +35,8 @@
 
 - **不要給 worker 的 `claude` 加 `--bare`** —— 它不讀 OAuth，會回 `Not logged in`，
   而錯誤訊息會把人導向「去登入」這條錯的路
-- **job 的 HOME 必須是每個 job 全新的 tmpfs** —— 共用會造成跨 job 的任意程式碼執行
+- **job 的 HOME 必須是每個 job 全新的目錄** —— 共用會造成跨 job 的任意程式碼執行。
+  重點是「全新」不是「tmpfs」，見 security.md 紅線 2
 - **SQLAlchemy 的 enum 欄位要用 `_enum()`**，`String` 配 `Mapped[SomeEnum]` 不會轉型
 - **`NULL IN (...)` 在 SQL 裡永遠不為真** —— 自動派單的 job 會一筆都領不到且不報錯
 - **Observ 的身分端點用 `x-request-service-id`**，不是 `X-Service-Id`；送錯只會回 401

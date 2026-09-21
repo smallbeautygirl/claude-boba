@@ -19,7 +19,7 @@ from ..db import get_session
 from ..enums import JobStatus
 from ..models import Job, JobEvent, User, Worker
 from ..pricing import label_for
-from ..schemas import JobCreate, JobDetail, JobSummary
+from ..schemas import FollowUp, JobCreate, JobDetail, JobSummary
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -41,6 +41,9 @@ def _detail(job: Job) -> JobDetail:
         status=job.status,
         borrower=job.borrower.display_name,
         lender=job.worker.owner.display_name if job.worker else None,
+        parent_job_id=job.parent_job_id,
+        # 只有成功且留下 transcript 的 job 能被接續。
+        can_follow_up=job.status.creates_debt and job.transcript_key is not None,
         model=job.model,
         created_at=job.created_at,
         finished_at=job.finished_at,
@@ -127,6 +130,48 @@ async def get_job(
     session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
     return _detail(await _get_job(job_id, session, user))
+
+
+@router.post("/{job_id}/follow-up", response_model=JobDetail, status_code=201)
+async def follow_up(
+    job_id: uuid.UUID,
+    body: FollowUp,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> JobDetail:
+    """接著問。
+
+    新開一個 job，但帶著上一個 job 的 transcript。worker 會用
+    `claude --resume <transcript>` 接上去 —— 這是真的續跑，不是把對話重貼一次
+    （跨機器 resume 已於 SPEC.md §11 spike #2 驗證可行）。
+    """
+    parent = await _get_job(job_id, session, user)
+    if parent.transcript_key is None:
+        raise HTTPException(
+            status_code=409,
+            detail="這個 job 沒有留下可接續的紀錄（可能是失敗或中止了）。",
+        )
+    if parent.borrower_id != user.id:
+        raise HTTPException(status_code=403, detail="只有原本的提問者能接著問")
+
+    job = Job(
+        borrower_id=user.id,
+        prompt=body.prompt,
+        model=parent.model,
+        source_type=parent.source_type,
+        parent_job_id=parent.id,
+        transcript_key=parent.transcript_key,
+        # 續問預設回同一台 worker，但不強制 —— transcript 在 MinIO 上，
+        # 任何 worker 都拿得到。那台剛好離線時不該讓使用者卡住。
+        requested_worker_id=None,
+        status=JobStatus.QUEUED,
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+    job.borrower = user
+    events.notify_new_job()
+    return _detail(job)
 
 
 @router.get("/{job_id}/events")

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .db import Base, engine
 from .routers import auth, jobs, ledger, worker, workers
+from .storage import ensure_bucket
 
 
 @asynccontextmanager
@@ -15,6 +16,7 @@ async def lifespan(app: FastAPI):
     # Phase 1 用 create_all。一旦有真實資料就要換成 Alembic —— 見 README。
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    ensure_bucket()
     yield
     await engine.dispose()
 
