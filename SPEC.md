@@ -209,37 +209,24 @@ debts        id, job_id, borrower_id, lender_id,
 
 ---
 
-## 7. 計價公式
+## 7. 計價
+
+**不自己算費率。** CLI 已經算好，且明確標示它是按 API 標價算的。
 
 ```
-job_usd = Σ over usages:
-      input_tokens          / 1e6 × input_rate(model)
-    + output_tokens         / 1e6 × output_rate(model)
-    + cache_creation_tokens / 1e6 × cache_write_rate(model)
-    + cache_read_tokens     / 1e6 × cache_read_rate(model)
+job_usd = total_cost_usd        # 等於 Σ modelUsage[*].costUSD
 ```
 
-**已確認的價格（每 MTok）：**
-
-| Model | Input | Output |
-|---|---|---|
-| Opus 5 | $5 | $25 |
-| Sonnet 5 | $2 | $10 |
-| Haiku 4.5 | $1 | $5 |
-
-> ⚠️ **cache read / cache write 的費率尚未確認**，實作前必須查官方定價頁。
-> 這件事影響很大：Claude Code 的 session 有極高比例是 cache read，
-> 若誤按一般 input 價計算，帳單會灌水數倍。
-
-價格表存 DB，不寫死在程式裡——model 和價格都會變。
+原本規劃的自維護價格表（每個 model 的 input / output / cache 費率）**已刪除** ——
+不需要追著 model 改價維護它。
 
 **資料來源**：以 `claude -p --output-format json` 的回傳值為準（官方承諾給腳本使用的穩定介面），`.jsonl` 全份存進 MinIO 當明細與稽核。
 
 **實測確認的欄位**（2026-09-21，CLI 2.1.278）：
 
 ```
-total_cost_usd          ← CLI 自己算好的成本
-modelUsage  {}          ← 多 model 分項（shape 未確認，需要一次成功執行）
+total_cost_usd          ← CLI 算好的總成本
+modelUsage  {…}         ← 以帶日期的 model id 為 key，每個 model 一組分項（結構見下）
 usage {
   input_tokens, output_tokens,
   cache_creation_input_tokens, cache_read_input_tokens,   ← 分開的，這是關鍵
@@ -251,6 +238,29 @@ session_id, num_turns, duration_ms, is_error, result, terminal_reason
 ```
 
 cache read 與 cache creation 是分開的欄位，上面那個「算錯會灌水數倍」的風險解除。
+
+**`modelUsage` 的實際結構**（同一趟實測）：
+
+```json
+"modelUsage": {
+  "claude-haiku-4-5-20251001": {
+    "inputTokens": 908, "outputTokens": 54,
+    "cacheReadInputTokens": 22333, "cacheCreationInputTokens": 7991,
+    "thinkingTokens": 34, "webSearchRequests": 0,
+    "costUSD": 0.0193933,
+    "contextWindow": 200000, "maxOutputTokens": 32000,
+    "canonicalModel": "claude-haiku-4-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+  }
+}
+```
+
+**`costBasis: "list"` 是關鍵欄位** —— 它明確標示成本是按 **API 標價**計算，不是訂閱實付。
+這正是 §4.6 選定的「API 等價金額」，不用猜也不用自己換算。
+若未來出現其他 `costBasis`，據此分支即可。
+
+key 是帶日期的 model id（記帳用），`canonicalModel` 是不帶日期的（顯示用）。
 
 **`total_cost_usd` 在 Team 訂閱下確實回 API 等價金額（2026-09-21 實測，spike #1b 已答）：**
 
@@ -326,20 +336,28 @@ Claude Code 憑證以 **唯讀 volume** 掛入 worker 容器。
 worker 執行 job 的指令形狀：
 
 ```bash
-claude -p "$task" [--resume "$transcript"] \
+HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
   --model "$model" --output-format json \
-  --bare \
   --allowedTools "Read,Edit,Bash" \
   --permission-mode acceptEdits --permission-prompts none \
   --no-session-persistence \
-  --add-dir "$workdir"
+  --add-dir "$workdir" < /dev/null
 ```
 
-`--bare` 跳過 hook / skill / MCP 自動載入——不能讓借用者的 job 載到出租者的個人設定。
+**隔離手段是乾淨的 HOME，不是 `--bare`。** 容器的 `$HOME/.claude/` 裡**只有**唯讀掛入的
+`.credentials.json`，沒有 `settings.json`、`plugins/`、`skills/` 或 MCP 設定，所以出租者的
+個人設定根本不存在、無從載入。實測驗證見 §11。
 
-> 🚨 **上面這條指令形狀目前跑不起來。** `--bare` 與「唯讀掛入 Claude Code 憑證」互斥，
-> 見 §11「`--bare` 與 OAuth 憑證互斥」。Phase 0 要先選定 apiKeyHelper 或 `--settings`
-> 其中一條路，這段指令才能定稿。
+> 🚨 **不要加 `--bare`。** 它的官方說明明寫「Anthropic auth is strictly
+> `ANTHROPIC_API_KEY` or `apiKeyHelper` (OAuth and keychain are never read)」，
+> 會直接無視掛進去的 OAuth 憑證，回 `Not logged in · Please run /login`。
+> 這個錯誤特別危險，因為訊息把人導向「去登入」，真正的原因是旗標。
+
+**兩個容易漏的操作細節：**
+
+- **`< /dev/null` 是必要的。** 沒有它，CLI 會等 stdin 三秒才繼續並印警告。
+- **認證失敗會重試 11 次、指數退避，掛住約 3 分鐘才放棄。** worker 不能假設認證問題
+  會快速失敗，§5 的逾時是唯一防線。
 
 ---
 
@@ -365,7 +383,7 @@ claude -p "$task" [--resume "$transcript"] \
 | # | 要驗什麼 | 失敗的話 |
 |---|---|---|
 | 0 | ✅ **已答**：headless CLI 認證可以動。`Not logged in` 的成因是 `--bare`，不是組織政策，**也不是全案停擺** —— 但換來一個新阻斷項，見下方 | — |
-| 0b | 🚨 **`--bare` 與 OAuth 憑證互斥**：`--bare` 明文不讀 keychain 與 OAuth，只吃 `ANTHROPIC_API_KEY` 或 `apiKeyHelper`。這與 security.md 紅線 2 的兩條要求直接衝突 | §9 的指令形狀要改，三條候選路見下方 |
+| ~~0b~~ | ✅ **已解**：`--bare` 確實不讀 OAuth，但它本來就不該用。隔離改由乾淨 HOME 達成，實測通過（見下方） | — |
 | 1a | ✅ **已答**：CLI JSON 有分項 token 欄位，cache read / creation 分開（見 §7） | — |
 | 1b | ✅ **已答**：`total_cost_usd` 在 Team 訂閱下回真實金額（US$0.0166 / 一趟 haiku），不是 0。§7 價格表可砍 | — |
 | 2 | `claude --resume <別台機器來的 .jsonl 絕對路徑>` 實際能不能跑 | Claude Code 那條路砍掉，只留貼上 |
@@ -374,7 +392,7 @@ claude -p "$task" [--resume "$transcript"] \
 | 5 | egress 白名單下 Claude Code 能否正常運作（含 server-side 工具） | 放寬白名單或改設計 |
 | 6 | ~~cache read / cache write 的官方費率~~ | 降級：#1b 已答，計費改採信 `total_cost_usd`，不再需要自算費率 |
 
-### `--bare` 與 OAuth 憑證互斥（2026-09-21 實測）
+### ~~`--bare` 與 OAuth 憑證互斥~~ → 已解（2026-09-21 實測）
 
 風險 #0 原本的敘述是「`claude -p` 在已登入的機器上仍回 `Not logged in`，可能是組織政策
 `require_trusted_devices` 擋的，若如此全案停擺」。實測證明**不是政策問題，headless 本身
@@ -401,24 +419,40 @@ claude -p "Reply with exactly: pong" --output-format json --model haiku
 這台機器的憑證是 `~/.claude/.credentials.json`（`claude /login` 產生的 OAuth token），
 環境裡沒有 `ANTHROPIC_API_KEY`。`--bare` 不讀它，所以直接 `Not logged in`。
 
-**衝突在哪：** `.claude/rules/security.md` 紅線 2 同時要求兩件現在互斥的事 ——
-「憑證以唯讀 volume 掛入」（掛的就是那份 OAuth 檔）與「worker 容器一律加 `--bare`」。
-`--bare` 會無視掛進去的憑證。§9 那段指令形狀照現在寫的樣子跑不起來。
+**`apiKeyHelper` 已驗，不通。** 把 OAuth access token 從 `.credentials.json` 取出、
+透過 `apiKeyHelper` 餵進去，CLI 確實會讀取並使用它，但伺服器回：
 
-**三條候選路：**
+```
+401 {"type":"authentication_error","message":"API key is invalid."}
+```
 
-| 走法 | 代價 |
-|---|---|
-| 出租者提供 `ANTHROPIC_API_KEY` | ❌ 違反「憑證不離開出租者機器」的精神，且 API key 是另一套計費（跟 Team 座位額度無關），§7 與 §4.6「API 等價金額」的整個記帳前提要重寫 |
-| `apiKeyHelper` via `--settings` | ✅ 目前最相容：helper script 留在出租者機器上換 token，`--bare` 明文允許這條。**待驗**：helper 在 Team OAuth 帳號下能不能換出可用 token |
-| 放棄 `--bare`，改用 `--settings` 指向一份乾淨設定檔 | ⚠️ 要自己確認「乾淨設定檔」真的能擋掉個人 hook / skill / MCP —— `--bare` 是一個旗標包掉一整組行為，手動複製那組行為容易漏 |
+`apiKeyHelper` 的輸出被當成 `x-api-key`，而 OAuth token 走的是 `Authorization: Bearer`
+配合 oauth beta header —— 兩條不同的認證通道，不能互換。
+**`apiKeyHelper` 只服務 API key 計費路線**，與訂閱額度無關。
 
-**建議**：先驗 `apiKeyHelper`（成本最低、最不動設計）；若它在 Team OAuth 下換不出 token，
-退到第三條，並且**在退之前把「乾淨設定檔擋掉了什麼」逐項列出來驗證**，不能只是換個旗標
-就宣告紅線 2 滿足了。第一條除非前兩條都死，否則不走。
+**解法是放棄 `--bare`，隔離改由乾淨 HOME 達成。** 實測：`HOME` 指向一個只含
+`.credentials.json` 的目錄執行 `claude -p`，認證通過、job 正常完成
+（`result: "pong"`, `total_cost_usd: 0.0172`）。
 
-**在這題拍板前不要寫 worker 的執行程式碼** —— 三條路產出的憑證注入方式、Dockerfile
-與 compose 的 volume 配置都不一樣。
+逐項核對 `--bare` 原本關掉的行為，確認乾淨 HOME 涵蓋了所有**安全相關**的部分：
+
+| `--bare` 關掉的東西 | 來源 | 乾淨 HOME 下 | 安全相關 |
+|---|---|---|---|
+| hooks | `~/.claude/settings.json` | 不存在 ✅ | 是 |
+| plugin sync | `~/.claude/plugins/` | 不存在 ✅ | 是 |
+| skills | `~/.claude/skills/` | 不存在 ✅ | 是 |
+| MCP | settings / mcp cache | 不存在 ✅ | 是 |
+| auto-memory | `~/.claude/` | 不存在 ✅ | 是 |
+| keychain / OAuth reads | — | **保留**（正是我們要的） | 是 |
+| CLAUDE.md auto-discovery | **工作目錄**，不是 HOME | ⚠️ 仍啟用 | 部分 |
+| LSP / background prefetches / attribution | — | 仍啟用 | 否 |
+
+**唯一殘留：CLAUDE.md 從工作目錄讀，不從 HOME。** job 的工作目錄每次新建，裡面只有
+借用者自己上傳的檔案，所以最壞情況是借用者的 CLAUDE.md 影響借用者自己的 job，
+碰不到出租者的任何東西。判定為可接受。
+
+> 這張表是為了回應一個正確的質疑：`--bare` 是一個旗標包掉一整組行為，
+> 換掉它就必須逐項確認替代方案沒有漏。上表即為該核對。
 
 ### 版本漂移的產生機制（2026-09-21 實測）
 

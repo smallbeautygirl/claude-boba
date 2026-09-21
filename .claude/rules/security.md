@@ -20,14 +20,16 @@ These rules are always active. Violations must be fixed before merging.
 出租者的 Anthropic 憑證是這整個系統裡最敏感的東西 —— 它被盜等於帳號被停權。
 
 - 唯讀掛載，不 `COPY` 進 image，不寫進環境變數
-- worker 容器一律加 `--bare`，避免載入出租者的個人 hook / skill / MCP 設定
+- 容器的 `HOME` 必須是乾淨的：`$HOME/.claude/` 裡**只有**唯讀掛入的 `.credentials.json`，
+  不得出現 `settings.json`、`plugins/`、`skills/` 或 MCP 設定
 - job 容器跑完即銷毀
 
-> ⚠️ **上面兩條（唯讀掛載 + `--bare`）目前互斥**，2026-09-21 實測確認：`--bare` 明文
-> 不讀 OAuth 與 keychain，只吃 `ANTHROPIC_API_KEY` 或 `apiKeyHelper`，會無視掛進去的
-> 憑證。**這條規則的意圖不變**（憑證不進 image、不進環境變數、不載入個人設定），但達成
-> 手段要在 Phase 0 重新選定 —— 見 SPEC.md §11「`--bare` 與 OAuth 憑證互斥」。
-> 在那之前，不要為了讓指令跑起來而改用 `ANTHROPIC_API_KEY` 塞環境變數。
+> ⚠️ **不要用 `--bare` 來做隔離。** 它不讀 OAuth 與 keychain（只吃 `ANTHROPIC_API_KEY`
+> 或 `apiKeyHelper`），會無視掛進去的憑證並回 `Not logged in`。隔離由上面那條乾淨 HOME
+> 達成，已逐項驗證 —— 見 SPEC.md §11。
+>
+> **也不要為了讓指令跑起來而改用 `ANTHROPIC_API_KEY` 塞環境變數。** 那是另一套計費
+> （真錢，非訂閱額度），會推翻 §4.6 的整個記帳前提。
 
 ### 3. Egress 白名單是安全邊界，不是效能設定
 
