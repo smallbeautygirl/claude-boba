@@ -9,9 +9,21 @@ cd hub
 docker compose up -d                       # postgres + minio
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/alembic upgrade head             # 建/更新 schema
 .venv/bin/uvicorn app.main:app --reload --port 8787
 ./smoke.sh                                 # 端到端打過一遍協定
 ```
+
+**改了 models 之後：**
+
+```bash
+.venv/bin/alembic revision --autogenerate -m "說明這次改了什麼"
+.venv/bin/alembic upgrade head
+```
+
+Hub 啟動時會檢查資料庫版本，落後就**拒絕啟動**並告訴你要跑什麼。刻意不自動
+套用 migration —— 自動 upgrade 會在多個 instance 同時啟動時互相競爭，
+而且會讓一個有問題的 migration 悄悄上線。失敗要響亮，不要猜。
 
 Postgres 對外用 **55432**，不是 5432 —— 開發機上 5432 常被既有服務佔用。
 
@@ -22,8 +34,6 @@ MinIO 從 **quay.io** 拉，不是 Docker Hub：`minio/minio` 在 Docker Hub 上
 
 - **沒有認證。** 借用者用 `borrower_label` 字串識別。Phase 2 換成 Observ
   （SPEC §4.10，`require_auth` 的實作可從 `lighthouse-saas-api` 抄）。
-- **沒有 Alembic。** 目前用 `Base.metadata.create_all`。一旦有真實資料就要換掉，
-  現在 schema 還在動，migration 只是負擔。
 - **事件扇出在記憶體裡**（`app/events.py`）。單一 Hub 程序可行；要跑多 instance
   時換成 Postgres LISTEN/NOTIFY，呼叫端不用動。
 - **檔案上傳尚未接 MinIO。** compose 已經把 MinIO 起起來，但 Phase 1 只走貼上路徑。

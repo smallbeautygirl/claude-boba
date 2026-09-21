@@ -1,21 +1,46 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .db import Base, engine
+from .db import engine
 from .routers import auth, commands, jobs, ledger, worker, workers
 from .storage import ensure_bucket
 
 
+async def _check_migrations() -> None:
+    """DB 落後就拒絕啟動，並講清楚要跑什麼。
+
+    刻意不自動套用 migration：自動 upgrade 會在多個 instance 同時啟動時互相
+    競爭，而且會讓一個有問題的 migration 悄悄上線。失敗要響亮，不要猜。
+    """
+    script = ScriptDirectory(str(Path(__file__).resolve().parent.parent / "alembic"))
+    head = script.get_current_head()
+
+    async with engine.connect() as conn:
+        current = await conn.run_sync(
+            lambda sync_conn: MigrationContext.configure(
+                sync_conn
+            ).get_current_revision()
+        )
+
+    if current == head:
+        return
+    raise RuntimeError(
+        f"資料庫 schema 版本是 {current or '（未初始化）'}，程式需要 {head}。\n"
+        f"請先在 hub/ 執行：  .venv/bin/alembic upgrade head"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Phase 1 用 create_all。一旦有真實資料就要換成 Alembic —— 見 README。
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await _check_migrations()
     ensure_bucket()
     yield
     await engine.dispose()

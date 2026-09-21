@@ -27,7 +27,7 @@
 三個元件：`hub/`（FastAPI）、`worker/`（出租者端，跑在 host 上）、`web/`（React）。
 怎麼跑見 [README.md](README.md)。
 
-尚未實作：排行榜、借用者上傳檔案與 `.jsonl`、Alembic。
+尚未實作：排行榜、借用者上傳檔案與 `.jsonl`。
 
 ### 動手前要知道的幾個地雷
 
@@ -43,6 +43,8 @@
 - **SQLAlchemy 的 enum 欄位要用 `_enum()`**，`String` 配 `Mapped[SomeEnum]` 不會轉型
 - **`NULL IN (...)` 在 SQL 裡永遠不為真** —— 自動派單的 job 會一筆都領不到且不報錯
 - **Observ 的身分端點用 `x-request-service-id`**，不是 `X-Service-Id`；送錯只會回 401
+- **改 schema 要跑 Alembic**，不要再用 `create_all` 或手動 `ALTER TABLE`。
+  Hub 啟動時會檢查版本，落後就拒絕啟動
 
 ## 規則
 
