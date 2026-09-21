@@ -17,6 +17,7 @@ from .. import events, storage
 from ..auth import require_user
 from ..db import get_session
 from ..enums import JobStatus
+from ..failures import classify
 from ..models import Artifact, Job, JobEvent, User, Worker
 from ..pricing import label_for
 from ..schemas import FollowUp, JobCreate, JobDetail, JobSummary
@@ -72,6 +73,9 @@ def _detail(job: Job) -> JobDetail:
         lender_cli_version=job.lender_cli_version,
         borrower_cli_version=job.borrower_cli_version,
         debt_label=debt,
+        failure=f.as_dict()
+        if (f := classify(job.status, job.error_kind, job.error_detail))
+        else None,
     )
 
 

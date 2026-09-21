@@ -54,6 +54,8 @@ class JobDetail(JobSummary):
     lender_cli_version: str | None
     borrower_cli_version: str | None
     debt_label: str | None
+    # 失敗時的分類。成功是 None。欄位見 app/failures.py。
+    failure: dict | None
 
 
 class WorkerConfig(BaseModel):
