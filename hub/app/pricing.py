@@ -31,6 +31,13 @@ LABELS: dict[DebtTier, str] = {
 }
 
 
+# 會產生債務的最低金額。出租者的單次預算上限若低於這個數字，
+# 他的 job 永遠不可能掛債 —— 能跑完的都在門檻以下。見 workers.report_config 的警告。
+MIN_DEBT_USD: Decimal = min(
+    floor for floor, tier in _TIERS if tier is not DebtTier.NONE
+)
+
+
 def tier_for(amount_usd: Decimal) -> DebtTier:
     for floor, tier in _TIERS:
         if amount_usd >= floor:

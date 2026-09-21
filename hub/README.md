@@ -40,3 +40,17 @@ MinIO 從 **quay.io** 拉，不是 Docker Hub：`minio/minio` 在 Docker Hub 上
 
 **gitleaks 掃的是 staged 內容**：修掉誤判後沒重新 `git add` 的話，它會一直回報同一筆。
 熵值完全相同就是線索 —— 代表它看的還是舊版本。
+
+## 測試
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+```
+
+目前只測金額與級距（`tests/test_pricing.py`）。從這裡開始不是巧合 ——
+算錯錢是這個專案裡最不能無聲發生的事，帳單是要給人看的。
+
+> 📌 `.claude/rules/` 還沒有 `testing.md`。CLAUDE.md 說「當某個領域的第一份 code
+> 出現時，再從 lighthouse-saas-api 抄對應的規則過來」—— 測試的第一份 code 現在有了，
+> 所以下次擴充測試前，該把那份規則抄過來。

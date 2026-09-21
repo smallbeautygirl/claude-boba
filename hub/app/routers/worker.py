@@ -20,7 +20,7 @@ from ..config import settings
 from ..db import get_session
 from ..enums import DebtStatus, DebtTier, JobStatus
 from ..models import Debt, Job, JobEvent, Usage, Worker
-from ..pricing import tier_for
+from ..pricing import MIN_DEBT_USD, tier_for
 from ..schemas import EventBatch, JobResult, WorkerConfig, WorkerJob
 
 router = APIRouter(prefix="/api/worker", tags=["worker"])
@@ -55,7 +55,16 @@ async def report_config(
     worker.max_concurrency = body.max_concurrency
     worker.claude_code_version = body.claude_code_version
     await session.commit()
-    return {"worker_id": str(worker.id), "name": worker.name}
+
+    warnings: list[str] = []
+    if worker.job_budget_usd < MIN_DEBT_USD:
+        # 上限低於債務門檻 = 能跑完的 job 一定在門檻以下 = 永遠不會掛債。
+        # 這不是錯誤（有人可能就是想這樣），但幾乎一定是沒注意到，所以要講。
+        warnings.append(
+            f"JOB_BUDGET_USD={worker.job_budget_usd} 低於債務門檻 US${MIN_DEBT_USD}，"
+            f"這台 worker 跑的 job 永遠不會產生人情債。"
+        )
+    return {"worker_id": str(worker.id), "name": worker.name, "warnings": warnings}
 
 
 @router.get("/poll", response_model=None)
