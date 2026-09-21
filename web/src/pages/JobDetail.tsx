@@ -16,6 +16,7 @@ import {
 import { describe, toLine, type Line } from "../events";
 
 const POLL_MS = 5000;
+const SITE_TITLE = "claude-boba 🧋";
 
 export function JobDetail() {
   const { id = "" } = useParams();
@@ -90,6 +91,16 @@ export function JobDetail() {
     }, POLL_MS);
     return () => clearInterval(t);
   }, [id, done, live]);
+
+  // 分頁標題就是狀態列。「可以離開」的心智模型（web-spec §4）靠 Teams 通知撐著，
+  // 但開著的分頁本身是更便宜的一條 —— 跑完時分頁上的字自己會變，不用切回來看。
+  useEffect(() => {
+    if (!job) return;
+    document.title = `${MARK[job.status] ?? "⏳"} ${STATUS_LABEL[job.status]} · job ${job.id.slice(0, 8)}`;
+    return () => {
+      document.title = SITE_TITLE;
+    };
+  }, [job]);
 
   if (loadError) {
     return (
@@ -289,6 +300,17 @@ const STATUS_LABEL: Record<Job["status"], string> = {
   cancelled: "已中止",
   expired: "已作廢",
   over_budget: "超出預算",
+};
+
+// 失敗的幾種狀態共用 ⚠️：分頁標籤只有幾個字的寬度，分那麼細沒有意義，
+// 「要不要切回來看」這個決定只需要知道成功或不成功。
+const MARK: Partial<Record<Job["status"], string>> = {
+  succeeded: "✅",
+  failed: "⚠️",
+  timeout: "⚠️",
+  cancelled: "⚠️",
+  expired: "⚠️",
+  over_budget: "⚠️",
 };
 
 function StatusChip({ status }: { status: Job["status"] }) {

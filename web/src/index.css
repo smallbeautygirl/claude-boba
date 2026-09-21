@@ -4,7 +4,8 @@
   --ink: #1f2430;
   --muted: #6b7280;
   --line: #e7e2d9;
-  --accent: #b4693a;
+  --accent: #a35f30;
+  --on-accent: #fff;
   --ok: #1f7a4d;
   --bad: #b3261e;
   --warn: #8a6d1f;
@@ -18,6 +19,7 @@
     --muted: #9aa0ab;
     --line: #2d313a;
     --accent: #d98a53;
+    --on-accent: #1b1205;
     --ok: #4cc38a;
     --bad: #f2807a;
     --warn: #d9b45b;
@@ -58,8 +60,10 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .consent .checkbox input { width: auto; margin: 3px 0 0; }
 .consent p { margin: 0; font-size: 13px; color: var(--muted); }
 
+/* 按鈕文字用 --on-accent 而不是寫死白色：深色模式的 accent 是淺橘，
+   配白字只有 2.7:1，遠低於 AA 的 4.5:1。 */
 button {
-  padding: 11px 22px; font: inherit; font-weight: 600; color: #fff;
+  padding: 11px 22px; font: inherit; font-weight: 600; color: var(--on-accent);
   background: var(--accent); border: 0; border-radius: 8px; cursor: pointer;
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -81,7 +85,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .warn { color: var(--warn); font-size: 13px; }
 .note { font-style: italic; }
 
-.nav { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; font-size: 14px; }
+.nav {
+  display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+  margin-bottom: 16px; font-size: 14px;
+}
+/* 換行後 spacer 會把名字推到第二行的最右邊，窄螢幕上就讓它不佔位。 */
+@media (max-width: 560px) { .nav .spacer { flex: 0; } }
 .nav a { color: var(--ink); text-decoration: none; }
 .nav a:hover { color: var(--accent); }
 .nav .spacer { flex: 1; }

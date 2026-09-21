@@ -1,4 +1,12 @@
-import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
+import { useEffect } from "react";
+import {
+  BrowserRouter,
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { JobDetail } from "./pages/JobDetail";
 import { Ledger } from "./pages/Ledger";
@@ -18,8 +26,26 @@ export default function App() {
   );
 }
 
+// 分頁標題跟著頁面走。開了好幾個分頁時，光看「claude-boba」分不出哪個是哪個。
+const TITLES: Record<string, string> = {
+  "/": "丟 job",
+  "/jobs": "我的 job",
+  "/ledger": "帳本",
+  "/worker": "我的 worker",
+  "/notifications": "通知",
+};
+
+function useDocumentTitle() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const page = TITLES[pathname] ?? (pathname.startsWith("/jobs/") ? "Job" : null);
+    document.title = page ? `${page} · claude-boba` : "claude-boba";
+  }, [pathname]);
+}
+
 function Shell() {
   const { me, loading, signOut } = useAuth();
+  useDocumentTitle();
 
   if (loading) return <div className="card">載入中…</div>;
   if (!me) return <Login />;

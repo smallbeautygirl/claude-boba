@@ -3,7 +3,7 @@
 // 使用情境是「我額度爆了，很急」，所以最短路徑優先：一個框、一個下拉、一個勾選。
 // 不做精靈式多步驟 —— 拆成三頁只是增加三次點擊（web-spec §3）。
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type WorkerRow } from "../api";
 import { CommandPicker, prependCommand } from "../CommandPicker";
@@ -19,10 +19,30 @@ const QUOTA: Record<WorkerRow["quota"], string> = {
   unknown: "⚪️",
 };
 
-const MODELS = [
+// 站台白名單。順序即偏好順序，第一個就是預設 —— 預設不是 Opus，因為 BD/PM 不會知道
+// 差別、會直接送出，而那等於每個 job 貴 2.5 倍（web-spec §3）。
+const SITE_MODELS = [
   { value: "sonnet", label: "Sonnet（預設）" },
   { value: "haiku", label: "Haiku（最省）" },
 ];
+
+// 選單顯示的是「站台白名單 ∩ 該出租者白名單」（web-spec §3）。
+// 寫死一份清單的話，挑了只有 Haiku 的 worker 仍然選得到 Sonnet，要等 job 送出去才失敗 ——
+// 而失敗不計債（SPEC §5），那台機器的額度就白燒了。
+//
+// 「自動」沒有特定出租者，取所有可接單 worker 的**交集**而不是聯集：
+// Hub 的派單目前不按 model 過濾，聯集會把 job 派給一台跑不動它的機器。
+function offeredModels(workers: WorkerRow[], workerId: string) {
+  const pool = workerId
+    ? workers.filter((w) => w.id === workerId)
+    : workers.filter((w) => w.online && w.accepting);
+  if (pool.length === 0) return SITE_MODELS;
+  const offered = SITE_MODELS.filter((m) =>
+    pool.every((w) => w.available_models.includes(m.value)),
+  );
+  // 交集是空的（worker 還沒回報過 config）就退回站台白名單 —— 總比給一個空下拉好。
+  return offered.length ? offered : SITE_MODELS;
+}
 
 export function Submit() {
   const navigate = useNavigate();
@@ -38,6 +58,19 @@ export function Submit() {
     api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
   }, []);
 
+  const models = useMemo(() => offeredModels(workers, workerId), [workers, workerId]);
+  const lender = workers.find((w) => w.id === workerId)?.owner ?? null;
+
+  // 選中的 model 對方跑不動就退回第一個他跑得動的。在 render 期間收斂而不是用 effect ——
+  // worker 清單是非同步載進來的，用 effect 會有一個 render 的空窗送出跑不動的 model。
+  const chosen = models.some((m) => m.value === model) ? model : models[0].value;
+
+  // 換出租者要重新勾同意：上一次勾的是對「另一個人」的揭露。
+  // 點名字才是這個勾選的重點（web-spec §3），沿用等於把名字當裝飾。
+  function pickWorker(id: string) {
+    setWorkerId(id);
+    setConsented(false);
+  }
 
   const ready = prompt.trim() && consented && !busy;
 
@@ -49,7 +82,7 @@ export function Submit() {
     try {
       const job = await api.createJob({
         prompt,
-        model,
+        model: chosen,
         requested_worker_id: workerId || null,
       });
       navigate(`/jobs/${job.id}`);
@@ -84,7 +117,7 @@ export function Submit() {
       <div className="row">
         <label>
           出租者
-          <select value={workerId} onChange={(e) => setWorkerId(e.target.value)}>
+          <select value={workerId} onChange={(e) => pickWorker(e.target.value)}>
             <option value="">自動（推薦）</option>
             {workers.map((w) => (
               <option key={w.id} value={w.id} disabled={!w.online}>
@@ -96,8 +129,8 @@ export function Submit() {
         </label>
         <label>
           Model
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {MODELS.map((m) => (
+          <select value={chosen} onChange={(e) => setModel(e.target.value)}>
+            {models.map((m) => (
               <option key={m.value} value={m.value}>
                 {m.label}
               </option>
@@ -115,11 +148,15 @@ export function Submit() {
             onChange={(e) => setConsented(e.target.checked)}
           />
           <span>
-            我了解 <strong>出租者技術上可以看到我送出的內容</strong>
+            我了解{" "}
+            <strong>
+              {lender ? `${lender} 技術上可以看到我送出的內容` : "出租者技術上可以看到我送出的內容"}
+            </strong>
           </span>
         </label>
         <p>
-          這個 job 會在對方的電腦上執行。系統預設不讓出租者查看內容，但技術上他有能力看到。
+          這個 job 會在{lender ? ` ${lender} ` : "對方"}的電腦上執行。
+          系統預設不讓出租者查看內容，但技術上他有能力看到。
           請不要送出公司機密、客戶個資，或任何你不希望被對方看到的東西。
         </p>
       </div>
