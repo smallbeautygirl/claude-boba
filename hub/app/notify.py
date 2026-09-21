@@ -143,6 +143,26 @@ def job_finished(user: Any, job_id: object, status: str, cost: object) -> None:
     )
 
 
+def job_stopped(borrower, lender_name: str, job_id: object, note: str | None) -> None:
+    """出租者中止了 job。
+
+    那句話一定要帶進通知。沒有它，「你的 job 被中止了」讀起來就是拒絕
+    （docs/web-spec.md §8）。
+    """
+    body = f"{lender_name} 中止了你的 job"
+    if note:
+        body += f"：\n\n> {note}"
+    body += f"\n\n這次不計債。\n\n[看詳情]({link(job_id)})"
+
+    if borrower is not None and borrower.teams_webhook_url:
+        _fire(borrower.teams_webhook_url, _card("你的 job 被中止了", body, _BAD))
+    elif settings.teams_channel_webhook and borrower is not None:
+        _fire(
+            settings.teams_channel_webhook,
+            _mention_card(borrower.email, borrower.display_name, f"{{@}} {body}"),
+        )
+
+
 def debt_created(
     borrower: Any, lender: Any, label: str, amount: object, job_id: object
 ) -> None:

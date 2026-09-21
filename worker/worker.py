@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import shutil
 import subprocess
@@ -25,6 +26,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 MAX_ARTIFACTS = 50
 # 事件批次回報的間隔。太短會把 Hub 打爆，太長使用者會覺得畫面卡住。
 FLUSH_INTERVAL_SECONDS = 0.5
+# 即使沒有事件也要定期回報一次，否則**安靜的 job 收不到停止指令** ——
+# 控制指令是夾在事件回報的回應裡回來的（SPEC.md §9）。
+# 而會讓人想按停止的，往往正是那種卡住不動、什麼都不輸出的 job。
+CONTROL_POLL_SECONDS = 3.0
 # long-poll 的 client timeout 要比 Hub 的 hold 時間長，否則每次都是客戶端先斷。
 POLL_TIMEOUT_SECONDS = 60.0
 
@@ -325,6 +330,7 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     )
 
     state = _JobState(client, job_id)
+    control = asyncio.create_task(_control_loop(state))
     try:
         await asyncio.gather(
             _pump(proc.stdout, state),
@@ -332,7 +338,10 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         )
         await proc.wait()
     finally:
-        await state.flush()
+        control.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await control
+        await state.flush(force=True)
 
     uploaded = False
     put_url = job.get("transcript_put_url")
@@ -372,8 +381,9 @@ class _JobState:
         if now - self._last_flush >= FLUSH_INTERVAL_SECONDS:
             await self.flush()
 
-    async def flush(self) -> None:
-        if not self.buffer:
+    async def flush(self, *, force: bool = False) -> None:
+        """回報累積的事件。`force` 會在沒有事件時也打一次，只為了取回控制指令。"""
+        if not self.buffer and not force:
             return
         batch, self.buffer = self.buffer, []
         resp = await self.client.post(
@@ -455,6 +465,21 @@ def _result_payload(
         "total_cost_usd": str(result.get("total_cost_usd") or 0),
         "model_usage": result.get("modelUsage") or {},
     }
+
+
+async def _control_loop(state: _JobState) -> None:
+    """定期空跑一次回報，把「出租者按了停止」拉回來。
+
+    沒有這個迴圈，停止只在 job 還在吐事件時才有效 —— 而最需要停止的
+    正是安靜卡住的那種。
+    """
+    while True:
+        await asyncio.sleep(CONTROL_POLL_SECONDS)
+        try:
+            await state.flush(force=True)
+        except httpx.HTTPError as exc:
+            # 連不上 Hub 不該讓 job 中斷；下一輪再試。
+            print(f"[worker] 控制回報失敗（將重試）：{exc!r}", flush=True)
 
 
 async def _pump(stream: asyncio.StreamReader | None, state: _JobState) -> None:

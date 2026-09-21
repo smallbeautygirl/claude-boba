@@ -71,3 +71,42 @@ def test_preview_takes_the_first_non_empty_line() -> None:
     long = "字" * 200
     assert _preview(long).endswith("…")
     assert len(_preview(long)) <= 91
+
+
+def test_only_the_running_lender_can_stop() -> None:
+    """授權規則：只有**正在跑這個 job 的出租者**能中止它。
+
+    借用者不行（取消是另一件事，還沒做），不相干的人更不行。
+    這條寫錯的後果是別人能停你的 job。
+    """
+    from app.routers.jobs import _can_stop
+
+    lender = SimpleNamespace(id=uuid.uuid4())
+    borrower = SimpleNamespace(id=uuid.uuid4())
+    stranger = SimpleNamespace(id=uuid.uuid4())
+    worker = SimpleNamespace(owner_user_id=lender.id)
+
+    running = _fake_job(
+        status=JobStatus.RUNNING, worker=worker, borrower_id=borrower.id
+    )
+    assert _can_stop(running, lender) is True
+    assert _can_stop(running, borrower) is False
+    assert _can_stop(running, stranger) is False
+
+
+def test_cannot_stop_a_job_that_already_finished() -> None:
+    from app.routers.jobs import _can_stop
+
+    lender = SimpleNamespace(id=uuid.uuid4())
+    worker = SimpleNamespace(owner_user_id=lender.id)
+    for status in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED):
+        assert _can_stop(_fake_job(status=status, worker=worker), lender) is False
+
+
+def test_can_stop_while_still_queued_on_a_worker() -> None:
+    """claimed 也算 —— 已經派出去但還沒開始跑，一樣該能喊停。"""
+    from app.routers.jobs import _can_stop
+
+    lender = SimpleNamespace(id=uuid.uuid4())
+    worker = SimpleNamespace(owner_user_id=lender.id)
+    assert _can_stop(_fake_job(status=JobStatus.CLAIMED, worker=worker), lender) is True

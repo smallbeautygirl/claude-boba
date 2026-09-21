@@ -60,17 +60,16 @@ export function MyWorker() {
       ))}
 
       <h2>新增一台</h2>
-      <div className="row">
+      {/* 以前用一個 &nbsp; 的 label 包住按鈕來對齊 —— label 裡包 button，
+          讀屏軟體會念得很奇怪。改成一般的底端對齊。 */}
+      <div className="field-row">
         <label>
           名稱
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="我的電腦" />
         </label>
-        <label>
-          &nbsp;
-          <button type="button" onClick={create}>
-            產生 worker token
-          </button>
-        </label>
+        <button type="button" onClick={create}>
+          產生 worker token
+        </button>
       </div>
 
       {issued && (

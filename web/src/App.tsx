@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import {
   BrowserRouter,
-  Link,
   Navigate,
+  NavLink,
   Route,
   Routes,
   useLocation,
@@ -43,6 +43,20 @@ function useDocumentTitle() {
   }, [pathname]);
 }
 
+// 目前頁面是一顆 accent-soft 藥丸。少了它，五個連結完全一樣，
+// 使用者得靠記憶知道自己在哪。
+function Tab({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <NavLink
+      to={to}
+      end={to === "/"}
+      className={({ isActive }) => (isActive ? "tab active" : "tab")}
+    >
+      {children}
+    </NavLink>
+  );
+}
+
 function Shell() {
   const { me, loading, signOut } = useAuth();
   useDocumentTitle();
@@ -52,17 +66,24 @@ function Shell() {
 
   return (
     <>
+      {/* 三段：站台 ｜ 頁面 ｜ 我。以前七個元素長得一模一樣，看不出在哪一頁，
+          中間還空一大塊把左右拆成兩組不相干的東西。 */}
       <nav className="nav">
+        <NavLink className="brand" to="/">
+          <span aria-hidden="true">🧋</span>
+          claude-boba
+        </NavLink>
+        <span className="sep" />
         {/* 首頁是提交頁，不是儀表板 —— 使用情境是「我額度爆了，很急」，
             那個當下最不需要的就是儀表板（web-spec §3）。 */}
-        <Link to="/">丟 job</Link>
-        <Link to="/jobs">我的 job</Link>
-        <Link to="/ledger">帳本</Link>
-        <Link to="/worker">我的 worker</Link>
-        <Link to="/notifications">通知</Link>
+        <Tab to="/">丟 job</Tab>
+        <Tab to="/jobs">我的 job</Tab>
+        <Tab to="/ledger">帳本</Tab>
+        <Tab to="/worker">我的 worker</Tab>
+        <Tab to="/notifications">通知</Tab>
         <span className="spacer" />
-        <span className="muted">{me.display_name}</span>
-        <button className="link" onClick={signOut}>
+        <span className="who">{me.display_name}</span>
+        <button className="secondary" onClick={signOut}>
           登出
         </button>
       </nav>

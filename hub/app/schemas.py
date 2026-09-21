@@ -56,6 +56,8 @@ class JobDetail(JobSummary):
     debt_label: str | None
     # 失敗時的分類。成功是 None。欄位見 app/failures.py。
     failure: dict | None
+    # 目前這個人能不能中止它（執行中，而且他是跑這個 job 的出租者）。
+    can_stop: bool
 
 
 class WorkerConfig(BaseModel):
@@ -66,6 +68,16 @@ class WorkerConfig(BaseModel):
     job_budget_usd: Decimal = Decimal(5)
     max_concurrency: int = 1
     claude_code_version: str | None = None
+
+
+class StopJob(BaseModel):
+    """出租者中止一個 job。
+
+    `note` 的價值高於整個停止功能本身（docs/web-spec.md §8）：沒有它，
+    停止會被讀成拒絕。
+    """
+
+    note: str | None = Field(default=None, max_length=500)
 
 
 class FollowUp(BaseModel):

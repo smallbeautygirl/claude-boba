@@ -69,7 +69,7 @@ export function Notifications() {
 
       {msg && <p className="hint">{msg}</p>}
 
-      <div className="row">
+      <div className="actions">
         <button type="button" disabled={busy || !url.trim()} onClick={() => save(url)}>
           {busy ? "儲存中…" : "儲存並測試"}
         </button>

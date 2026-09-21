@@ -6,6 +6,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -13,14 +14,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import events, storage
+from .. import events, notify, storage
 from ..auth import require_user
 from ..db import get_session
 from ..enums import JobStatus
 from ..failures import classify
 from ..models import Artifact, Job, JobEvent, User, Worker
 from ..pricing import label_for
-from ..schemas import FollowUp, JobCreate, JobDetail, JobSummary
+from ..schemas import FollowUp, JobCreate, JobDetail, JobSummary, StopJob
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -45,7 +46,15 @@ def _preview(prompt: str) -> str:
     return first[:_PREVIEW_CHARS] + ("…" if len(first) > _PREVIEW_CHARS else "")
 
 
-def _detail(job: Job) -> JobDetail:
+def _can_stop(job: Job, user: User) -> bool:
+    return (
+        job.status in (JobStatus.CLAIMED, JobStatus.RUNNING)
+        and job.worker is not None
+        and job.worker.owner_user_id == user.id
+    )
+
+
+def _detail(job: Job, user: User | None = None) -> JobDetail:
     debt = None
     if job.status.creates_debt and job.total_cost_usd is not None:
         debt = label_for(job.total_cost_usd)
@@ -76,6 +85,7 @@ def _detail(job: Job) -> JobDetail:
         failure=f.as_dict()
         if (f := classify(job.status, job.error_kind, job.error_detail))
         else None,
+        can_stop=bool(user and _can_stop(job, user)),
     )
 
 
@@ -149,7 +159,8 @@ async def get_job(
     user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
-    return _detail(await _get_job(job_id, session, user))
+    job = await _get_job(job_id, session, user)
+    return _detail(job, user)
 
 
 @router.post("/{job_id}/follow-up", response_model=JobDetail, status_code=201)
@@ -192,6 +203,48 @@ async def follow_up(
     job.borrower = user
     events.notify_new_job()
     return _detail(job)
+
+
+@router.post("/{job_id}/stop", response_model=JobDetail)
+async def stop_job(
+    job_id: uuid.UUID,
+    body: StopJob,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> JobDetail:
+    """出租者中止正在跑的 job。
+
+    只有**跑這個 job 的出租者**能停。
+
+    `note` 是這個功能真正的重點（docs/web-spec.md §8）。比較一下：
+
+        ❌ 你的 job 已被出租者終止。
+        ✅ Vivian 終止了你的 job：「這個看起來會跑很久，我等下要開會，晚點再幫你跑」
+
+    沒有那句話，停止會被讀成拒絕。
+
+    Hub 這裡只改狀態；真正殺掉容器的是 worker —— 它在下一次回報時會從回應裡
+    收到 cancel（SPEC.md §9 的控制通道）。狀態要立刻改，不能等 worker 確認，
+    否則按了之後畫面沒反應。
+    """
+    job = await _get_job(job_id, session, user)
+    if not _can_stop(job, user):
+        raise HTTPException(
+            status_code=409,
+            detail="只有正在跑這個 job 的出租者能中止它，而且它必須還在執行中。",
+        )
+
+    job.status = JobStatus.CANCELLED
+    job.stop_note = (body.note or "").strip() or None
+    job.error_kind = "cancelled_by_lender"
+    job.finished_at = datetime.now(UTC)
+    await session.commit()
+
+    notify.job_stopped(job.borrower, user.display_name, job.id, job.stop_note)
+    events.publish(
+        job.id, {"seq": -1, "payload": {"type": "stream_end", "status": "cancelled"}}
+    )
+    return _detail(job, user)
 
 
 @router.get("/{job_id}/artifacts")

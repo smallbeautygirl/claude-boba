@@ -1,28 +1,50 @@
+/* 奶茶色系。
+ *
+ * 原則：奶茶色是「底」，不是強調色。底色、卡片、線條、文字全部帶暖，
+ * 飽和度留給 --ok / --warn / --bad 三個保留色 —— web-spec §9 的「平常鬆、
+ * 三個地方完全正經」要有這個克制才成立。整個介面都染成奶茶色的話，
+ * 隱私警告就沒有地方可以跳出來，會被當成裝飾。
+ *
+ * 舊配色的中性色是冷灰（#6b7280、#1f2430）配暖底，兩者互相拉髒。
+ * 所有顏色組合都過 WCAG AA。
+ */
 :root {
-  --bg: #faf7f2;
-  --card: #fff;
-  --ink: #1f2430;
-  --muted: #6b7280;
-  --line: #e7e2d9;
-  --accent: #a35f30;
+  --bg: #F7F2EA;          /* 奶蓋 */
+  --card: #FFFDFA;
+  --ink: #2A1F18;         /* 珍珠 · 15.7:1 */
+  --muted: #7A6A5C;       /* 5.2:1 */
+  --line: #E4DACB;
+  --accent: #9A5A30;      /* 焙茶 · 配白字 5.4:1 */
+  --accent-hover: #7A4522;
+  --accent-soft: #F0E4D6; /* 選取、hover 底 */
   --on-accent: #fff;
-  --ok: #1f7a4d;
-  --bad: #b3261e;
-  --warn: #8a6d1f;
+  --ok: #2F6B45;          /* 抹茶 */
+  --ok-soft: #E2F0E7;
+  --ok-ink: #235233;
+  --bad: #A8322A;         /* 焦 */
+  --bad-soft: #F8E3E1;
+  --bad-ink: #8C2A23;
+  --warn: #8A6317;        /* 糖漿 */
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #16181d;
-    --card: #1e2128;
-    --ink: #e8e6e3;
-    --muted: #9aa0ab;
-    --line: #2d313a;
-    --accent: #d98a53;
-    --on-accent: #1b1205;
-    --ok: #4cc38a;
-    --bad: #f2807a;
-    --warn: #d9b45b;
+    --bg: #1A1512;        /* 深焙 */
+    --card: #231C17;
+    --ink: #EDE4D9;
+    --muted: #A69384;
+    --line: #362B23;
+    --accent: #D9A066;    /* 配深字 7.3:1 */
+    --accent-hover: #E8B57F;
+    --accent-soft: #33251A;
+    --on-accent: #2A1B0C;
+    --ok: #5FBF8C;
+    --ok-soft: #1E3328;
+    --ok-ink: #7FD3A5;
+    --bad: #F08A84;
+    --bad-soft: #3A211F;
+    --bad-ink: #F4A29D;
+    --warn: #E0B85A;
     color-scheme: dark;
   }
 }
@@ -36,41 +58,78 @@ body {
 }
 #root { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
 
+/* 焦點框用 --ink 而不是 --accent：實心 accent 按鈕上的 accent 框看不見，
+   而 --ink 在淺色是近黑、深色是近白，兩種底都站得住。 */
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
+
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
 h1 { margin: 0 0 4px; font-size: 24px; }
 .lede { margin: 0 0 24px; color: var(--muted); }
 .back { display: inline-block; margin-bottom: 12px; color: var(--muted); text-decoration: none; }
 
 label { display: block; margin-bottom: 16px; font-weight: 600; font-size: 13px; }
+/* 欄位底用 --card 而不是 --bg：比卡片深的欄位是「唯讀」的視覺語彙，
+   看起來像停用的區塊。邊界交給 --line。 */
 input, textarea, select {
   width: 100%; margin-top: 6px; padding: 10px 12px; font: inherit; font-weight: 400;
-  color: var(--ink); background: var(--bg);
+  color: var(--ink); background: var(--card);
   border: 1px solid var(--line); border-radius: 8px;
 }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+/* 按鈕列。放進 .row 的話 grid 會把按鈕撐成半個版面寬。 */
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+/* 欄位配一顆按鈕，底端對齊。 */
+.field-row { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+.field-row label { flex-grow: 1; margin-bottom: 0; }
 
 .hint { margin: -8px 0 20px; font-size: 13px; color: var(--muted); }
 .hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 
-/* 隱私警告刻意不用玩笑語氣。整個介面很鬆，嚴肅的地方才顯得嚴肅（web-spec §9）。 */
+/* 隱私警告刻意不用玩笑語氣。整個介面很鬆，嚴肅的地方才顯得嚴肅（web-spec §9）。
+   靠左邊那條 3px 的保留色跳出奶茶底，不需要整塊染色。 */
 .consent { border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; }
 .consent .checkbox { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 8px; font-weight: 500; }
-.consent .checkbox input { width: auto; margin: 3px 0 0; }
+.consent .checkbox input { width: auto; margin: 3px 0 0; accent-color: var(--accent); }
 .consent p { margin: 0; font-size: 13px; color: var(--muted); }
 
-/* 按鈕文字用 --on-accent 而不是寫死白色：深色模式的 accent 是淺橘，
-   配白字只有 2.7:1，遠低於 AA 的 4.5:1。 */
+/* 按鈕三階。以前只有一種（實心 accent）加兩個補丁，所以「登出」「他還了」
+   這些次要動作只能長得像純文字 —— 那是「看不出哪個能按」的根本原因。 */
 button {
   padding: 11px 22px; font: inherit; font-weight: 600; color: var(--on-accent);
-  background: var(--accent); border: 0; border-radius: 8px; cursor: pointer;
+  background: var(--accent); border: 1px solid transparent; border-radius: 9px; cursor: pointer;
 }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:hover:not(:disabled) { background: var(--accent-hover); }
+/* 停用不用 opacity：半透明疊在暖底上會變濁。 */
+button:disabled {
+  background: var(--accent-soft); color: var(--muted);
+  border-color: var(--line); cursor: not-allowed;
+}
+button.secondary {
+  padding: 10px 18px; font-weight: 500; font-size: 14px;
+  background: var(--card); color: var(--ink); border-color: var(--line);
+}
+button.secondary:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+/* 列內的小動作：帳本的「他還了」、worker 的「暫停接單」。 */
+button.small {
+  padding: 7px 13px; font-size: 13px; font-weight: 400; border-radius: 999px;
+  background: var(--bg); color: var(--ink); border-color: var(--line);
+}
+button.small:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
-.chip { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); }
-.chip.succeeded { color: var(--ok); }
-.chip.failed, .chip.timeout, .chip.over_budget, .chip.cancelled { color: var(--bad); }
+/* 狀態 chip 分三組：進行中（奶茶）、好（抹茶）、不好（焦）。
+   以前只換文字顏色、底一律同色，掃過一排 job 時分不出好壞。 */
+.chip {
+  display: inline-block; padding: 4px 11px; border-radius: 999px;
+  font-size: 13px; font-weight: 500;
+  background: var(--accent-soft); color: var(--accent-hover);
+}
+.chip.succeeded { background: var(--ok-soft); color: var(--ok-ink); }
+.chip.failed, .chip.timeout, .chip.over_budget, .chip.cancelled, .chip.expired {
+  background: var(--bad-soft); color: var(--bad-ink);
+}
 
 .stream { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-height: 80px; margin-bottom: 20px; }
 .ev { padding: 3px 0; font-size: 14px; }
@@ -80,24 +139,34 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .muted { color: var(--muted); font-size: 13px; }
 
 .outcome pre { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-size: 13px; }
-.cost { font-weight: 600; }
-.error { color: var(--bad); }
+/* 金額要顯示就好好顯示（web-spec §9）—— 等寬、放大，是這一塊裡最大的東西。 */
+.cost { font-weight: 700; font-size: 18px; font-family: ui-monospace, SFMono-Regular, monospace; }
+.error { color: var(--bad-ink); }
 .warn { color: var(--warn); font-size: 13px; }
 .note { font-style: italic; }
 
+/* 導覽列分三段：站台 ｜ 頁面 ｜ 我。以前七個元素同一個字級同一個顏色，
+   看不出自己在哪一頁，中間還空一大塊把左右兩組拆成不相干的東西。 */
 .nav {
-  display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
-  margin-bottom: 16px; font-size: 14px;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-bottom: 20px; font-size: 14px;
 }
+.nav .brand {
+  display: flex; align-items: center; gap: 7px; text-decoration: none;
+  color: var(--ink); font-weight: 700; font-size: 16px;
+  padding: 8px 10px 8px 2px;
+}
+.nav .sep { width: 1px; height: 22px; background: var(--line); margin-right: 4px; }
+.nav .tab { padding: 9px 14px; border-radius: 999px; color: var(--ink); text-decoration: none; }
+.nav .tab:hover { background: var(--accent-soft); }
+.nav .tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.nav .spacer { flex: 1; }
+.nav .who { color: var(--muted); padding: 0 4px; }
 /* 換行後 spacer 會把名字推到第二行的最右邊，窄螢幕上就讓它不佔位。 */
 @media (max-width: 560px) { .nav .spacer { flex: 0; } }
-.nav a { color: var(--ink); text-decoration: none; }
-.nav a:hover { color: var(--accent); }
-.nav .spacer { flex: 1; }
-.nav .link { background: none; color: var(--muted); padding: 0; font-weight: 400; }
+
 .card.narrow { max-width: 420px; margin: 40px auto; }
 h2 { margin: 24px 0 10px; font-size: 15px; color: var(--muted); }
-button.small { padding: 5px 12px; font-size: 13px; }
 .debt, .worker {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   padding: 12px 0; border-bottom: 1px solid var(--line);
@@ -118,7 +187,7 @@ button.small { padding: 5px 12px; font-size: 13px; }
   background: var(--bg); color: var(--ink); border: 1px solid var(--line);
   padding: 4px 10px; font-size: 13px; font-weight: 400; border-radius: 999px;
 }
-.chip-btn:hover { border-color: var(--accent); color: var(--accent); }
+.chip-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
 .artifacts { margin-top: 20px; }
 .artifacts a.chip-btn { text-decoration: none; }
