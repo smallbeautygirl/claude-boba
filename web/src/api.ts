@@ -93,7 +93,11 @@ export interface Me {
   channel_notifications: boolean;
   /** 那個頻道叫什麼，原字串照顯示。 */
   channel_name: string;
-  /** MinIO console 的網址。空字串代表這個站台沒開，「我的 worker」頁整段不顯示。
+  /** 站台管理者（hub 的 ADMIN_EMAILS）。管理分頁只對他渲染，但**後端每一支
+      也都自己擋** —— 不渲染不等於不能呼叫。 */
+  is_admin: boolean;
+  /** MinIO console 的網址。**hub 只回給管理者**，其他人拿到空字串 ——
+      那個 console 看得到所有人的檔案，靠前端不渲染擋不住（打開開發者工具就繞過了）。
       從 hub 來而不是前端寫死：端點換了畫面要跟著變。 */
   s3_console_url: string;
 }
@@ -135,6 +139,31 @@ export const SITE_MODELS = [
   { value: "sonnet", label: "Sonnet（預設）" },
   { value: "haiku", label: "Haiku（最省）" },
 ];
+
+/** 管理頁的系統狀態。三種分類刻意分開，因為可信度不同：
+    `checks` 是這次真的量到的、`facts` 是讀得出來但不是健康檢查、
+    `unknown` 是從 hub 檢查不到的東西（連同原因一起顯示，不放假燈）。 */
+export interface AdminHealth {
+  checks: { key: string; label: string; ok: boolean; detail: string }[];
+  facts: { label: string; value: string; note: string }[];
+  unknown: { label: string; why: string }[];
+}
+
+export interface AdminStats {
+  users: number;
+  jobs_total: number;
+  jobs_by_status: Record<string, number>;
+  /** 分母只算跑完的（成功 + 失敗）。沒有跑完的 job 時是 null。 */
+  success_rate: number | null;
+  spend_usd: string;
+}
+
+export interface StuckJob {
+  id: string;
+  status: string;
+  stuck_seconds: number;
+  worker: string | null;
+}
 
 export interface DebtRow {
   id: string;
@@ -411,6 +440,13 @@ export const api = {
       method: "POST",
       headers: authed(),
     }).then(json<{ accepting: boolean }>),
+
+  adminHealth: () =>
+    fetch(`${HUB}/api/admin/health`, { headers: authed() }).then(json<AdminHealth>),
+  adminStats: () =>
+    fetch(`${HUB}/api/admin/stats`, { headers: authed() }).then(json<AdminStats>),
+  adminStuckJobs: () =>
+    fetch(`${HUB}/api/admin/stuck-jobs`, { headers: authed() }).then(json<StuckJob[]>),
 
   ledger: () => fetch(`${HUB}/api/ledger`, { headers: authed() }).then(json<Ledger>),
 

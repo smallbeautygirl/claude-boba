@@ -8,6 +8,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
+import { Admin } from "./pages/Admin";
 import { JobDetail } from "./pages/JobDetail";
 import { Leaderboard } from "./pages/Leaderboard";
 import { Ledger } from "./pages/Ledger";
@@ -36,6 +37,7 @@ const TITLES: Record<string, string> = {
   "/worker": "我來代跑",
   "/notifications": "通知",
   "/leaderboard": "排行榜",
+  "/admin": "管理",
 };
 
 function useDocumentTitle() {
@@ -113,6 +115,8 @@ function Shell() {
         <Tab to="/worker">我來代跑</Tab>
         <Tab to="/notifications">通知</Tab>
         <Tab to="/leaderboard">排行榜</Tab>
+        {/* 只對管理者渲染。後端每一支也都自己擋 403 —— 不渲染不等於不能呼叫。 */}
+        {me.is_admin && <Tab to="/admin">管理</Tab>}
         {/* 名字、主題、登出是同一組「我」。包成一個元素才不會在換行時被拆散
             —— 導覽列的可用寬度只有 760px，六個分頁加主題切換已經塞不下一行，
             不包的話登出會單獨掉到下一行的左邊，離名字十萬八千里。 */}
@@ -132,6 +136,7 @@ function Shell() {
         <Route path="/worker" element={<MyWorker />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
