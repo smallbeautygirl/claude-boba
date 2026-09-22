@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -90,6 +91,11 @@ class Worker(Base):
     job_budget_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal(5))
     max_concurrency: Mapped[int] = mapped_column(Integer, default=1)
     claude_code_version: Mapped[str | None] = mapped_column(String(32))
+    # 代跑者的長期 OAuth token，加密後存放（app/secrets_box.py）。
+    #
+    # **絕不回傳給前端**，連遮罩後的值都不行 —— API 只回 has_token: bool
+    # （security.md 紅線 2）。托管模型下這是 job 唯一的憑證來源。
+    oauth_token_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
 
     # rate_limit_event 回報的額度使用率（SPEC §4.6）。
     # 只顯示紅綠燈，不對外顯示精確百分比（docs/web-spec.md §3）。

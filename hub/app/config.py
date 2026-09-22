@@ -8,6 +8,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # 代跑者長期 token 的加密金鑰（security.md 紅線 2：金鑰放在資料庫外）。
+    # 預設空字串而不是隨便給一把 —— 給預設值等於讓人在不知情的狀況下
+    # 用一把全世界都知道的金鑰跑正式環境。沒設就拒絕啟動。
+    token_encryption_key: str = ""
+
     database_url: str = "postgresql+asyncpg://boba:boba@localhost:55432/boba"
 
     s3_endpoint: str = "http://localhost:9000"

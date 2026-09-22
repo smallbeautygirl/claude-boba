@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .db import engine
 from .routers import auth, commands, jobs, ledger, uploads, worker, workers
+from .secrets_box import check_configured
 from .storage import ensure_bucket
 
 
@@ -41,6 +42,9 @@ async def _check_migrations() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _check_migrations()
+    # 金鑰有問題就在啟動時爆，不要等到有代跑者要授權才爆 —— 那時候他已經
+    # 走到一半，而錯誤會長得像「授權失敗」。
+    check_configured()
     ensure_bucket()
     yield
     await engine.dispose()
