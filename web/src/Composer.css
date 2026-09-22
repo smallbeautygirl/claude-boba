@@ -1,0 +1,78 @@
+/* 輸入列（CONTEXT.md）。刻意不叫「對話框」—— 這裡不是對話，是一次性的提交，
+   送出去會花別人的錢、跑在別人的機器上、記一筆人情債。叫它對話框會讓人照
+   對話的標準去設計它。
+ *
+ * 寫在獨立檔案而不是 index.css：這輪 index.css 歸 session C（暗色切換），
+ * 兩個 session 共用同一個工作目錄、沒有分支，同一個檔案不會合併只會互相覆蓋。
+ * 先例是 JobOutcome.css。代價是多一個待併入設計系統的檔案 —— 那是可見的成本，
+ * 比互相覆蓋好。
+ *
+ * 只用 index.css 已有的 token，不自己定義顏色。 */
+
+.composer {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 8px 8px 8px;
+  margin-bottom: 20px;
+}
+/* 聚焦時整個框亮起來，不是只有 textarea —— 視覺上它是一個控制項。 */
+.composer:focus-within { border-color: var(--accent); }
+
+.composer-field { display: block; margin: 0; }
+/* 內框不要再畫一層邊：外面那圈就是邊界，兩層看起來像框中框。 */
+.composer-field textarea {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  padding: 8px 8px 4px;
+  resize: vertical;
+}
+.composer-field textarea:focus { outline: none; }
+
+/* 螢幕上看不到、讀屏軟體讀得到。輸入列靠 placeholder 說明用途，
+   但 placeholder 不是 label，沒有這個的話欄位對讀屏軟體是無名的。 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+.composer-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 4px 0;
+}
+.composer-spacer { flex: 1; }
+.composer-why { flex-shrink: 0; }
+/* 送出鍵在這裡要比一般主要按鈕小一點，不然一顆大按鈕會壓過整條列。 */
+.composer-bar button[type="submit"] { flex-shrink: 0; padding: 8px 18px; font-size: 14px; }
+
+/* + 與 / 。做成方形圖示鈕，跟送出（實心、有字）明顯不同階 ——
+   它們是「打開一個東西」，不是「送出去」。 */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex-shrink: 0;
+  margin: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 18px; line-height: 1;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.icon-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.icon-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.icon-btn:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* label 當按鈕用時裡面那個 file input 要藏起來，但不能 display:none
+   （那樣鍵盤 focus 不到）。 */
+.icon-btn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* 指令面板。在輸入列裡面展開，不是另開一層 —— 選完指令會寫進上面的
+   文字框，兩者要看得到彼此。 */
+.composer-panel {
+  margin: 8px 4px 4px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+.composer-panel .cmds-bare > .cmd-group:first-child { margin-top: 0; }
+
+/* 附件清單排在文字框與工具列之間：它是這次提交的一部分，不是設定。 */
+.composer .attach-list { margin: 8px 4px 0; }
+.composer > .muted { margin: 10px 4px 2px; }

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type WorkerRow } from "../api";
 import { CommandPicker } from "../CommandPicker";
+import "../Composer.css";
 
 // 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
 // 同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料（SPEC §9）。
@@ -175,6 +176,7 @@ export function Submit() {
   // 選了資料夾之後列出來的候選。null = 還沒選過資料夾。
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [showCommands, setShowCommands] = useState(false);
 
   useEffect(() => {
     api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
@@ -326,7 +328,11 @@ export function Submit() {
       <h1>丟一個 job 出去 🧋</h1>
       <p className="lede">額度用完了？找還有額度的同事幫你跑。跑完請他喝一杯就好。</p>
 
-      {/* 帶了 session 檔之後，這個框的意思就變了：上下文在檔案裡，
+      {/* 順序：說明 → job 參數 → 同意 → 輸入列。
+          會擋住送出、或決定這個 job 花多少錢的東西，全部排在送出鍵**上面** ——
+          送出鍵現在在輸入列裡，參數放它下面的話，使用者會按到一顆不會動的鍵
+          卻不知道原因。 */}
+      {/* 舊註解：帶了 session 檔之後，這個框的意思就變了：上下文在檔案裡，
           這裡要填的是「接下來做什麼」，不再是「把對話貼進來」。 */}
       <label>
         {session ? "接下來要它做什麼" : "對話內容"}
@@ -371,23 +377,80 @@ export function Submit() {
 
       {/* 附件排在 .jsonl 上傳之前：對 Cowork / BD 使用者來說，要它處理的檔案
           才是主要動作，session 檔是少數人的路。 */}
-      <div className="attach">
-        <label className="session-pick">
-          {uploading ? "上傳中…" : "加附件"}
+      <div className="row">
+        <label>
+          出租者
+          <select value={workerId} onChange={(e) => pickWorker(e.target.value)}>
+            <option value="">自動（推薦）</option>
+            {workers.map((w) => (
+              <option key={w.id} value={w.id} disabled={!w.online}>
+                {w.owner} · {w.online ? "🟢" : "⚫️"} ·{" "}
+                {w.allow_full_network ? "🌐 開放網路" : "🔒 白名單"} · 額度 {QUOTA[w.quota]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Model
+          <select value={chosen} onChange={(e) => setModel(e.target.value)}>
+            {models.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {/* 必須主動勾選，不能預設打勾 —— 預設打勾的同意等於沒有揭露（web-spec §3）。 */}
+      <div className="consent">
+        <label className="checkbox">
           <input
-            type="file"
-            multiple
-            disabled={uploading}
-            onChange={(e) => {
-              void pickAttachments(e.target.files);
-              e.target.value = "";
-            }}
+            type="checkbox"
+            checked={consented}
+            onChange={(e) => setConsented(e.target.checked)}
+          />
+          <span>
+            我了解{" "}
+            <strong>
+              {lender ? `${lender} 技術上可以看到我送出的內容` : "出租者技術上可以看到我送出的內容"}
+            </strong>
+          </span>
+        </label>
+        <p>
+          這個 job 會在{lender ? ` ${lender} ` : "對方"}的電腦上執行。
+          系統預設不讓出租者查看內容，但技術上他有能力看到。
+          請不要送出公司機密、客戶個資，或任何你不希望被對方看到的東西。
+        </p>
+      </div>
+
+
+      {/* 輸入列 —— 只裝「動作」。痛點是加附件與可用指令離得太遠，那是動作
+          離得遠，不是版面不夠緊，所以進來的只有 +、/、送出。
+
+          model 刻意留在外面：它不是動作，是這個 job 花多少錢的決定，
+          藏進圖示等於把最該被看見的東西變最小。
+
+          隱私勾選與來源說明也沒有跟著壓縮。VSCode 的輸入框乾淨，是因為它
+          沒有這些東西要講 —— 它不用告訴你「對方看得到你的內容」。§9 那段
+          警告是靠「平常很鬆、嚴肅處才嚴肅」的對比在撐的，壓成一行小字或一個
+          圖示就變裝飾。 */}
+      <div className="composer">
+        <label className="composer-field">
+          <span className="sr-only">
+            {session ? "接下來要它做什麼" : "對話內容"}
+          </span>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={session ? 4 : 8}
+            placeholder={
+              session
+                ? "沿用上傳的 session 繼續問…"
+                : "把你的對話貼進來，或直接寫你要它做什麼"
+            }
           />
         </label>
-        <span className="muted">
-          要它處理的檔案。job 一開始就會在工作目錄裡看到它們 ——
-          貼上的對話帶不動檔案，這裡才行。
-        </span>
 
         {files.length > 0 && (
           <ul className="attach-list">
@@ -414,7 +477,48 @@ export function Submit() {
             ))}
           </ul>
         )}
+        <div className="composer-bar">
+          <label className="icon-btn" title="加附件">
+            <span aria-hidden="true">+</span>
+            <span className="sr-only">加附件</span>
+          <input
+            type="file"
+            multiple
+            disabled={uploading}
+            onChange={(e) => {
+              void pickAttachments(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          </label>
+          <button
+            type="button"
+            className={showCommands ? "icon-btn on" : "icon-btn"}
+            aria-expanded={showCommands}
+            title="可以用的指令"
+            onClick={() => setShowCommands((v) => !v)}
+          >
+            <span aria-hidden="true">/</span>
+            <span className="sr-only">可以用的指令</span>
+          </button>
+          <span className="composer-spacer" />
+          {/* 送出停用時要說原因。它現在在輸入列裡，而擋住它的勾選在上面，
+              不講的話使用者會盯著一顆沒反應的鍵。 */}
+          {!ready && !busy && (
+            <span className="muted composer-why">
+              {!prompt.trim() ? "先寫點東西" : !consented ? "先勾選上面的同意" : ""}
+            </span>
+          )}
+          <button type="submit" disabled={!ready}>
+            {busy ? "送出中…" : uploading ? "上傳中…" : "送出"}
+          </button>
+        </div>
 
+        {showCommands && (
+          <div className="composer-panel">
+            <CommandPicker value={prompt} onChange={setPrompt} bare />
+          </div>
+        )}
         {files.length > 0 && (
           <p className="muted">
             跑完之後，「產出的檔案」只會列出<strong>新檔案</strong>與
@@ -423,9 +527,6 @@ export function Submit() {
         )}
       </div>
 
-      {/* 獨立成一塊面板，不跟附件並排成兩顆一樣的按鈕。CONTEXT.md 把它們
-          定成不同的東西：附件是 job 的標的，session 檔是對話的延續。
-          長得像同類的話，傳錯不會報錯，只會得到一個怪結果。 */}
       <div className="resume">
         <div className="resume-head">接續一個 Claude Code 的對話</div>
 
@@ -534,60 +635,9 @@ export function Submit() {
         )}
       </div>
 
-      <CommandPicker value={prompt} onChange={setPrompt} />
-
-      <div className="row">
-        <label>
-          出租者
-          <select value={workerId} onChange={(e) => pickWorker(e.target.value)}>
-            <option value="">自動（推薦）</option>
-            {workers.map((w) => (
-              <option key={w.id} value={w.id} disabled={!w.online}>
-                {w.owner} · {w.online ? "🟢" : "⚫️"} ·{" "}
-                {w.allow_full_network ? "🌐 開放網路" : "🔒 白名單"} · 額度 {QUOTA[w.quota]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Model
-          <select value={chosen} onChange={(e) => setModel(e.target.value)}>
-            {models.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {/* 必須主動勾選，不能預設打勾 —— 預設打勾的同意等於沒有揭露（web-spec §3）。 */}
-      <div className="consent">
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={consented}
-            onChange={(e) => setConsented(e.target.checked)}
-          />
-          <span>
-            我了解{" "}
-            <strong>
-              {lender ? `${lender} 技術上可以看到我送出的內容` : "出租者技術上可以看到我送出的內容"}
-            </strong>
-          </span>
-        </label>
-        <p>
-          這個 job 會在{lender ? ` ${lender} ` : "對方"}的電腦上執行。
-          系統預設不讓出租者查看內容，但技術上他有能力看到。
-          請不要送出公司機密、客戶個資，或任何你不希望被對方看到的東西。
-        </p>
-      </div>
 
       {error && <p className="error">{error}</p>}
 
-      <button type="submit" disabled={!ready}>
-        {busy ? "送出中…" : "送出"}
-      </button>
     </form>
   );
 }

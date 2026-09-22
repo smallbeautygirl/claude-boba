@@ -33,10 +33,14 @@ export function CommandPicker({
   value,
   onChange,
   label = "可以用的指令（點一下選用）",
+  bare = false,
 }: {
   value: string;
   onChange: (next: string) => void;
   label?: string;
+  // bare：不要自帶 <details>，只吐內容。給輸入列用 —— 那裡的開關是工具列上
+  // 那顆 `/`，自己再包一層 <details> 會變成兩個開關管同一件事。
+  bare?: boolean;
 }) {
   const [catalog, setCatalog] = useState<CommandCatalog | null>(null);
 
@@ -56,10 +60,7 @@ export function CommandPicker({
     .flatMap((g) => g.commands)
     .find((c) => c.name === active)?.label;
 
-  return (
-    <details className="cmds">
-      <summary>{activeLabel ? `指令：${activeLabel}（再點一下取消）` : label}</summary>
-      {catalog.groups.map((g) => (
+  const groups = catalog.groups.map((g) => (
         <div key={g.id} className="cmd-group">
           <div className="cmd-head">
             {g.title} <span className="muted">· {g.audience}</span>
@@ -80,7 +81,13 @@ export function CommandPicker({
             ))}
           </div>
         </div>
-      ))}
+  ));
+
+  if (bare) return <div className="cmds-bare">{groups}</div>;
+  return (
+    <details className="cmds">
+      <summary>{activeLabel ? `指令：${activeLabel}（再點一下取消）` : label}</summary>
+      {groups}
     </details>
   );
 }
