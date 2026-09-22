@@ -54,7 +54,7 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 
 | 區域 | 誰 | 狀態 |
 |---|---|---|
-| `web/src/pages/Submit.tsx`、`CommandPicker.tsx`、`App.tsx`、`index.css` 的色票與元件 | session A | 2026-09-22 告一段落（見下方兩節）|
+| `web/src/pages/Submit.tsx`、`CommandPicker.tsx`、`App.tsx`、`index.css` 的色票與元件 | session A | 進行中 —— 提交頁重新排序（BD 優先），之後接附件 UI |
 | `web/src/pages/Login.tsx`、`Notifications.tsx`、`api.ts` | session B | 2026-09-22 告一段落 |
 | `web/src/index.css` 的 `.hint` | session B | 同上（見下方契約）|
 | `hub/app/config.py`、`hub/app/routers/auth.py` | session B | 同上 |
@@ -133,6 +133,69 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 ### session B
 
 （B 自己填）
+
+---
+
+## 📋 待派工
+
+### → session B：附件上傳的 hub + worker（2026-09-22 由 A 指派）
+
+**為什麼現在做：** 今天走了一遍 BD 的實際流程，結論是**對 Cowork 使用者這條路
+是壞的**，而且壞在最糟的地方。Cowork 的工作標的就是一個資料夾裡的檔案；我們只能
+搬文字，所以 job 拿到的是空工作目錄。它不會報錯，它會從貼上的文字硬生一份沒有
+依據的產出 —— 而那算「成功」，**要記一筆人情債**。使用者用一杯飲料換到一份瞎編
+的簡報。
+
+其他斷點（入口、頁面順序）都可以之後修，**這一個不修的話那些修了也沒用**。
+
+**範圍：只有後端。** web 的部分 A 接（`Submit.tsx` 是 A 認領的檔案）。
+
+#### 可以直接抄的前例
+
+`bca3312` 的 `.jsonl` 上傳整套都能沿用：`storage.upload_key()` / `owns_upload()` /
+`stat()` / `read_head()`、預簽 PUT、`_check_transcript()` 的驗證流程、
+`hub/tests/test_transcript_upload.py` 的測試骨架。**存取控制那段請照抄**（見下）。
+
+#### 要做的
+
+| 層 | 內容 |
+|---|---|
+| hub | `POST /api/uploads/attachment` → 預簽 PUT。要能一次要多張（或呼叫多次） |
+| hub | `JobCreate.attachment_keys: list[str]`，建立 job 時驗證並存進 job |
+| hub | 驗證：**prefix 屬於呼叫者**、存在、單檔與合計上限 |
+| worker | `_prepare_workdir()` 把附件下載進 workdir（結構跟 `resume_from_url` 那段一樣） |
+| worker | **`_collect_artifacts()` 要排除輸入的附件**（見下方地雷） |
+| 兩邊 | 測試 |
+
+#### 上限（`docs/web-spec.md` §3）
+
+附件合計 **50 MB**、單一 job 上限 **100 MB**（transcript + 附件）。
+
+#### 🚨 存取控制：照 `.jsonl` 那條做，不要重新設計
+
+`attachment_keys` 由客戶端指定。不驗 prefix 屬於呼叫者的話，任何人都能把 key
+指到 `jobs/<別人的 job>/output/…`，把別人的產出灌進自己的 job 目錄讀走。
+`.jsonl` 那邊的三條規則同樣適用：
+
+1. key 必須是 `uploads/<呼叫者的 user id>/…`
+2. **「不是你的」與「不存在」回同一個 404** —— 分開講等於給人探測別人 job id 的工具
+3. job id 必須伺服器產生（`security.md`）
+
+#### 🚨 地雷：輸入的附件會被當成產出傳回去
+
+`_collect_artifacts()` 現在把 workdir 底下除了 `.home/`、`.claude/`、`resume.jsonl`
+以外的東西全部上傳。附件放進 workdir 之後會**原封不動被當成 job 產出**傳回給
+使用者。`_NOT_OUTPUT` 那個集合就是為 `resume.jsonl` 開的，模式可以直接沿用。
+
+**一個沒有答案的設計問題，留給你判斷：** 如果 Claude **改了**某個輸入檔，那份
+改過的要不要回傳？照「排除輸入檔名」做的話不會回傳，使用者會拿不到成果；但
+全部回傳又會把五份沒動過的 PDF 也塞回去。可能要比對內容或 mtime。**這題請你
+決定並把理由寫進 commit**，A 接 UI 時要照那個行為寫文案。
+
+#### 做完請交付
+
+在〈待接的契約〉加一節，寫清楚 endpoint、欄位名、上限、錯誤碼，以及上面那題的
+結論。A 照著接 UI。
 
 ---
 
