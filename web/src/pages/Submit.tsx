@@ -190,14 +190,22 @@ export function Submit() {
           而對他們來說貼上本來就幾乎不會少東西，因為那種對話沒有本機環境。 */}
       {!session && (
         <div className="sources">
+          {/* 不要用產品名稱當分界。先前寫過「RD vs BD/PM」（職稱不是分界，
+              用過 Claude Code 的 PM 也有檔案），又寫過「Claude app vs
+              Claude Code app」（Claude Desktop 一個 app 裡就有 Chat 與 Code
+              兩個分頁，這個分界根本不成立）。名稱與分頁結構還會再變。
+
+              問使用者自己答得出、而且不會過期的那件事：那個對話有沒有碰過
+              你電腦上的東西。會留下 session 檔的正是這件事本身。 */}
           <p>
-            <strong>在自己電腦上用 Claude Code 跑的</strong>
-            （終端機、VS Code / JetBrains 擴充、Claude Code 桌面 app）：
+            <strong>那個對話有讀寫過你電腦上的檔案、或跑過指令嗎？</strong>
+            有的話它就在你機器上留了 session 檔（Claude Desktop 的 Code 分頁、
+            終端機的 <code>claude</code>、VS Code / JetBrains 擴充）——
             上傳 <code>.jsonl</code> 才是真的續跑。
           </p>
           <p>
-            <strong>在 Claude 聊天上跑的</strong>（claude.ai、Claude 手機或桌面 app）：
-            全選複製、貼上就好。那種對話沒有本機 session 檔，<em>也不需要</em> ——
+            <strong>只是在對話</strong>（Chat 分頁、claude.ai、手機）：全選複製、
+            貼上就好。那種對話沒有本機 session 檔，<em>也不需要</em> ——
             它本來就沒有本機環境，貼上幾乎不會少東西。附件目前還帶不過來。
           </p>
           <p>不論哪一種，這個 job 跑完之後用「接著問」，之後每一輪都是真的續跑。</p>
