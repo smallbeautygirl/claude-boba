@@ -87,6 +87,27 @@ class AuthorizeCode(BaseModel):
     code: str = Field(min_length=1, max_length=512)
 
 
+class LendingView(BaseModel):
+    """出借設定。**沒有 token 欄位，也不會有** —— 只回「有沒有」
+    （security.md 紅線 2）。
+
+    這幾支給了 response model 而不是回裸 dict，是為了讓契約能從
+    /openapi.json 逐欄位比對。沒有型別的話，對照的人只能去讀原始碼 ——
+    而「讀原始碼確認欄位名」正是今天一再出錯的那種驗證方式。
+    """
+
+    has_token: bool
+    budget_usd: str
+    available_models: list[str]
+    allow_full_network: bool
+    accepting: bool
+    online: bool
+
+
+class AuthorizeStart(BaseModel):
+    authorize_url: str
+
+
 async def _my_lending(user: User, session: AsyncSession) -> Worker:
     """取得（必要時建立）這個人的出借設定。
 
@@ -128,7 +149,7 @@ def _lending_view(w: Worker) -> dict:
     }
 
 
-@router.get("")
+@router.get("", response_model=LendingView)
 async def my_lending(
     user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
 ) -> dict:
@@ -139,7 +160,7 @@ async def my_lending(
     return _lending_view(await _my_lending(user, session))
 
 
-@router.put("/settings")
+@router.put("/settings", response_model=LendingView)
 async def update_lending(
     body: LendingPatch,
     user: User = Depends(require_user),
@@ -172,7 +193,7 @@ async def update_lending(
     return _lending_view(row)
 
 
-@router.post("/authorize")
+@router.post("/authorize", response_model=AuthorizeStart)
 async def start_authorize(
     user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
 ) -> dict:
@@ -189,7 +210,7 @@ async def start_authorize(
     return {"authorize_url": url}
 
 
-@router.post("/authorize/code")
+@router.post("/authorize/code", response_model=LendingView)
 async def submit_authorize_code(
     body: AuthorizeCode,
     user: User = Depends(require_user),
