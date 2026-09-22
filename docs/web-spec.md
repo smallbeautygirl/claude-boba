@@ -70,8 +70,23 @@ Model：  [ Sonnet（預設） ▾ ]
 
 ### 上傳 `.jsonl`（已實作）
 
-**只給 Claude Code 使用者。** claude.ai 與桌面 app 匯不出 `.jsonl`，替 BD/PM
-放一個上傳框等於請他們去找一個不存在的檔案；他們的等價路徑就是貼上。
+**只給 Claude Code 使用者，而這不是「BD/PM 少了一個功能」。**
+
+`claude --resume` 只吃 Claude Code 的 session 檔。claude.ai 與桌面 app 的對話
+是另一套東西，不存在可以餵進 `--resume` 的匯出格式 —— 就算生得出一個檔案，
+worker 那行 `claude --resume <file>` 也用不了它。所以這不是我們少做一條路，
+是那條路在技術上不存在。
+
+而**對 BD/PM 來說，貼上損失的東西遠比對 RD 少**：`--resume` 比貼上多帶的是
+工具呼叫的結果與本機檔案狀態，而 claude.ai 的對話本來就沒有這些。他們真正
+帶不過來的只有**附件**（見〈不做／還沒做〉）。
+
+還有一件事讓這個落差只存在於**第一跳**：job 跑完 worker 會把自己的 transcript
+存起來，所以第二輪之後用「接著問」，不論來源都是真的續跑。
+
+因此提交頁的說明要分兩種來源講。原本只寫「用 Claude Code 的話上傳 `.jsonl`
+可以真正接續」是 RD 視角，BD/PM 讀了會去找一個拿不到的檔案，然後覺得自己
+被降級了。
 
 檔案由瀏覽器直接 PUT 進 MinIO（`POST /api/uploads/transcript` 換一張預簽票），
 不經過 Hub。Hub 在建立 job 時才驗：**key 的 prefix 必須是呼叫者自己的**、

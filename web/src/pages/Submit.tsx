@@ -179,11 +179,28 @@ export function Submit() {
           </>
         ) : (
           <>
-            ⚠️ 貼上的對話會被「讀過」，但 Claude 不會真的記得當時的環境。
-            用 Claude Code 的話，上傳 <code>.jsonl</code> 可以真正接續。
+            ⚠️ 貼上的對話 Claude 讀得到文字，但讀不到當時執行過的指令與開啟的檔案。
           </>
         )}
       </p>
+
+      {/* 兩種來源分開講。原本只寫「上傳 .jsonl 可以真正接續」是 RD 視角 ——
+          BD/PM 看了會去找一個他們拿不到的檔案：claude.ai 與桌面 app 的對話
+          不是 Claude Code 的 session，`--resume` 吃不下，這不是少做一個功能。
+          而對他們來說貼上本來就幾乎不會少東西，因為那種對話沒有本機環境。 */}
+      {!session && (
+        <div className="sources">
+          <p>
+            <strong>claude.ai 或桌面 app 的對話</strong>：全選複製、貼上就好。
+            那種對話本來就沒有本機環境，貼上幾乎不會少東西 —— 但附件目前帶不過來。
+          </p>
+          <p>
+            <strong>Claude Code 的 session</strong>：上傳 <code>.jsonl</code> 才是
+            真的續跑（下面那顆按鈕）。
+          </p>
+          <p>不論哪一種，這個 job 跑完之後用「接著問」，之後每一輪都是真的續跑。</p>
+        </div>
+      )}
 
       <div className="session">
         {session ? (
