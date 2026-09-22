@@ -26,6 +26,9 @@ import {
   type WishImageRef,
   type WishReaction,
 } from "../api";
+// 型別匯入，執行期會被完全抹掉 —— 不會把套件拉進主 bundle。
+import type { Theme } from "emoji-picker-react";
+import { readTheme } from "../theme";
 import "./Wishes.css";
 
 // 不進主 bundle：提交頁與 job 詳情頁的首屏不該為了一個點開才用的選單變胖
@@ -37,6 +40,14 @@ const EmojiPicker = lazy(() => import("emoji-picker-react"));
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGES = 3;
+
+// 我們的三態（system / light / dark）對到 picker 的 Theme。值就是這三個字串，
+// 用型別匯入避免把它的 enum 拉進主 bundle —— 那會抵銷掉 lazy load。
+const PICKER_THEME = {
+  system: "auto",
+  light: "light",
+  dark: "dark",
+} as const;
 
 export function Wishes() {
   const [board, setBoard] = useState<Board | null>(null);
@@ -567,6 +578,16 @@ function Reactions({
             <EmojiPicker
               onEmojiClick={(e: { emoji: string }) => react(e.emoji)}
               lazyLoadEmojis
+              /* 關掉膚色選擇器。它長得突兀只是表面理由，真正的理由是**它會把
+                 同一顆 emoji 拆成好幾筆反應** —— 👍 和 👍🏽 是不同的字串，
+                 所以會各自算一格。牆上只顯示數字（web-spec §12），而五到十個人
+                 的規模下，三個人按了「同一顆」卻顯示成三個 1，那個數字就沒用了。 */
+              skinTonesDisabled
+              /* picker 有自己的亮暗，不會跟著我們的 data-theme 走 ——
+                 不給的話，暗色模式下它是一塊白的。這裡讀的是當下的值而不是用
+                 useTheme()：picker 只在打開的那一刻才存在，而 useTheme 的 effect
+                 會再寫一次 document 的屬性，那不該由一個彈出選單來做。 */
+              theme={PICKER_THEME[readTheme()] as Theme}
             />
           </Suspense>
         </div>
