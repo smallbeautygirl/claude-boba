@@ -1,5 +1,6 @@
-/* 這個元件自帶樣式，不動 index.css —— 那個檔案正在改版，兩邊同時改會撞。
-   改版落地後可以把這些併進設計系統。 */
+/* 這個元件自帶樣式。當初分開是因為 index.css 正在改版、兩邊同時改會撞；
+   改版已經落地，所以那個理由到期了 —— 這幾條可以併進 index.css，
+   只是併的時候要一起想好它們在設計系統裡該叫什麼，不是純搬家。 */
 
 .stop-panel {
   border: 1px solid var(--line);
@@ -8,7 +9,12 @@
   padding: 14px 16px;
   margin-bottom: 18px;
 }
-.stop-panel .hint { margin: -6px 0 10px; }
+/* 只調下緣，上緣交給 .hint.under-field。
+   原本寫成無條件的 `margin: -6px 0 10px`，那個負上緣是多餘的（面板裡唯一
+   那個 .hint 本來就掛了 under-field，-8px 會贏），但它會讓面板裡**任何**
+   沒掛 under-field 的 .hint 也吃到負上緣 —— 而那正是 opt-in 機制要防的事。
+   實測：改之前面板內的裸 .hint 是 -6px，面板外是 0。 */
+.stop-panel .hint.under-field { margin-bottom: 10px; }
 
 button.danger { background: var(--bad); }
 
