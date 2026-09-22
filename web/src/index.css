@@ -122,6 +122,12 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .sources p { margin: 0 0 6px; }
 .sources p:last-child { margin-bottom: 0; }
 .sources strong { color: var(--ink); font-weight: 600; }
+/* 那行指令是這段說明的主角（跑一下就知道自己屬於哪一種），不是附註。 */
+.sources .probe {
+  margin: 8px 0; padding: 10px 12px; overflow-x: auto;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  font-size: 13px; color: var(--ink);
+}
 .sources em { font-style: normal; color: var(--ink); }
 
 .findfile { flex-basis: 100%; margin: 4px 0 0; }

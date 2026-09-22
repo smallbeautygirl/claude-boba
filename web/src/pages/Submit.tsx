@@ -190,25 +190,30 @@ export function Submit() {
           而對他們來說貼上本來就幾乎不會少東西，因為那種對話沒有本機環境。 */}
       {!session && (
         <div className="sources">
-          {/* 分界不是「有沒有碰你的檔案」，是 **session 存在哪裡**。
-              Cowork 會讀寫你指定資料夾裡的檔案，但它跑在 Anthropic 的伺服器上、
-              session 存在你的 Claude 帳號裡（所以手機上打得開同一個工作）——
-              本機沒有 .jsonl。用「有沒有碰檔案」當條件會把 Cowork 判錯邊。
+          {/* 不要叫使用者推理「我的對話算哪一種」。這段我照職稱寫過、照 app
+              名稱寫過、照「狀態存在哪」寫過，三次都錯 —— 因為那需要使用者
+              懂產品架構，而產品架構會變，連我都判錯過 Cowork。
 
-              也不要用產品名稱：職稱不是分界（用過 Claude Code 的 PM 也有檔案），
-              app 也不是（Claude Desktop 一個 app 裡就有 Chat / Cowork / Code）。
-              名稱與分頁結構還會再變，但「狀態存在哪」是這件事的成因。 */}
+              改成讓那行指令當測試：跑一下、看有沒有檔案。SPEC §11 spike #7
+              實測出 Cowork 的 local session 也寫在 ~/.claude/projects/ 底下，
+              跟 CLI 同一棵樹，所以同一行指令兩種來源都涵蓋 —— 使用者不需要
+              知道自己用的是哪一個分頁，也不會因為我們判錯而被導去錯的路。 */}
           <p>
-            <strong>你能在手機上打開同一個對話、接著問嗎？</strong>
-            可以的話它存在你的 Claude 帳號裡（Chat、Cowork、claude.ai），
-            本機沒有 session 檔 —— 用貼的就好。
-            <em>不用整段複製</em>：貼最後幾輪、再寫一句要它接著做什麼，通常就夠了。
-            貼越多讀越久、越貴，而那筆錢是要算進人情債的。附件目前還帶不過來。
+            <strong>先看你電腦上有沒有那個對話的 session 檔。</strong>
+            在終端機跑這行：
+          </p>
+          <pre className="probe">ls -t ~/.claude/projects/*/*.jsonl | head -5</pre>
+          <p>
+            <strong>有列出東西</strong>（終端機的 <code>claude</code>、
+            VS Code / JetBrains 擴充、Claude Desktop 的 Code 分頁，以及 Cowork 的
+            local session，都寫在這裡）：上傳它才是真的續跑。剛跑到一半額度就沒了的話，
+            通常就是最上面那個。
           </p>
           <p>
-            <strong>只存在那一台電腦上</strong>（終端機的 <code>claude</code>、
-            VS Code / JetBrains 擴充、Claude Desktop 的 Code 分頁）：那是
-            Claude Code，它留了 <code>.jsonl</code> —— 上傳它才是真的續跑。
+            <strong>什麼都沒有</strong>（Chat、claude.ai、手機，以及 Cowork 的
+            cloud session —— 那些跑在 Anthropic 的伺服器上，本機不留檔）：貼上就好。
+            <em>不用整段複製</em>：貼最後幾輪、再寫一句要它接著做什麼，通常就夠了。
+            貼越多讀越久、越貴，而那筆錢是要算進人情債的。附件目前還帶不過來。
           </p>
           <p>不論哪一種，這個 job 跑完之後用「接著問」，之後每一輪都是真的續跑。</p>
         </div>
@@ -244,13 +249,22 @@ export function Submit() {
                 一個資料夾，隨便一台機器就上百個 session 檔，而檔名是 session id，
                 看不出內容。要給就要給到能貼進終端機的程度。 */}
             <details className="cmds findfile">
-              <summary>怎麼找到那個檔案？</summary>
-              <p className="muted">在終端機跑這行，列出最近改動的三個 session：</p>
-              <pre>ls -t ~/.claude/projects/*/*.jsonl | head -3</pre>
+              <summary>列出來好幾個，怎麼知道是哪一個？</summary>
               <p className="muted">
                 一個專案一個資料夾，資料夾名稱是專案路徑把 <code>/</code> 換成{" "}
                 <code>-</code>。檔名是 session id，看不出內容 ——
-                挑剛剛那個專案底下時間最近的通常就對。
+                挑那個專案底下時間最近的通常就對。
+              </p>
+              {/* Cowork 沒有「專案路徑」可以對，但它的 metadata 有標題。
+                  照標題找出 cliSessionId，再拿去 projects/ 底下比對。 */}
+              <p className="muted">
+                Cowork 的對話沒有專案路徑可以對，改用標題找（macOS）：
+              </p>
+              <pre>{`grep -l '你對話標題的關鍵字' \
+  ~/Library/Application\ Support/Claude/claude-code-sessions/*/*/local_*.json`}</pre>
+              <p className="muted">
+                找到的 <code>local_*.json</code> 裡有 <code>cliSessionId</code>，
+                那就是 <code>~/.claude/projects/</code> 底下對應的檔名。
               </p>
             </details>
           </>
