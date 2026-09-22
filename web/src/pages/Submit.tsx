@@ -178,46 +178,30 @@ export function Submit() {
             不是把對話當文字重讀一次。
           </>
         ) : (
-          <>
-            ⚠️ 貼上的對話 Claude 讀得到文字，但讀不到當時執行過的指令與開啟的檔案。
-          </>
+          <>⚠️ 貼上的對話 Claude 讀得到文字，但讀不到當時執行過的指令與開啟的檔案。</>
         )}
       </p>
 
-      {/* 兩種來源分開講。原本只寫「上傳 .jsonl 可以真正接續」是 RD 視角 ——
-          BD/PM 看了會去找一個他們拿不到的檔案：claude.ai 與桌面 app 的對話
-          不是 Claude Code 的 session，`--resume` 吃不下，這不是少做一個功能。
-          而對他們來說貼上本來就幾乎不會少東西，因為那種對話沒有本機環境。 */}
+      {/* 順序照使用頻率排，不照技術正確性排。多數人（尤其 BD/PM）的動作就是
+          貼上，所以貼上的實務建議放前面；「跑一行指令看有沒有 session 檔」是
+          少數人的路，收進下面那顆按鈕旁邊的展開區。
+
+          先前版本把那行 `ls -t` 當成所有人的第一步 —— 對不開終端機的人來說，
+          第一個指示就是一個他做不到、而且做完會看到空的動作。路由正確，
+          但把摩擦加在最需要簡單路徑的那群人身上。 */}
       {!session && (
         <div className="sources">
-          {/* 不要叫使用者推理「我的對話算哪一種」。這段我照職稱寫過、照 app
-              名稱寫過、照「狀態存在哪」寫過，三次都錯 —— 因為那需要使用者
-              懂產品架構，而產品架構會變，連我都判錯過 Cowork。
-
-              改成讓那行指令當測試：跑一下、看有沒有檔案。SPEC §11 spike #7
-              實測出 Cowork 的 local session 也寫在 ~/.claude/projects/ 底下，
-              跟 CLI 同一棵樹，所以同一行指令兩種來源都涵蓋 —— 使用者不需要
-              知道自己用的是哪一個分頁，也不會因為我們判錯而被導去錯的路。 */}
           <p>
-            <strong>先看你電腦上有沒有那個對話的 session 檔。</strong>
-            在終端機跑這行：
+            <em>不用整段複製</em> —— 貼最後幾輪、再寫一句要它接著做什麼，通常就夠了。
+            貼越多讀越久、越貴，而那筆錢是要算進人情債的。
           </p>
-          <pre className="probe">ls -t ~/.claude/projects/*/*.jsonl | head -5</pre>
-          <p>
-            <strong>有列出東西</strong>（終端機的 <code>claude</code>、
-            VS Code / JetBrains 擴充、Claude Desktop 的 Code 分頁，以及 Cowork 的
-            local session，都寫在這裡）：上傳它才是真的續跑。剛跑到一半額度就沒了的話，
-            通常就是最上面那個。
-          </p>
-          <p>
-            <strong>什麼都沒有</strong>（Chat、claude.ai、手機，以及 Cowork 的
-            cloud session —— 那些跑在 Anthropic 的伺服器上，本機不留檔）：貼上就好。
-            <em>不用整段複製</em>：貼最後幾輪、再寫一句要它接著做什麼，通常就夠了。
-            貼越多讀越久、越貴，而那筆錢是要算進人情債的。附件目前還帶不過來。
-          </p>
-          <p>不論哪一種，這個 job 跑完之後用「接著問」，之後每一輪都是真的續跑。</p>
+          <p>這個 job 跑完之後用「接著問」，之後每一輪都是真的續跑。</p>
         </div>
       )}
+
+      {/* TODO(session B 做完後接)：附件上傳的位置在這裡 —— 對 Cowork 使用者
+          來說它才是主要動作。在後端做出來之前不放控制項（板子的規則：
+          指向不存在的功能比少講一件事糟得多）。 */}
 
       <div className="session">
         {session ? (
@@ -244,12 +228,23 @@ export function Submit() {
                 }}
               />
             </label>
-            <span className="muted">在自己電腦上跑到一半、額度用完了？</span>
+            <span className="muted">
+              在自己電腦上用 Claude Code 跑的話（終端機、IDE 擴充、Desktop 的 Code
+              分頁，以及 Cowork 的 local session），上傳 session 檔是
+              <strong>真的續跑</strong>。
+            </span>
             {/* 「去 ~/.claude/projects/ 找」不是可執行的指示 —— 那底下一個專案
                 一個資料夾，隨便一台機器就上百個 session 檔，而檔名是 session id，
                 看不出內容。要給就要給到能貼進終端機的程度。 */}
             <details className="cmds findfile">
-              <summary>列出來好幾個，怎麼知道是哪一個？</summary>
+              <summary>我的對話有 session 檔嗎？</summary>
+              <p className="muted">在終端機跑這行 —— 有列出東西就是有：</p>
+              <pre>ls -t ~/.claude/projects/*/*.jsonl | head -5</pre>
+              <p className="muted">
+                剛跑到一半額度就沒了的話，通常就是最上面那個。
+                什麼都沒有就用貼的 —— Chat、claude.ai、手機，以及 Cowork 的
+                cloud session 都不留本機檔，貼上也幾乎不會少東西。
+              </p>
               <p className="muted">
                 一個專案一個資料夾，資料夾名稱是專案路徑把 <code>/</code> 換成{" "}
                 <code>-</code>。檔名是 session id，看不出內容 ——
