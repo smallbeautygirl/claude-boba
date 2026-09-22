@@ -21,14 +21,23 @@ commit**。這不是假設 —— 2026-09-21 實際發生過：`6d978c6` 表面�
 中止 job」，實際卻夾帶了 UI 改版的 `App.tsx`、`index.css`、`MyWorker.tsx`、
 `Notifications.tsx`。東西沒丟，但 commit 訊息與內容不符，歷史被弄糊。
 
-**一律明確列出自己的路徑：**
+**`git add <路徑>` 也不夠。** index 是共用的：另一個 session 只要先 `git add`
+過，他的檔案就已經躺在 index 裡，你再 `git add` 自己的兩個檔案，commit 時會把
+他的一起帶走。2026-09-22 實際發生：一個只該有 `SPEC.md` 與 `docs/web-spec.md`
+的 commit，夾帶了另一個 session 的 `CONTEXT.md`、`hub/app/config.py`、
+`hub/app/routers/auth.py`、`web/src/api.ts`、`Notifications.tsx`。
+
+**用 commit 的 pathspec，它完全不看 index：**
 
 ```bash
-git add hub/ worker/ docs/web-spec.md     # ✅ 只加自己動過的
-git add -A                                 # ❌ 永遠不要
+git commit -F msg.txt -- web/src/pages/Submit.tsx web/src/index.css   # ✅
+git add web/ && git commit                                            # ⚠️ 會帶走別人已 stage 的
+git add -A                                                            # ❌ 永遠不要
 ```
 
-提交前先看一眼 `git status --short`，出現不是你改的檔案就停下來。
+`git commit -- <路徑>` 只從工作區取那幾個路徑，別人 stage 了什麼都不影響。
+真的要先 `git add` 的話，**`git commit` 前一定要看 `git diff --cached --name-only`**，
+出現不是你的檔案就停下來。
 
 ---
 
