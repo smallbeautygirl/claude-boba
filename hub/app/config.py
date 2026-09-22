@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     # 但也可能讓人不好意思借。
     teams_channel_debts: bool = True
 
+    # 管理者的 email 清單，逗號分隔。名單改動的頻率是「幾個月一次」，
+    # 所以不加資料庫欄位、不做管理介面，改 env 重啟就好。
+    #
+    # **沒設就是沒有人是 admin，這是刻意的，不是還沒做完。** 不要改成
+    # 「沒設就都是」或「第一個註冊的是」那種方便做法 —— 那會讓一個空的
+    # 設定檔變成權限漏洞。
+    admin_emails: str = ""
+
     # MinIO console 的網址（跟 S3_PUBLIC_ENDPOINT 不同埠）。不從那個位址推算
     # 埠號 —— 那是猜的。沒設就代表這個站台沒開 console，前端整段不顯示：
     # 一個連不上的連結比沒有連結更糟。
@@ -60,6 +68,17 @@ class Settings(BaseSettings):
     worker_poll_timeout: int = 30
     # 排隊超過這個時間無人接單即作廢（SPEC §5）
     job_queue_expiry_seconds: int = 900
+
+    @property
+    def admin_email_set(self) -> frozenset[str]:
+        """小寫化 + trim 之後的 admin 清單。
+
+        人手維護的清單一定會有大小寫與前後空白，比對前正規化 ——
+        不然「設了卻不生效」會變成一個很難查的問題。
+        """
+        return frozenset(
+            e.strip().lower() for e in self.admin_emails.split(",") if e.strip()
+        )
 
 
 settings = Settings()

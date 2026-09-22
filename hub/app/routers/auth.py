@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import notify, observ
-from ..auth import require_user
+from ..auth import is_admin, require_user
 from ..config import settings
 from ..db import get_session
 from ..models import User
@@ -31,6 +31,7 @@ async def login(body: LoginBody) -> dict:
 
 @router.get("/me")
 async def me(user: User = Depends(require_user)) -> dict:
+    admin = is_admin(user)
     return {
         "id": str(user.id),
         "email": user.email,
@@ -40,9 +41,11 @@ async def me(user: User = Depends(require_user)) -> dict:
         # 前端要能講實話，就得知道這件事。
         "channel_notifications": bool(settings.teams_channel_webhook),
         "channel_name": settings.teams_channel_name,
-        # MinIO console 的網址，只有「我的 worker」頁會用。沒設就是空字串，
-        # 前端據此整段不顯示。
-        "s3_console_url": settings.s3_console_url,
+        "is_admin": admin,
+        # MinIO console 的網址。**只回給管理者** —— 那個 console 沒有「只看自己」
+        # 的權限，登進去看得到所有人的對話與檔案。靠前端不渲染是不夠的：
+        # 沒渲染不等於沒送出去，打開開發者工具就看得到。
+        "s3_console_url": settings.s3_console_url if admin else "",
     }
 
 

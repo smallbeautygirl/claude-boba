@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import observ
+from .config import settings
 from .db import get_session
 from .models import User
 
@@ -30,6 +31,15 @@ async def upsert_user(session: AsyncSession, who: observ.ObservUser) -> User:
     await session.commit()
     await session.refresh(user)
     return user
+
+
+def is_admin(user: User) -> bool:
+    """這個人是不是站台管理者。
+
+    判定只看 `ADMIN_EMAILS`，比對前兩邊都小寫化 + trim（見 config）。
+    沒設就沒有人是 admin。
+    """
+    return user.email.strip().lower() in settings.admin_email_set
 
 
 async def require_user(

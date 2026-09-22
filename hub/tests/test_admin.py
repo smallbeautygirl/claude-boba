@@ -1,0 +1,168 @@
+"""管理頁的端點：**每一支都要擋非 admin**，而且分界不能漂移。
+
+擋在後端不是為了整齊 —— 前端不渲染不等於沒送出去，打開開發者工具就繞過去了。
+
+另一半是分界：這頁看得到什麼壞了，**不能瀏覽誰欠誰**。所以聚合數字不指名、
+卡住清單不含 job 內容（security.md 紅線 1）。那條界線用測試釘住，
+因為它不是技術限制 —— 是這個工具會不會被同事信任的問題，很容易被「順手多回
+一個欄位」侵蝕。
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from app.auth import require_user
+from app.config import settings
+from app.db import engine
+from app.main import app
+from app.models import User
+from app.routers.admin import QUEUED_STUCK_SECONDS, RUNNING_STUCK_SECONDS
+from fastapi.testclient import TestClient
+
+ADMIN = "boss@example.com"
+ENDPOINTS = ["/api/admin/health", "/api/admin/stats", "/api/admin/stuck-jobs"]
+
+
+def _client(email: str) -> TestClient:
+    app.dependency_overrides[require_user] = lambda: User(
+        id=uuid.uuid4(), observ_user_id=1, email=email, display_name="誰"
+    )
+    return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _admins(monkeypatch):
+    # 每個 TestClient 都跑在自己的事件迴圈上，而 app.db.engine 的連線池會留著
+    # 上一個迴圈的連線 —— 不倒掉的話，第二個碰資料庫的測試會拿到
+    # 「attached to a different loop」。單獨跑會過、整檔跑會炸，就是這個。
+    engine.sync_engine.pool.dispose()
+    monkeypatch.setattr(settings, "admin_emails", f" {ADMIN.upper()} ,x@y.com")
+    yield
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("path", ENDPOINTS)
+def test_every_endpoint_refuses_a_normal_user(path) -> None:
+    r = _client("someone@example.com").get(path)
+    assert r.status_code == 403
+    # 訊息不要暗示「你可以怎麼變成 admin」，只說這頁不是給你的。
+    assert "管理者" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("path", ENDPOINTS)
+def test_admin_gets_in_despite_case_and_spaces(path) -> None:
+    """設定裡是大寫加空白、登入的是小寫 —— 人手維護的清單一定長這樣。"""
+    assert _client(ADMIN).get(path).status_code == 200
+
+
+def test_nobody_is_admin_when_the_list_is_empty(monkeypatch) -> None:
+    """沒設 = 沒有人是 admin。這是刻意的 fail closed，不是還沒做完。"""
+    monkeypatch.setattr(settings, "admin_emails", "")
+    assert _client(ADMIN).get("/api/admin/health").status_code == 403
+
+
+def test_stats_never_names_anyone() -> None:
+    """聚合數字不指名。多回一個 per-user 欄位就會踩到這條。"""
+    body = _client(ADMIN).get("/api/admin/stats").json()
+    assert set(body) == {
+        "users",
+        "jobs_total",
+        "jobs_by_status",
+        "success_rate",
+        "spend_usd",
+    }
+
+
+def test_stuck_jobs_carry_no_job_content() -> None:
+    """紅線 1：job 內容一律不進這裡 —— prompt、結果、錯誤細節都不行。"""
+    rows = _client(ADMIN).get("/api/admin/stuck-jobs").json()
+    assert isinstance(rows, list)
+    for row in rows:
+        assert set(row) == {"id", "status", "stuck_seconds", "worker"}
+
+
+def test_health_separates_measured_from_unknown() -> None:
+    """量到的、讀到的、量不到的要分開。
+
+    egress proxy 必須留在 `unknown` 且附原因 —— 把它做成一顆永遠綠的燈，
+    比完全沒有這一項危險，因為它會被相信。
+    """
+    body = _client(ADMIN).get("/api/admin/health").json()
+    assert {"checks", "facts", "unknown"} == set(body)
+    assert all({"key", "label", "ok", "detail"} <= set(c) for c in body["checks"])
+    assert any("egress" in u["label"] for u in body["unknown"])
+    assert all(u["why"] for u in body["unknown"])
+
+
+def test_stuck_thresholds_leave_room_before_the_job_expires() -> None:
+    """排隊的門檻要早於站台把 job 作廢的時間，不然管理者看到時已經來不及。"""
+    assert QUEUED_STUCK_SECONDS < settings.job_queue_expiry_seconds
+    assert RUNNING_STUCK_SECONDS > 600  # worker 預設逾時，外加寬限
+
+
+# —— 卡住的 job 真的抓得到嗎 ——
+#
+# 上面那支端點在正常的站台上回空陣列，而「空」跟「偵測不到」在畫面上長得一樣。
+# 所以這裡真的塞一筆逾時的 job 進資料庫（交易包住、結束 rollback）再問一次。
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+async def db():
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    eng = create_async_engine(settings.database_url, poolclass=NullPool)
+    try:
+        conn = await eng.connect()
+    except (OperationalError, OSError) as exc:
+        await eng.dispose()
+        pytest.skip(f"連不到資料庫：{exc}")
+    trans = await conn.begin()
+    async with AsyncSession(bind=conn, expire_on_commit=False) as s:
+        yield s
+    await trans.rollback()
+    await conn.close()
+    await eng.dispose()
+
+
+@pytest.mark.anyio
+async def test_a_long_queued_job_shows_up(db) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.enums import JobStatus, SourceType
+    from app.models import Job
+    from app.routers.admin import stuck_jobs
+
+    user = User(
+        observ_user_id=uuid.uuid4().int % 2_000_000_000,
+        email=f"{uuid.uuid4()}@example.com",
+        display_name="委託者",
+    )
+    db.add(user)
+    await db.flush()
+    old = datetime.now(UTC) - timedelta(seconds=QUEUED_STUCK_SECONDS + 60)
+    job = Job(
+        borrower_id=user.id,
+        source_type=SourceType.PASTE,
+        prompt="這句不可以出現在回應裡",
+        status=JobStatus.QUEUED,
+        created_at=old,
+    )
+    db.add(job)
+    await db.flush()
+
+    rows = await stuck_jobs(user, db)
+    mine = [r for r in rows if r["id"] == str(job.id)]
+    assert mine, "排隊超過門檻的 job 沒有被列出來"
+    assert mine[0]["stuck_seconds"] >= QUEUED_STUCK_SECONDS
+    # 紅線 1：內容一個字都不能跟著出來。
+    assert "prompt" not in mine[0]
+    assert all("這句不可以出現在回應裡" not in str(v) for v in mine[0].values())
