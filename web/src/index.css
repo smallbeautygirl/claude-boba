@@ -122,6 +122,44 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .attach-list code { background: var(--card); padding: 1px 5px; border-radius: 4px; }
 .attach > p { margin: 12px 0 0; }
 
+/* session 檔獨立成一塊面板，不跟附件並排成兩顆一樣的按鈕 ——
+   附件是 job 的標的，session 檔是對話的延續，是兩種不同的東西（CONTEXT.md）。 */
+.resume {
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 18px; margin-bottom: 20px; font-size: 13px;
+}
+.resume-head { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.resume p { margin: 0 0 10px; }
+.resume .session-pick { display: inline-block; margin-bottom: 10px; }
+.resume kbd {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
+  padding: 1px 5px; font-family: ui-monospace, monospace; font-size: 12px;
+}
+.resume code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.resume-picked {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 10px 12px; background: var(--accent-soft); border-radius: 8px;
+}
+/* 隱私宣告用保留色，不用 muted —— 瀏覽器確實讀了他其他對話的內容，
+   這句要看得見（web-spec §9：嚴肅的地方要顯得嚴肅）。 */
+.privacy {
+  border-left: 3px solid var(--warn); padding-left: 10px;
+  color: var(--ink);
+}
+
+/* 候選的 session。檔名是 session id，所以列的是「時間 · 第一句話 · 大小」。 */
+.candidates { list-style: none; margin: 0 0 10px; padding: 0; }
+.candidates li { margin-bottom: 6px; }
+.candidates button {
+  display: flex; width: 100%; gap: 12px; align-items: baseline; text-align: left;
+  padding: 9px 12px; border-radius: 8px; font-size: 13px; font-weight: 400;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line);
+}
+.candidates button:hover { background: var(--accent-soft); border-color: var(--accent); }
+.cand-when { flex-shrink: 0; font-family: ui-monospace, monospace; color: var(--muted); }
+.cand-preview { flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand-size { flex-shrink: 0; color: var(--muted); }
+
 .session-file {
   flex-grow: 1; padding: 8px 12px; border-radius: 8px;
   background: var(--accent-soft); font-size: 13px;
@@ -146,10 +184,16 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 }
 .sources em { font-style: normal; color: var(--ink); }
 
-.findfile { flex-basis: 100%; margin: 4px 0 0; }
+/* min-width: 0 是必要的：這是 flex 項目，而 flex 項目預設 min-width: auto
+   —— 不肯縮到比內容窄，所以長指令會把它撐爆、連帶衝出卡片。<pre> 自己的
+   overflow-x 攔不住外層被撐開。 */
+.findfile { flex-basis: 100%; min-width: 0; margin: 4px 0 0; }
 .findfile p { margin: 8px 0 6px; }
+/* 換行而不是橫向捲：這是一行要被複製貼上的指令，看不全的東西沒人敢貼。
+   照 .consent pre 的先例，那裡已經為「長字串要全部看到」立過同樣的規矩。 */
 .findfile pre {
-  margin: 0; padding: 10px 12px; overflow-x: auto;
+  margin: 0; padding: 10px 12px;
+  white-space: pre-wrap; word-break: break-all;
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
   font-size: 13px;
 }

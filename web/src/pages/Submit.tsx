@@ -91,6 +91,63 @@ function uniqueName(name: string, taken: Set<string>): string {
   }
 }
 
+// 選了資料夾之後只預覽時間最近的這幾個。讀十個檔案的開頭很便宜，
+// 而「剛跑到一半額度就沒了」的那個一定在最前面。
+const PREVIEW_COUNT = 10;
+const PREVIEW_BYTES = 64 * 1024;
+
+// 從 transcript 開頭抽第一則使用者訊息。
+//
+// 沒有這個，資料夾選取器只是把「認不出哪個是哪個」從終端機搬到瀏覽器 ——
+// 檔名是 session id，列十個 UUID 跟列在終端機裡一樣沒用。
+function firstUserText(row: unknown): string {
+  const r = row as { type?: string; message?: { role?: string; content?: unknown } };
+  if (r.type !== "user" || r.message?.role !== "user") return "";
+  const content = r.message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  for (const block of content) {
+    const b = block as { type?: string; text?: string };
+    if (b.type === "text" && b.text) return b.text;
+  }
+  return "";
+}
+
+async function previewOf(file: File): Promise<string> {
+  let head: string;
+  try {
+    head = await file.slice(0, PREVIEW_BYTES).text();
+  } catch {
+    return "";
+  }
+  for (const line of head.split("\n")) {
+    if (!line.trim()) continue;
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue; // 最後一行多半被 slice 切斷，跳過就好
+    }
+    const text = firstUserText(row).trim();
+    // 開頭是標籤的多半是 CLI 自己塞的（<command-name>、<system-reminder>…），
+    // 那不是使用者打的字，拿來當預覽認不出是哪個對話。
+    if (!text || text.startsWith("<")) continue;
+    return text.replace(/\s+/g, " ").slice(0, 80);
+  }
+  return "";
+}
+
+function fmtWhen(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+interface Candidate {
+  file: File;
+  preview: string;
+}
+
 interface Attachment {
   key: string;
   name: string;
@@ -115,6 +172,9 @@ export function Submit() {
   );
   const [uploading, setUploading] = useState(false);
   const [files, setFiles] = useState<Attachment[]>([]);
+  // 選了資料夾之後列出來的候選。null = 還沒選過資料夾。
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
@@ -187,6 +247,30 @@ export function Submit() {
     }
   }
 
+  async function scanFolder(picked: FileList | null) {
+    if (!picked?.length) return;
+    setError(null);
+    const found = Array.from(picked)
+      .filter((f) => f.name.endsWith(".jsonl") && f.size > 0)
+      .sort((a, b) => b.lastModified - a.lastModified)
+      .slice(0, PREVIEW_COUNT);
+
+    if (!found.length) {
+      setCandidates([]);
+      return;
+    }
+    setScanning(true);
+    try {
+      setCandidates(
+        await Promise.all(
+          found.map(async (file) => ({ file, preview: await previewOf(file) })),
+        ),
+      );
+    } finally {
+      setScanning(false);
+    }
+  }
+
   async function pickFile(file: File | undefined) {
     if (!file) return;
     setError(null);
@@ -208,6 +292,7 @@ export function Submit() {
     try {
       const key = await api.uploadTranscript(file);
       setSession({ name: file.name, size: file.size, key });
+      setCandidates(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "上傳失敗，請再試一次");
     } finally {
@@ -338,52 +423,93 @@ export function Submit() {
         )}
       </div>
 
-      <div className="session">
+      {/* 獨立成一塊面板，不跟附件並排成兩顆一樣的按鈕。CONTEXT.md 把它們
+          定成不同的東西：附件是 job 的標的，session 檔是對話的延續。
+          長得像同類的話，傳錯不會報錯，只會得到一個怪結果。 */}
+      <div className="resume">
+        <div className="resume-head">接續一個 Claude Code 的對話</div>
+
         {session ? (
-          <>
-            <div className="session-file">
+          <div className="resume-picked">
+            <div>
               <strong>{session.name}</strong>
               <span className="muted"> · {fmtSize(session.size)}</span>
             </div>
-            <button type="button" className="small" onClick={() => setSession(null)}>
+            <button
+              type="button"
+              className="small"
+              onClick={() => setSession(null)}
+            >
               移除
             </button>
-          </>
+          </div>
         ) : (
           <>
+            <p className="muted">
+              在自己電腦上用 Claude Code 跑到一半、額度沒了？（終端機、IDE 擴充、
+              Desktop 的 Code 分頁，以及 Cowork 的 local session）選出那份
+              session，出租者那邊會真的 <code>--resume</code> 接上去，
+              不是把對話當文字重讀。
+            </p>
+
             <label className="session-pick">
-              {uploading ? "上傳中…" : "上傳 .jsonl"}
+              {scanning ? "讀取中…" : uploading ? "上傳中…" : "選 session 資料夾"}
               <input
                 type="file"
-                accept=".jsonl"
-                disabled={uploading}
+                disabled={scanning || uploading}
+                {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
                 onChange={(e) => {
-                  void pickFile(e.target.files?.[0]);
+                  void scanFolder(e.target.files);
                   e.target.value = "";
                 }}
               />
             </label>
-            <span className="muted">
-              在自己電腦上用 Claude Code 跑的話（終端機、IDE 擴充、Desktop 的 Code
-              分頁，以及 Cowork 的 local session），上傳 session 檔是
-              <strong>真的續跑</strong>。
-            </span>
-            {/* 「去 ~/.claude/projects/ 找」不是可執行的指示 —— 那底下一個專案
-                一個資料夾，隨便一台機器就上百個 session 檔，而檔名是 session id，
-                看不出內容。要給就要給到能貼進終端機的程度。 */}
+
+            <p className="muted">
+              選 <code>~/.claude/projects</code>。它在 Finder 裡是隱藏的 ——
+              對話框打開後按 <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd>{" "}
+              才看得到（Windows 檔案總管：檢視 → 顯示 → 隱藏的項目）。
+            </p>
+
+            {/* 瀏覽器確實讀了他其他對話的內容，即使一個 byte 都沒上傳。
+                這種事要正經講（web-spec §9），不能用輕鬆語氣帶過。 */}
+            <p className="privacy">
+              🔒 這些檔案只在你的瀏覽器裡開啟，只有你選中的那一個會被上傳。
+            </p>
+
+            {candidates?.length === 0 && (
+              <p className="muted">
+                這個資料夾底下沒有 <code>.jsonl</code>。
+                確認選的是 <code>~/.claude/projects</code>；
+                如果那裡也是空的，代表這個對話沒有本機 session 檔，用貼的就好。
+              </p>
+            )}
+
+            {candidates && candidates.length > 0 && (
+              <ul className="candidates">
+                {candidates.map((c) => (
+                  <li key={`${c.file.name}-${c.file.lastModified}`}>
+                    <button type="button" onClick={() => void pickFile(c.file)}>
+                      <span className="cand-when">{fmtWhen(c.file.lastModified)}</span>
+                      <span className="cand-preview">
+                        {c.preview || <span className="muted">（讀不出開頭）</span>}
+                      </span>
+                      <span className="cand-size">{fmtSize(c.file.size)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* 指令不砍掉：選取器在某個瀏覽器或 OS 上失敗時，使用者不能完全沒有路。 */}
             <details className="cmds findfile">
-              <summary>我的對話有 session 檔嗎？</summary>
-              <p className="muted">在終端機跑這行 —— 有列出東西就是有：</p>
+              <summary>或者用終端機</summary>
+              <p className="muted">跑這行 —— 有列出東西就是有：</p>
               <pre>ls -t ~/.claude/projects/*/*.jsonl | head -5</pre>
               <p className="muted">
                 剛跑到一半額度就沒了的話，通常就是最上面那個。
                 什麼都沒有就用貼的 —— Chat、claude.ai、手機，以及 Cowork 的
                 cloud session 都不留本機檔，貼上也幾乎不會少東西。
-              </p>
-              <p className="muted">
-                一個專案一個資料夾，資料夾名稱是專案路徑把 <code>/</code> 換成{" "}
-                <code>-</code>。檔名是 session id，看不出內容 ——
-                挑那個專案底下時間最近的通常就對。
               </p>
               {/* Cowork 沒有「專案路徑」可以對，但它的 metadata 有標題。
                   照標題找出 cliSessionId，再拿去 projects/ 底下比對。 */}
