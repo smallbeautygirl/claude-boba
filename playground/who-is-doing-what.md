@@ -1098,6 +1098,22 @@ A 在 spike #8 抓到的：**新模型下 job 跑在共用主機，代跑者反�
 
 C 可以先照契約做 UI，A 那邊還沒好就用 mock；**但不要上線一個後端還不存在的按鈕**。
 
+#### 🚨 後端 commit 了不等於上線了（2026-09-22）
+
+`89889c4` 之後，提交頁的代跑者下拉指到 `GET /api/workers/lenders`，但 **8787 上
+跑的 hub 進程比那筆 commit 早起來**，所以那支端點在使用者的畫面上是 405。
+量法（不是讀程式碼推的）：
+
+```
+GET /api/workers          → 401   路由在，只是沒帶 token
+GET /api/workers/lenders  → 405   路由不在，被 DELETE /{worker_id} 接走
+/openapi.json 的 paths    → 沒有 /lenders、/authorize、/settings
+```
+
+**改了後端就要確認跑著的那個進程真的載到了**（`/openapi.json` 看得出來，
+不需要登入）。uvicorn 沒有掛 `--reload` 的話 commit 不會自己生效。
+重啟請記 PID 精確 kill。
+
 #### C 那半的交付（`dabcbc2` 詞彙、`61af4d8` 出借設定）
 
 **兩種後端都接得住**：`GET /api/workers` 回陣列就渲染舊畫面，回單一物件才渲染
