@@ -200,9 +200,10 @@ export function Submit() {
               名稱與分頁結構還會再變，但「狀態存在哪」是這件事的成因。 */}
           <p>
             <strong>你能在手機上打開同一個對話、接著問嗎？</strong>
-            可以的話它存在你的 Claude 帳號裡（Chat、Cowork、claude.ai）——
-            本機沒有 session 檔，全選複製、貼上就好。那種對話貼上幾乎不會少東西，
-            <em>也不需要</em>檔案。附件目前還帶不過來。
+            可以的話它存在你的 Claude 帳號裡（Chat、Cowork、claude.ai），
+            本機沒有 session 檔 —— 用貼的就好。
+            <em>不用整段複製</em>：貼最後幾輪、再寫一句要它接著做什麼，通常就夠了。
+            貼越多讀越久、越貴，而那筆錢是要算進人情債的。附件目前還帶不過來。
           </p>
           <p>
             <strong>只存在那一台電腦上</strong>（終端機的 <code>claude</code>、
