@@ -86,6 +86,9 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .field-row label { flex-grow: 1; margin-bottom: 0; }
 
 .hint { margin: -8px 0 20px; font-size: 13px; color: var(--muted); }
+/* 那個負 margin 是為「說明接在欄位腳下」設計的（label 有 16px 下緣）。
+   接在按鈕後面時沒有那段下緣可以吃，說明會被拉進按鈕的盒子裡。 */
+button + .hint { margin-top: 12px; }
 
 /* 上傳 session 檔。原生的 file input 在每個瀏覽器上長得都不一樣而且都很醜，
    所以藏起來、用 label 當按鈕 —— label 點下去會觸發它，不需要 JS。 */
