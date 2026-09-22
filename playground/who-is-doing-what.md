@@ -91,8 +91,22 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 
   靜態 harness 對「這些 class 長什麼樣」有用，對「這一頁實際長什麼樣」無效。
 
-  要看整頁就得用真實產物。需要登入的頁面渲染不了時，退而求其次是**從原始碼
-  導出結構**，例如：
+  要看整頁就得用真實產物。**登入牆不是藉口** —— 用 Playwright 攔截 API 就能渲染
+  真正的元件樹（2026-09-22 實測可用）：
+
+  ```js
+  await p.addInitScript(() => { try { localStorage.setItem('boba.token','x'); } catch {} });
+  await p.route('**/api/auth/me', r => r.fulfill({ json: {
+    id:'1', email:'v@x.com', display_name:'vivianfan',
+    has_teams_webhook:false, channel_notifications:true, channel_name:'X' }}));
+  await p.route('**/api/**', r => r.fulfill({ json: [] }));
+  await p.goto('http://localhost:5173/');
+  ```
+
+  假的是**資料**，不是版面 —— 渲染的仍然是真正的 `Submit.tsx`。這跟手寫 harness
+  的差別就在這裡：harness 假的是結構，而結構正是你要驗的東西。
+
+  真的連跑都跑不起來時，退而求其次是**從原始碼導出結構**，例如：
 
   ```bash
   awk '/^  return \(/,0' src/pages/Submit.tsx | grep -oE '<(textarea|label|div className="[a-z-]+")'
@@ -534,6 +548,59 @@ session 檔維持獨立的收合面板。
 （亮色 6.21:1），所以修法是現成的：把 `.nav .tab.active` 的 `color` 換成
 `--accent-hover`。**沒有順手改** —— 那顆藥丸出現在每一頁，換了會讓作用中的
 分頁變重一點，那是設計決定不是錯字。要改的人先在 390px 與桌機各看一眼。
+
+---
+
+### → session C：header 排成一行，並加一條底線（2026-09-22 指派）
+
+使用者的原話是「header 好醜」。量出來**只差 25px**：容器 728px、內容合計 753px，
+所以 `.me` 那組（172px）被擠到第二行，而第二行左半邊空蕩蕩 —— 那才是「醜」的來源。
+
+| 元件 | 寬度 |
+|---|---|
+| 品牌 `🧋 claude-boba` | 139 |
+| 六個分頁 | 377 |
+| 分隔線 + gap | 65 |
+| `vivianfan` + 主題三格 + 登出 | 172 |
+
+#### 定案：品牌只留 🧋 圖示，不留文字
+
+省 ~100px，一行之後還有 **75px 餘裕** —— 這是重點：縮分頁 padding 也能擠出
+41px，但那會把所有東西弄緊、而且只剩 16px，以後再加任何東西又會爆。
+省一百比省四十一划算得多，而且它只動一個元素。
+
+代價是站台名稱從 header 消失。這是內部工具，使用者不會忘記自己在哪。
+
+**三件不能省的：**
+
+1. **可及名稱要留著。** 不要只是把文字刪掉 —— 那個 `<NavLink>` 會變成一個沒有
+   名字的連結。用 `index.css` 已經有的 `.sr-only` 包一個 `claude-boba`。
+2. **圖示要放大到看得出是「回首頁」**。照原本 16px 的字級縮著，它會變成一個
+   看不出可按的小點。
+3. **`title` 屬性**給滑鼠使用者，因為現在沒有可見的文字說明它是什麼。
+
+#### 定案：header 加一條底線
+
+1px 的 `--line` 橫貫，讓「導覽」與「內容」變成兩個區域。現在它跟下面的卡片
+漂在同一片背景上，沒有任何分界。
+
+**不要改成整條給底色**（`--card` 滿版工具列）—— 那會把視覺重心往上拉，而這個
+產品的重心該在「丟 job」那張卡片上。`.nav` 現在有 `margin-bottom: 20px`，加線
+之後要拆成 padding-bottom + margin-bottom，不然線會貼著分頁。
+
+#### 驗證
+
+要在 **1280 與 390** 兩個寬度都重新量，而且照板子規則**用真實產物**，不要手寫
+harness。登入牆有解，方法寫在上面那條規則裡（Playwright 攔 `/api/auth/me`）。
+通過條件是「`.nav` 的子元素 `top` 全部相同」（＝真的一行），不是「沒有溢出」。
+
+390px 時本來就該換行，那是既有的 media query，不要動它。
+
+#### 順帶：`.sr-only` 重複定義了
+
+`index.css:307` 與 `Composer.css:35` 各有一份。不急、也不在這次範圍，但
+「把元件 CSS 併進設計系統」那筆要處理它 —— 同一個工具類別有兩份定義，
+改了一份不會生效是遲早的事。
 
 ---
 
