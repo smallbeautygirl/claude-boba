@@ -96,9 +96,13 @@ function Shell() {
       {/* 三段：站台 ｜ 頁面 ｜ 我。以前七個元素長得一模一樣，看不出在哪一頁，
           中間還空一大塊把左右拆成兩組不相干的東西。 */}
       <nav className="nav">
-        <NavLink className="brand" to="/">
+        {/* 只留圖示。站台名稱的文字拿掉是為了把 header 壓回一行（省 ~100px），
+            但名字不能真的消失：.sr-only 那份是這個連結的可及名稱，
+            title 是給滑鼠的 —— 沒有可見文字時，這兩個是唯一說得出
+            「這顆按下去會回首頁」的東西。 */}
+        <NavLink className="brand" to="/" title="claude-boba · 回首頁">
           <span aria-hidden="true">🧋</span>
-          claude-boba
+          <span className="sr-only">claude-boba 首頁</span>
         </NavLink>
         <span className="sep" />
         {/* 首頁是提交頁，不是儀表板 —— 使用情境是「我額度爆了，很急」，

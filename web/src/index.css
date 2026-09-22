@@ -252,11 +252,18 @@ button.small:hover:not(:disabled) { background: var(--accent-soft); border-color
    看不出自己在哪一頁，中間還空一大塊把左右兩組拆成不相干的東西。 */
 .nav {
   display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-  margin-bottom: 20px; font-size: 14px;
+  font-size: 14px;
+  /* 一條線把「導覽」與「內容」分成兩個區域 —— 沒有它，header 跟卡片漂在
+     同一片背景上。不做滿版底色的工具列：那會把視覺重心往上拉，而重心
+     該在「丟 job」那張卡片。間距拆成 padding + margin，不拆的話線會貼著分頁。 */
+  padding-bottom: 12px; margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
 }
+/* 只有一個 🧋。字級從 16 放大到 22 —— 照 16px 縮著它會變成一個看不出
+   可按的小點，而它現在是整個 header 唯一的回首頁入口。 */
 .nav .brand {
-  display: flex; align-items: center; gap: 7px; text-decoration: none;
-  color: var(--ink); font-weight: 700; font-size: 16px;
+  display: flex; align-items: center; text-decoration: none;
+  color: var(--ink); font-size: 22px; line-height: 1;
   padding: 8px 10px 8px 2px;
 }
 .nav .sep { width: 1px; height: 22px; background: var(--line); margin-right: 4px; }
@@ -275,9 +282,14 @@ button.small:hover:not(:disabled) { background: var(--accent-soft); border-color
    在 .me 裡面，換成排 .me 一個。） */
 @media (max-width: 560px) {
   .nav .brand { order: 1; }
-  /* 自己占滿一行：不這樣的話它後面會擠進第一個分頁，六個藥丸被拆成
-     「一個」與「五個」兩堆。 */
-  .nav .me { order: 2; flex-basis: 100%; justify-content: flex-end; }
+  /* 跟只剩圖示的品牌並排在第一行，並且把剩下的寬度吃掉（flex: 1），
+     分頁才會整批掉到下面 —— 不吃的話前兩個藥丸會擠進這一行，六個分頁
+     被拆成「兩個」與「四個」兩堆。品牌還是 139px 的文字版時，這組是靠
+     flex-basis: 100% 自己占一行；現在品牌只剩 25px，那樣會讓第一行
+     只剩一顆圖示。
+     用 basis 不用 flex: 1 —— 換行是照「基本尺寸」先分好行的，成長發生在
+     之後，所以 flex: 1 推不走已經排進這一行的藥丸。40px 是品牌加 gap。 */
+  .nav .me { order: 2; flex-basis: calc(100% - 40px); justify-content: flex-end; }
   .nav .sep { display: none; }
   .nav .tab { order: 3; }
 }
