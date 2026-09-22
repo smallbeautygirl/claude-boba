@@ -54,7 +54,8 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 
 | 區域 | 誰 | 狀態 |
 |---|---|---|
-| `web/src/pages/Submit.tsx`、`CommandPicker.tsx`、`App.tsx`、`index.css` 的色票與元件 | session A | 🟡 告一段落 —— 附件 UI 已接（`087c15a`），沒有進行中的東西 |
+| `web/src/pages/Submit.tsx`、`CommandPicker.tsx`、`App.tsx`、`index.css` 的色票與元件 | 拿著 Submit.tsx 的 session | 🟡 告一段落（`0e0efc9`）|
+| `web/src/pages/JobDetail.tsx`、`hub/app/schemas.py` 的 `started_at` | 同上 | 🟡 告一段落（`ca03148`）|
 | `web/src/pages/Login.tsx`、`Notifications.tsx`、`api.ts` | session B | 2026-09-22 告一段落 |
 | `web/src/index.css` 的 `.hint` | session B | 同上（見下方契約）|
 | `hub/app/config.py`、`hub/app/routers/auth.py` | session B | 同上 |
@@ -155,7 +156,7 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 
 ---
 
-### → 拿著 `Submit.tsx` 的人：session 檔改用資料夾選取器（2026-09-22 指派）
+### ~~→ session 檔改用資料夾選取器~~ ✅ 已完成（`0e0efc9`）
 
 使用者提了三件事，三件都跟使用者一起 grill 過並定案了。**這裡只寫定案與理由，
 不寫怎麼刻**。動手前先 `git status` 確認 `Submit.tsx` / `index.css` 沒人在寫。
@@ -220,7 +221,7 @@ BD 不知道終端機是什麼。**定案：用 `<input webkitdirectory>` 當主
 
 ---
 
-### → 誰有空都可以：計時器從 `started_at` 起算，並分清楚三個階段（2026-09-22 指派）
+### ~~→ 計時器從 `started_at` 起算~~ ✅ 已完成（`ca03148`，拿著 Submit.tsx 的那個 session）
 
 **這是 bug，而且是會對使用者說謊的那種。** `JobDetail` 的計時器從 `created_at`
 起算（`web/src/pages/JobDetail.tsx`，`startRef.current = new Date(j.created_at).getTime()`），
@@ -271,6 +272,21 @@ BD 不知道終端機是什麼。**定案：用 `<input webkitdirectory>` 當主
 
 我的建議是**照舊**：這次的 bug 是「起點錯了」，時鐘偏移是另一個 bug，
 綁在一起改會讓 review 看不出哪個修法對應哪個問題。要修就另外開一筆。
+
+---
+
+### → 誰有空都可以：計時器的時鐘偏移（從 `ca03148` 拆出來）
+
+計時器現在算的是 `Date.now() − 伺服器給的時間戳`，**使用者的電腦時鐘偏掉就會
+算錯**。這個問題一直都在，不是 `ca03148` 引入的 —— 那筆刻意只修「起點錯了」，
+沒有順手一起改，因為綁在一起 review 看不出哪個修法對應哪個問題。
+
+修法：API 回應多帶一個伺服器當下時間，瀏覽器載入時算一次偏移量，之後都用
+`Date.now() − offset`。一個欄位的事。
+
+**優先度低。** 同事的電腦時鐘偏到會讓人看錯分鐘數的機率不高，而看錯的後果只是
+時間顯示不準，不影響計費（債務照 CLI 回的 `total_cost_usd` 算，跟這個計時器
+無關）。
 
 ---
 
