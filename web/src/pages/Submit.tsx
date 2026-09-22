@@ -6,8 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type WorkerRow } from "../api";
-import { CommandPicker } from "../CommandPicker";
-import "../Composer.css";
+import { Composer, fmtSize } from "../Composer";
 
 // 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
 // 同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料（SPEC §9）。
@@ -50,11 +49,6 @@ function offeredModels(workers: WorkerRow[], workerId: string) {
 // 超過 50 MB 的 session，`--resume` 本身也會慢到不實用。
 const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
 
-function fmtSize(n: number): string {
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
 // 只看第一行。整份 50 MB 在瀏覽器裡解析，只為了確認它是 JSONL，划不來。
 async function looksLikeSession(file: File): Promise<boolean> {
   const head = await file.slice(0, 64 * 1024).text();
@@ -65,30 +59,6 @@ async function looksLikeSession(file: File): Promise<boolean> {
     return true;
   } catch {
     return false;
-  }
-}
-
-// 附件的上限，跟 hub 的 schemas.py 對齊（契約：單檔 50 MB、合計 50 MB、
-// 含 transcript 的 job 輸入合計 100 MB、最多 20 個）。前端擋一次是為了不要讓人
-// 傳三分鐘才說太大；後端仍然會擋，前端的檢查不算數。
-const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-const MAX_ATTACHMENTS_TOTAL_BYTES = 50 * 1024 * 1024;
-const MAX_JOB_INPUT_BYTES = 100 * 1024 * 1024;
-const MAX_ATTACHMENTS = 20;
-
-// 撞名就加序號，規則跟 worker 一致（`a.pdf` → `a-2.pdf`）。
-//
-// worker 也有一份同樣的迴圈，但那是防呆不是功能 —— 它的改名是**隱形的**：
-// 使用者從兩個資料夾各挑一個 report.pdf，產出清單裡冒出一個 report-2.pdf，
-// 而他從頭到尾沒看過這個名字。在這裡做，他挑完檔的當下就在清單上看到最終檔名。
-function uniqueName(name: string, taken: Set<string>): string {
-  if (!taken.has(name)) return name;
-  const dot = name.lastIndexOf(".");
-  const stem = dot > 0 ? name.slice(0, dot) : name;
-  const ext = dot > 0 ? name.slice(dot) : "";
-  for (let n = 2; ; n++) {
-    const candidate = `${stem}-${n}${ext}`;
-    if (!taken.has(candidate)) return candidate;
   }
 }
 
@@ -149,14 +119,6 @@ interface Candidate {
   preview: string;
 }
 
-interface Attachment {
-  key: string;
-  name: string;
-  // 使用者挑的原始檔名。跟 name 不同就表示撞名被改過，要講出來。
-  original: string;
-  size: number;
-}
-
 export function Submit() {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
@@ -165,18 +127,17 @@ export function Submit() {
   const [workers, setWorkers] = useState<WorkerRow[]>([]);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   // 上傳的 session 檔。一選好就上傳，不是等到按送出 ——
   // 50 MB 的檔案在按下送出之後才開始傳，使用者會盯著一顆沒反應的按鈕。
   const [session, setSession] = useState<{ name: string; size: number; key: string } | null>(
     null,
   );
   const [uploading, setUploading] = useState(false);
-  const [files, setFiles] = useState<Attachment[]>([]);
   // 選了資料夾之後列出來的候選。null = 還沒選過資料夾。
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [showCommands, setShowCommands] = useState(false);
+  // 這頁自己的錯誤（選 session 檔、掃資料夾）。附件與送出的錯誤由 Composer 顯示。
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
@@ -196,58 +157,6 @@ export function Submit() {
     setConsented(false);
   }
 
-  const ready = prompt.trim() && consented && !busy && !uploading;
-
-  async function pickAttachments(picked: FileList | null) {
-    if (!picked?.length) return;
-    setError(null);
-
-    const taken = new Set(files.map((f) => f.name));
-    let total = files.reduce((n, f) => n + f.size, 0);
-    const queued: { file: File; name: string; original: string }[] = [];
-
-    for (const file of Array.from(picked)) {
-      if (files.length + queued.length >= MAX_ATTACHMENTS) {
-        setError(`最多 ${MAX_ATTACHMENTS} 個附件`);
-        break;
-      }
-      if (file.size === 0) {
-        setError(`${file.name} 是空的`);
-        continue;
-      }
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        setError(`${file.name} 是 ${fmtSize(file.size)}，單檔上限 50 MB`);
-        continue;
-      }
-      if (total + file.size > MAX_ATTACHMENTS_TOTAL_BYTES) {
-        setError("附件合計超過 50 MB，這個加不進去");
-        break;
-      }
-      if ((session?.size ?? 0) + total + file.size > MAX_JOB_INPUT_BYTES) {
-        setError("這個 job 的輸入合計超過 100 MB（session 檔加附件）");
-        break;
-      }
-      const name = uniqueName(file.name, taken);
-      taken.add(name);
-      total += file.size;
-      queued.push({ file, name, original: file.name });
-    }
-
-    if (!queued.length) return;
-    setUploading(true);
-    try {
-      // 一個一個傳並逐一寫進清單 —— 傳到一半失敗時，已經成功的那些要留著，
-      // 不然使用者得把整批重挑一次。
-      for (const q of queued) {
-        const key = await api.uploadAttachment(q.file, q.name);
-        setFiles((prev) => [...prev, { key, name: q.name, original: q.original, size: q.file.size }]);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "上傳失敗，請再試一次");
-    } finally {
-      setUploading(false);
-    }
-  }
 
   async function scanFolder(picked: FileList | null) {
     if (!picked?.length) return;
@@ -302,29 +211,26 @@ export function Submit() {
     }
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!ready) return;
+  async function submit(attachmentKeys: string[]) {
     setBusy(true);
-    setError(null);
     try {
       const job = await api.createJob({
         prompt,
         model: chosen,
         requested_worker_id: workerId || null,
         transcript_key: session?.key ?? null,
-        attachment_keys: files.map((f) => f.key),
+        attachment_keys: attachmentKeys,
       });
       navigate(`/jobs/${job.id}`);
     } catch (err) {
-      // 錯誤訊息一律正經，不用俏皮話 —— 使用者要的是「發生什麼事、我該怎麼辦」。
-      setError(err instanceof Error ? err.message : "送出失敗，請再試一次");
       setBusy(false);
+      throw err; // Composer 會顯示在送出鍵旁邊
     }
   }
 
+
   return (
-    <form className="card" onSubmit={submit}>
+    <div className="card">
       <h1>丟一個 job 出去 🧋</h1>
       <p className="lede">額度用完了？找還有額度的同事幫你跑。跑完請他喝一杯就好。</p>
 
@@ -412,115 +318,28 @@ export function Submit() {
       </div>
 
 
-      {/* 輸入列 —— 只裝「動作」。痛點是加附件與可用指令離得太遠，那是動作
-          離得遠，不是版面不夠緊，所以進來的只有 +、/、送出。
-
-          model 刻意留在外面：它不是動作，是這個 job 花多少錢的決定，
-          藏進圖示等於把最該被看見的東西變最小。
-
-          隱私勾選與來源說明也沒有跟著壓縮。VSCode 的輸入框乾淨，是因為它
-          沒有這些東西要講 —— 它不用告訴你「對方看得到你的內容」。§9 那段
-          警告是靠「平常很鬆、嚴肅處才嚴肅」的對比在撐的，壓成一行小字或一個
-          圖示就變裝飾。 */}
-      <div className="composer">
-        <label className="composer-field">
-          <span className="sr-only">
-            {session ? "接下來要它做什麼" : "對話內容"}
-          </span>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            rows={session ? 4 : 8}
-            placeholder={
-              session
-                ? "沿用上傳的 session 繼續問…"
-                : "把你的對話貼進來，或直接寫你要它做什麼"
-            }
-          />
-        </label>
-
-        {files.length > 0 && (
-          <ul className="attach-list">
-            {files.map((f) => (
-              <li key={f.key}>
-                <div className="attach-main">
-                  <strong>{f.name}</strong>
-                  <span className="muted"> · {fmtSize(f.size)}</span>
-                  {f.name !== f.original && (
-                    <div className="muted">
-                      你選的是 {f.original} —— 已經有同名的，所以改成這個名字。
-                      job 裡和產出清單上都會是 <code>{f.name}</code>。
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="small"
-                  onClick={() => setFiles((prev) => prev.filter((x) => x.key !== f.key))}
-                >
-                  移除
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {/* 錯誤貼著送出鍵。送出鍵搬進輸入列之後，錯誤如果還留在頁尾（在
-            session 檔面板之下），按了送出失敗的人根本看不到它。上傳附件與
-            掃資料夾的錯誤也都走這裡，而那兩個動作也在這條列上。 */}
-        {error && <p className="error composer-error">{error}</p>}
-
-        <div className="composer-bar">
-          <label className="icon-btn" title="加附件">
-            <span aria-hidden="true">+</span>
-            <span className="sr-only">加附件</span>
-          <input
-            type="file"
-            multiple
-            disabled={uploading}
-            onChange={(e) => {
-              void pickAttachments(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          </label>
-          <button
-            type="button"
-            className={showCommands ? "icon-btn on" : "icon-btn"}
-            aria-expanded={showCommands}
-            title="可以用的指令"
-            onClick={() => setShowCommands((v) => !v)}
-          >
-            <span aria-hidden="true">/</span>
-            <span className="sr-only">可以用的指令</span>
-          </button>
-          <span className="composer-spacer" />
-          {/* 送出停用時要說原因。它現在在輸入列裡，而擋住它的勾選在上面，
-              不講的話使用者會盯著一顆沒反應的鍵。 */}
-          {!ready && !busy && (
-            <span className="muted composer-why">
-              {!prompt.trim() ? "先寫點東西" : !consented ? "先勾選上面的同意" : ""}
-            </span>
-          )}
-          <button type="submit" disabled={!ready}>
-            {busy ? "送出中…" : uploading ? "上傳中…" : "送出"}
-          </button>
-        </div>
-
-        {showCommands && (
-          <div className="composer-panel">
-            <CommandPicker value={prompt} onChange={setPrompt} bare />
-          </div>
-        )}
-        {files.length > 0 && (
-          <p className="muted">
-            跑完之後，「產出的檔案」只會列出<strong>新檔案</strong>與
-            <strong>被改過的</strong>附件 —— 你原樣傳進去、它沒動的不會再回來一次。
-          </p>
-        )}
-      </div>
+      {/* 輸入列是共用元件（Composer.tsx）—— 接著問用的是同一個。
+          使用者要的就是兩邊一樣，各寫一份一定會走樣；附件的四道上限與撞名
+          去重尤其不能有兩套，那是安全與計費相關的規則。 */}
+      <Composer
+        value={prompt}
+        onChange={setPrompt}
+        onSubmit={submit}
+        busy={busy}
+        blockedReason={!prompt.trim() ? "先寫點東西" : !consented ? "先勾選上面的同意" : null}
+        label={session ? "接下來要它做什麼" : "對話內容"}
+        placeholder={
+          session ? "沿用上傳的 session 繼續問…" : "把你的對話貼進來，或直接寫你要它做什麼"
+        }
+        rows={session ? 4 : 8}
+        usedBytes={session?.size ?? 0}
+      />
 
       <div className="resume">
         <div className="resume-head">接續一個 Claude Code 的對話</div>
+        {/* 選 session 檔與掃資料夾的錯誤顯示在這裡，就是它們發生的地方。
+            附件與送出的錯誤由 Composer 顯示在送出鍵旁邊。 */}
+        {error && <p className="error">{error}</p>}
 
         {session ? (
           <div className="resume-picked">
@@ -629,6 +448,6 @@ export function Submit() {
 
 
 
-    </form>
+    </div>
   );
 }

@@ -290,11 +290,11 @@ export const api = {
       body: JSON.stringify({ note: note.trim() || null }),
     }).then(json<JobDetail>),
 
-  followUp: (id: string, prompt: string) =>
+  followUp: (id: string, prompt: string, attachment_keys: string[] = []) =>
     fetch(`${HUB}/api/jobs/${id}/follow-up`, {
       method: "POST",
       headers: authed({ "content-type": "application/json" }),
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, attachment_keys }),
     }).then(json<JobDetail>),
 
   listJobs: () => fetch(`${HUB}/api/jobs`, { headers: authed() }).then(json<JobSummary[]>),

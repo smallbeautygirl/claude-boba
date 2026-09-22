@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { CommandPicker } from "../CommandPicker";
+import { Composer } from "../Composer";
 import { JobOutcome } from "../JobOutcome";
 import {
   TERMINAL,
@@ -205,17 +205,13 @@ function FollowUp({ jobId }: { jobId: string }) {
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  async function send() {
+  async function send(attachmentKeys: string[]) {
     setBusy(true);
-    setError(null);
     try {
-      const next = await api.followUp(jobId, text);
-      navigate(`/jobs/${next.id}`);
+      const next = await api.followUp(jobId, text, attachmentKeys);
       setText("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "送出失敗");
+      navigate(`/jobs/${next.id}`);
     } finally {
       setBusy(false);
     }
@@ -223,20 +219,29 @@ function FollowUp({ jobId }: { jobId: string }) {
 
   return (
     <div className="followup">
-      <label>
-        接著問
-        <textarea
-          rows={3}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="沿用上面的對話繼續問…"
-        />
-      </label>
-      <CommandPicker label="指令（點一下選用）" value={text} onChange={setText} />
-      {error && <p className="error">{error}</p>}
-      <button onClick={send} disabled={busy || !text.trim()}>
-        {busy ? "送出中…" : "送出"}
-      </button>
+      <h2>接著問</h2>
+      {/* 沒有第二個隱私勾選。同意是針對這條 job 鏈給的，每一輪再問一次只會
+          把同意變成反射性點擊，那正好摧毀 §9 想保住的東西。
+
+          但有一行可見的提醒，而且講的是**接著問特有**的那件事：這一輪不一定
+          回到原本那個出租者。follow_up() 的 requested_worker_id 是 None
+          （hub/app/routers/jobs.py）—— transcript 在 MinIO 上，任何 worker 都
+          拿得到，原本那台離線時不該讓使用者卡住。提交頁的勾選點名了一個人，
+          而這一輪可能是別人。 */}
+      <p className="hint">
+        ⚠️ 這一輪會派給當下有空的出租者，<strong>不一定是剛才那一位</strong>
+        —— 你接下來寫的內容與附件，那個人技術上一樣看得到。
+      </p>
+      <Composer
+        value={text}
+        onChange={setText}
+        onSubmit={send}
+        busy={busy}
+        blockedReason={text.trim() ? null : "先寫點東西"}
+        label="接著問"
+        placeholder="沿用上面的對話繼續問…"
+        rows={4}
+      />
     </div>
   );
 }

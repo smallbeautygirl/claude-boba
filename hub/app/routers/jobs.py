@@ -281,6 +281,14 @@ async def follow_up(
     if parent.borrower_id != user.id:
         raise HTTPException(status_code=403, detail="只有原本的提問者能接著問")
 
+    # 第三個參數不能傳 0。100 MB 是「這個 job 的輸入合計」，而接著問的
+    # transcript 雖然不是使用者這次上傳的，worker 一樣要把它連同附件整包下載。
+    # 傳 0 的話一條長的續問鏈每輪都能再塞 50 MB，而 transcript 本身還在長。
+    if body.attachment_keys:
+        _check_attachments(
+            body.attachment_keys, user, storage.stat(parent.transcript_key) or 0
+        )
+
     job = Job(
         borrower_id=user.id,
         prompt=body.prompt,
@@ -288,6 +296,7 @@ async def follow_up(
         source_type=parent.source_type,
         parent_job_id=parent.id,
         transcript_key=parent.transcript_key,
+        attachment_keys=body.attachment_keys,
         # 續問預設回同一台 worker，但不強制 —— transcript 在 MinIO 上，
         # 任何 worker 都拿得到。那台剛好離線時不該讓使用者卡住。
         requested_worker_id=None,

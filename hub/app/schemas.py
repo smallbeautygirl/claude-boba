@@ -119,6 +119,9 @@ class FollowUp(BaseModel):
     """接著問。上下文由被接續 job 的 transcript 提供。"""
 
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    # 接著問也可以帶新的附件 —— 跟完一輪之後想再給它一份參考檔案，
+    # 是很具體的情境。沒有這個的話輸入列會少一顆 +，使用者會找不到。
+    attachment_keys: list[str] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
 
 
 class Attachment(BaseModel):
