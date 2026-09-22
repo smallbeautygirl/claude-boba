@@ -14,7 +14,7 @@ import { Leaderboard } from "./pages/Leaderboard";
 import { Ledger } from "./pages/Ledger";
 import { Login } from "./pages/Login";
 import { MyJobs } from "./pages/MyJobs";
-import { MyWorker } from "./pages/MyWorker";
+import { Lending } from "./pages/Lending";
 import { Notifications } from "./pages/Notifications";
 import { Submit } from "./pages/Submit";
 import { THEMES, useTheme } from "./theme";
@@ -133,7 +133,7 @@ function Shell() {
         <Route path="/jobs" element={<MyJobs />} />
         <Route path="/jobs/:id" element={<JobDetail />} />
         <Route path="/ledger" element={<Ledger />} />
-        <Route path="/worker" element={<MyWorker />} />
+        <Route path="/worker" element={<Lending />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/admin" element={<Admin />} />

@@ -32,6 +32,19 @@ IMAGE="${WORKER_IMAGE:-claude-boba-worker:2.1.278}"
 NETWORK="${JOB_NETWORK:-claude-boba-worker_jobnet}"
 PROXY="${EGRESS_PROXY:-http://egress-proxy:8888}"
 
+# 這位代跑者開了「允許 job 連到整個網際網路」（web 上的那顆勾）。
+#
+# ⚠️ 它是**每個 job 的**，不是這台主機的 —— 主機只有一台、代跑者有很多位，
+# 讀主機的 .env 等於用別人的設定決定你的邊界（SPEC §4.12）。
+#
+# 白名單那條路靠 proxy 生效，所以開放時必須**同時**換網路並拿掉 proxy：
+# 只換其中一個的話，容器會連到一個不存在的 proxy 而全部失敗，
+# 或者留在只通得到白名單的網路上 —— 兩種都不是使用者勾那顆的意思。
+NET_ARGS=(--network "$NETWORK" -e HTTPS_PROXY="$PROXY" -e HTTP_PROXY="$PROXY")
+if [[ -n "${OPEN_NETWORK:-}" ]]; then
+  NET_ARGS=(--network "$OPEN_NETWORK")
+fi
+
 resume=()
 [[ -n "$TRANSCRIPT" ]] && resume=(--resume "/job/$TRANSCRIPT")
 
@@ -49,8 +62,7 @@ models_json=$(printf '%s' "$MODELS" | python3 -c \
 exec timeout --signal=TERM --kill-after=20 "$TIMEOUT" \
   docker run --rm \
     --name "boba-job-$JOB_ID" \
-    --network "$NETWORK" \
-    -e HTTPS_PROXY="$PROXY" -e HTTP_PROXY="$PROXY" \
+    "${NET_ARGS[@]}" \
     --user "$(id -u):$(id -g)" \
     -e HOME=/job/.home \
     "${CRED_ARGS[@]}" \

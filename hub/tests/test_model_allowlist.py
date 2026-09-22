@@ -5,16 +5,20 @@
 CLI 只拿它擋了 fast mode。而 `run-job.sh` 是把 `--model` 直接帶給 CLI 的，前端的
 下拉只是方便。
 
-所以這裡擋不住的話，整條鏈就沒有人在擋：借用者直接打 API 帶 `model: "opus"`，
-就能用出租者的額度跑 Opus。這不是「跑錯 model」，是**讓別人欠十倍的錢** ——
+所以這裡擋不住的話，整條鏈就沒有人在擋：委託者直接打 API 帶 `model: "opus"`，
+就能用代跑者的額度跑 Opus。這不是「跑錯 model」，是**讓別人欠十倍的錢** ——
 Opus 的 output 單價是 Haiku 的 10 倍，而債務照實際花費算（SPEC §4.6）。
+
+⚠️ 2026-09-22（SPEC §4.12）：自動派單那條從「**每一位**都要跑得動」放寬成
+「**至少一位**跑得動」。舊的那條是因為當時 Hub 挑不了人（誰先 poll 誰拿到），
+只能事先保證每個人都行；現在派單在 Hub，跑不動的人不會被挑中。
+站台白名單那條沒有變，它擋的是完全不同的東西。
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -22,98 +26,99 @@ from app.routers.jobs import _check_model
 from fastapi import HTTPException
 
 
-def _worker(*models: str, wid: uuid.UUID | None = None) -> SimpleNamespace:
+def _lender(*models: str, lid: uuid.UUID | None = None) -> SimpleNamespace:
+    """一位可接單的代跑者（出借設定）。model 白名單屬於人，不屬於帳號。"""
     return SimpleNamespace(
-        id=wid or uuid.uuid4(),
+        id=lid or uuid.uuid4(),
         available_models=list(models),
         accepting=True,
-        last_seen_at=datetime.now(UTC),
     )
 
 
 class _FakeSession:
-    """只回答 _check_model 會問的那一件事：現在有哪些可接單的 worker。
+    """只回答 _check_model 會問的那一件事：現在有哪些可接單的代跑者。
 
-    查詢條件（accepting、last_seen_at）由 SQL 負責，這裡不重現它 ——
-    重現一次等於測到自己寫的假貨，不是測那條規則。
+    查詢條件（accepting）由 SQL 負責，這裡不重現它 —— 重現一次等於測到自己
+    寫的假貨，不是測那條規則。
     """
 
-    def __init__(self, workers: list[SimpleNamespace]) -> None:
-        self.workers = workers
+    def __init__(self, lenders: list[SimpleNamespace]) -> None:
+        self.lenders = lenders
 
     async def scalars(self, _stmt):
-        return self.workers
+        return self.lenders
 
 
-def check(model: str, worker_id=None, workers=None):
-    return asyncio.run(_check_model(model, worker_id, _FakeSession(workers or [])))
+def check(model: str, lending_id=None, lenders=None):
+    return asyncio.run(_check_model(model, lending_id, _FakeSession(lenders or [])))
 
 
 # --- 站台白名單 -----------------------------------------------------------
 
 
 def test_model_outside_the_site_allowlist_is_refused() -> None:
-    """就算有出租者開放 opus，站台不收就是不收。"""
+    """就算有代跑者開放 opus，站台不收就是不收。"""
     with pytest.raises(HTTPException) as e:
-        check("opus", workers=[_worker("sonnet", "haiku", "opus")])
+        check("opus", lenders=[_lender("sonnet", "haiku", "opus")])
     assert e.value.status_code == 400
     assert "opus" in e.value.detail
 
 
 def test_made_up_model_is_refused() -> None:
     with pytest.raises(HTTPException) as e:
-        check("gpt-4", workers=[_worker("sonnet", "haiku")])
+        check("gpt-4", lenders=[_lender("sonnet", "haiku")])
     assert e.value.status_code == 400
 
 
 def test_allowed_models_pass() -> None:
     for m in ("sonnet", "haiku"):
-        check(m, workers=[_worker("sonnet", "haiku")])  # 不拋就是過
+        check(m, lenders=[_lender("sonnet", "haiku")])  # 不拋就是過
 
 
-# --- 指定出租者 -----------------------------------------------------------
+# --- 指定代跑者 -----------------------------------------------------------
 
 
-def test_requested_worker_must_offer_it() -> None:
+def test_requested_lender_must_offer_it() -> None:
     wid = uuid.uuid4()
     with pytest.raises(HTTPException) as e:
-        check("sonnet", worker_id=wid, workers=[_worker("haiku", wid=wid)])
+        check("sonnet", lending_id=wid, lenders=[_lender("haiku", lid=wid)])
     assert e.value.status_code == 400
     assert "沒有開放" in e.value.detail
 
 
-def test_requested_worker_that_offers_it_passes() -> None:
+def test_requested_lender_that_offers_it_passes() -> None:
     wid = uuid.uuid4()
-    check("sonnet", worker_id=wid, workers=[_worker("sonnet", "haiku", wid=wid)])
+    check("sonnet", lending_id=wid, lenders=[_lender("sonnet", "haiku", lid=wid)])
 
 
 # --- 自動派單 -------------------------------------------------------------
 
 
-def test_auto_requires_every_worker_to_offer_it() -> None:
-    """交集不是聯集。
+def test_auto_passes_when_at_least_one_lender_offers_it() -> None:
+    """聯集，不是交集 —— 而且這是 2026-09-22 改掉的方向（SPEC §4.12）。
 
-    派單不按 model 過濾（poll 只看 requested_worker_id），所以只要有一台
-    可接單的機器跑不動它，這個 job 就可能派給那台然後失敗 —— 而失敗不計債，
-    那台機器的額度就白燒了。
+    派單現在在 Hub：`_claim` 只會把 job 派給 available_models 含這個 model 的人。
+    所以「有一個人關掉 Sonnet」不再是「全站不能送 Sonnet」的理由，
+    而舊的交集規則正是那個效果。
     """
+    check("sonnet", lenders=[_lender("sonnet", "haiku"), _lender("haiku")])
+
+
+def test_auto_refused_when_nobody_offers_it() -> None:
+    """一個人都跑不動就要當場說 —— 讓它排隊到過期，使用者會以為是沒人上線。"""
     with pytest.raises(HTTPException) as e:
-        check("sonnet", workers=[_worker("sonnet", "haiku"), _worker("haiku")])
+        check("sonnet", lenders=[_lender("haiku"), _lender("haiku")])
     assert e.value.status_code == 400
-    assert "自動派單" in e.value.detail
-
-
-def test_auto_passes_when_all_workers_offer_it() -> None:
-    check("haiku", workers=[_worker("sonnet", "haiku"), _worker("haiku")])
+    assert "sonnet" in e.value.detail
 
 
 # --- 沒人在線 -------------------------------------------------------------
 
 
-def test_no_workers_online_is_not_the_users_fault() -> None:
-    """一台都沒有就不在這裡擋 —— job 排隊等人上線是正常狀態。
+def test_no_lenders_accepting_is_not_the_users_fault() -> None:
+    """一位都沒有就不在這裡擋 —— job 排隊等人上線是正常狀態。
 
     在這裡回 400 的話，使用者會以為自己挑錯 model，而實際上只是還沒人上工。
     派不出去的處理在別處（expired）。
     """
-    check("sonnet", workers=[])
+    check("sonnet", lenders=[])

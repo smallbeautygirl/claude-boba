@@ -5,35 +5,37 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, SITE_MODELS, type WorkerRow } from "../api";
+import { api, SITE_MODELS, type LenderRow } from "../api";
 import { Composer, fmtSize } from "../Composer";
 
 // 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
 // 同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料（SPEC §9）。
 // 額度只給紅綠燈，不給百分比：精確數字會讓人盤算「他還有 66%，再送一個沒差」，
 // 把人情變成資源計算（web-spec §3）。
-const QUOTA: Record<WorkerRow["quota"], string> = {
+const QUOTA: Record<LenderRow["quota"], string> = {
   green: "🟢",
   yellow: "🟡",
   red: "🔴",
   unknown: "⚪️",
 };
 
-// 選單顯示的是「站台白名單 ∩ 該出租者白名單」（web-spec §3）。
-// 寫死一份清單的話，挑了只有 Haiku 的 worker 仍然選得到 Sonnet，要等 job 送出去才失敗 ——
-// 而失敗不計債（SPEC §5），那台機器的額度就白燒了。
+// 選單顯示的是「站台白名單 ∩ 該代跑者白名單」（web-spec §3）。
+// 寫死一份清單的話，挑了只開 Haiku 的人仍然選得到 Sonnet，要等 job 送出去才失敗 ——
+// 而失敗不計債（SPEC §5），那個帳號的額度就白燒了。
 //
-// 「自動」沒有特定出租者，取所有可接單 worker 的**交集**而不是聯集：
-// Hub 的派單目前不按 model 過濾，聯集會把 job 派給一台跑不動它的機器。
-function offeredModels(workers: WorkerRow[], workerId: string) {
-  const pool = workerId
-    ? workers.filter((w) => w.id === workerId)
-    : workers.filter((w) => w.online && w.accepting);
+// 「自動」沒有特定代跑者，取**聯集**：2026-09-22 起派單在 Hub，它只會把 job
+// 派給有開放這個 model 的人（SPEC §4.12）。舊版取交集是因為當時 Hub 挑不了人
+// （誰先 poll 誰拿到），只能事先保證每個人都跑得動 —— 那讓一個人關掉 Sonnet
+// 就擋住全站的 Sonnet。
+function offeredModels(lenders: LenderRow[], lendingId: string) {
+  const pool = lendingId
+    ? lenders.filter((l) => l.id === lendingId)
+    : lenders.filter((l) => l.online && l.accepting);
   if (pool.length === 0) return SITE_MODELS;
   const offered = SITE_MODELS.filter((m) =>
-    pool.every((w) => w.available_models.includes(m.value)),
+    pool.some((l) => l.available_models.includes(m.value)),
   );
-  // 交集是空的（worker 還沒回報過 config）就退回站台白名單 —— 總比給一個空下拉好。
+  // 聯集是空的（沒有人回報過條件）就退回站台白名單 —— 總比給一個空下拉好。
   return offered.length ? offered : SITE_MODELS;
 }
 
@@ -116,8 +118,8 @@ export function Submit() {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("sonnet");
-  const [workerId, setWorkerId] = useState("");
-  const [workers, setWorkers] = useState<WorkerRow[]>([]);
+  const [lendingId, setLendingId] = useState("");
+  const [lenders, setLenders] = useState<LenderRow[]>([]);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
   // 上傳的 session 檔。一選好就上傳，不是等到按送出 ——
@@ -133,20 +135,23 @@ export function Submit() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
+    api.listLenders().then(setLenders).catch(() => setLenders([]));
   }, []);
 
-  const models = useMemo(() => offeredModels(workers, workerId), [workers, workerId]);
-  const lender = workers.find((w) => w.id === workerId)?.owner ?? null;
+  const models = useMemo(
+    () => offeredModels(lenders, lendingId),
+    [lenders, lendingId],
+  );
+  const lender = lenders.find((l) => l.id === lendingId)?.owner ?? null;
 
   // 選中的 model 對方跑不動就退回第一個他跑得動的。在 render 期間收斂而不是用 effect ——
-  // worker 清單是非同步載進來的，用 effect 會有一個 render 的空窗送出跑不動的 model。
+  // 代跑者清單是非同步載進來的，用 effect 會有一個 render 的空窗送出跑不動的 model。
   const chosen = models.some((m) => m.value === model) ? model : models[0].value;
 
-  // 換出租者要重新勾同意：上一次勾的是對「另一個人」的揭露。
+  // 換代跑者要重新勾同意：上一次勾的是對「另一個人」的揭露。
   // 點名字才是這個勾選的重點（web-spec §3），沿用等於把名字當裝飾。
   function pickWorker(id: string) {
-    setWorkerId(id);
+    setLendingId(id);
     setConsented(false);
   }
 
@@ -210,7 +215,7 @@ export function Submit() {
       const job = await api.createJob({
         prompt,
         model: chosen,
-        requested_worker_id: workerId || null,
+        requested_lending_id: lendingId || null,
         transcript_key: session?.key ?? null,
         attachment_keys: attachmentKeys,
       });
@@ -266,12 +271,15 @@ export function Submit() {
       <div className="row">
         <label>
           代跑者
-          <select value={workerId} onChange={(e) => pickWorker(e.target.value)}>
+          {/* 一列一個**人**。他底下有幾個 Claude 帳號不在這裡出現 ——
+              委託者挑的是人，站台自己決定用哪個帳號跑（ADR-0001）。
+              額度那顆燈取他最充裕的帳號，不是平均（web-spec §3）。 */}
+          <select value={lendingId} onChange={(e) => pickWorker(e.target.value)}>
             <option value="">自動（推薦）</option>
-            {workers.map((w) => (
-              <option key={w.id} value={w.id} disabled={!w.online}>
-                {w.owner} · {w.online ? "🟢" : "⚫️"} ·{" "}
-                {w.allow_full_network ? "🌐 開放網路" : "🔒 白名單"} · 額度 {QUOTA[w.quota]}
+            {lenders.map((l) => (
+              <option key={l.id} value={l.id} disabled={!l.online}>
+                {l.owner} · {l.online ? "🟢" : "⚫️"} ·{" "}
+                {l.allow_full_network ? "🌐 開放網路" : "🔒 白名單"} · 額度 {QUOTA[l.quota]}
               </option>
             ))}
           </select>

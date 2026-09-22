@@ -64,43 +64,128 @@ class User(Base):
     )
 
 
-class Worker(Base):
-    __tablename__ = "workers"
+class WorkerHost(Base):
+    """領單的那台主機。
+
+    託管模型下 job 全跑在同一台機器上，而它要能用**任何一位**代跑者的 token 跑 ——
+    所以 worker 的身分是「我是這台主機」，不是「我是某位代跑者」。
+    憑證由 Hub 隨每個 job 派下來（`WorkerJob.oauth_token`）。
+
+    ⚠️ 這是 2026-09-22 改的。舊協定是「一個 token 對一位代跑者」，而那讓
+    「一個人兩個帳號」做不出來：帳號不是被 Hub 挑的，是自己跑來搶單的
+    （SPEC §4.12）。token 現在來自 hub 的 `WORKER_SHARED_TOKEN`，不再由網頁產生。
+    """
+
+    __tablename__ = "worker_hosts"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=_uuid
     )
-    # worker 的身分是 Hub 發的 token，不是出租者的 Observ 帳密 ——
-    # 把公司密碼寫進 worker 的 .env 是不必要的風險。出租者在網頁按「產生 token」，
-    # 貼進 .env 就好，worker 完全不碰 Observ。
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id")
-    )
-    name: Mapped[str] = mapped_column(String(80))
-    token: Mapped[str] = mapped_column(String(128), unique=True)
+    name: Mapped[str] = mapped_column(String(80), default="host")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claude_code_version: Mapped[str | None] = mapped_column(String(32))
+    max_concurrency: Mapped[int] = mapped_column(Integer, default=2)
 
+
+class LendingSetting(Base):
+    """一位代跑者出借額度的**條件**。每人恰好一份。
+
+    這裡的「一份」指的是一組條件，不是一個帳號 —— 他可以有多個**出借帳號**
+    （`LendingAccount`），但條件只有一份：上限 US$5 講的是他對風險的態度，
+    不是他對某個帳號的態度（SPEC §4.12）。
+    """
+
+    __tablename__ = "lending_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), unique=True
+    )
     owner: Mapped[User] = relationship()
 
-    online: Mapped[bool] = mapped_column(Boolean, default=False)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    accepting: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    # 出租者的設定，worker 註冊時回報
     allow_full_network: Mapped[bool] = mapped_column(Boolean, default=False)
     available_models: Mapped[list[str]] = mapped_column(JSONB, default=list)
     job_budget_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal(5))
-    max_concurrency: Mapped[int] = mapped_column(Integer, default=1)
-    claude_code_version: Mapped[str | None] = mapped_column(String(32))
+    accepting: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    accounts: Mapped[list[LendingAccount]] = relationship(
+        back_populates="lending", order_by="LendingAccount.created_at"
+    )
+
+
+class LendingAccount(Base):
+    """被借出去的那個 Claude 帳號本身。一位代跑者可以有多個。
+
+    帳號持有 token、額度、rate limit 與併發上限 —— 那些是帳號的物理性質。
+    條件在 `LendingSetting` 上，因為那是人的態度。
+
+    **對委託者不可見**（ADR-0001）：他挑的是人，Hub 自己決定用哪個帳號跑。
+    """
+
+    __tablename__ = "lending_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    lending_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lending_settings.id")
+    )
+    lending: Mapped[LendingSetting] = relationship(back_populates="accounts")
+
+    name: Mapped[str] = mapped_column(String(80))
+
     # 代跑者的長期 OAuth token，加密後存放（app/secrets_box.py）。
     #
     # **絕不回傳給前端**，連遮罩後的值都不行 —— API 只回 has_token: bool
     # （security.md 紅線 2）。托管模型下這是 job 唯一的憑證來源。
     oauth_token_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
 
-    # rate_limit_event 回報的額度使用率（SPEC §4.6）。
-    # 只顯示紅綠燈，不對外顯示精確百分比（docs/web-spec.md §3）。
-    utilization_five_hour: Mapped[float | None] = mapped_column()
-    utilization_seven_day: Mapped[float | None] = mapped_column()
+    # 「這是誰的額度／誰批准的」。純文字，站台不驗證，只留痕跡並顯示在管理頁。
+    #
+    # 個人帳號被停權是他自己倒楣；公司帳號被停權是公司資產出事，而且會有人問
+    # 是誰放的（SPEC §4.12）。不做審批流程 —— 只有個位數使用者，太重 ——
+    # 但那個答案必須存在某處。
+    approver_note: Mapped[str | None] = mapped_column(String(200))
+
+    # token 失效（到期、被撤銷、帳號被收回）。**只有這個帳號停止接單，
+    # 其他帳號照跑**（web-spec §8）—— job 不受影響，另一個帳號會接。
+    needs_reauth: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # 同時能跑幾個。這不是使用者在表達意願的旋鈕（它沒有 UI），
+    # 它在描述「這個帳號同時開幾個 session 不會出事」—— 所以屬於帳號，不屬於條件。
+    max_concurrency: Mapped[int] = mapped_column(Integer, default=1)
+    claude_code_version: Mapped[str | None] = mapped_column(String(32))
+
+    # `rate_limit_event` 回報的整包 `unifiedWindows`（SPEC §4.6）。
+    #
+    # 存整包而不是寫死 five_hour／seven_day 兩個 key：Anthropic 加窗的頻率
+    # 我們控制不了，而「顯示哪些窗」應該是顯示層的決定，不是一次 migration。
+    rate_limit_windows: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # 那包資料是什麼時候的。**過期的數字不能當成即時的** —— 代跑者自己在別的
+    # 地方也在燒同一個帳號，站台不會知道（SPEC §11 spike #10）。
+    quota_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 上次被派到 job 的時間。額度資料還沒有或已過期時，派單用它退回輪流。
+    last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def utilization(self, window: str = "five_hour") -> float | None:
+        """某個窗的使用率。沒回報過就是 None，不是 0 —— 那是兩件事。"""
+        w = (self.rate_limit_windows or {}).get(window)
+        return w.get("utilization") if isinstance(w, dict) else None
+
+    @property
+    def usable(self) -> bool:
+        return self.oauth_token_enc is not None and not self.needs_reauth
 
 
 class Job(Base):
@@ -122,12 +207,23 @@ class Job(Base):
     prompt: Mapped[str] = mapped_column(Text)
     model: Mapped[str] = mapped_column(String(64), default="sonnet")
 
-    # 指定出租者；None 代表自動派單
-    requested_worker_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("workers.id")
+    # 指定代跑者；None 代表自動派單。
+    # 指到**人**（出借設定），不是帳號 —— 委託者看不到帳號的存在（ADR-0001）。
+    requested_lending_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lending_settings.id")
     )
-    worker_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("workers.id")
+    # 派給誰跑。兩個都記：
+    #   lending_id  = 誰的人情債、用誰的條件
+    #   account_id  = 實際燒了哪個出借帳號（不對委託者顯示）
+    #
+    # account_id 存在的理由是「上個月公司帳號跑了幾個 job」這個問題一定會被問到 ——
+    # 派單挑 utilization 低的帳號，公司帳號因此是穩定的曝險，而批准者留了痕跡卻
+    # 看不到用量等於只留一半（ADR-0001）。
+    lending_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lending_settings.id")
+    )
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lending_accounts.id")
     )
 
     # 續問：指向被接續的那個 job，以及它留下的 transcript。
@@ -160,7 +256,8 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    worker: Mapped[Worker | None] = relationship(foreign_keys=[worker_id])
+    lending: Mapped[LendingSetting | None] = relationship(foreign_keys=[lending_id])
+    account: Mapped[LendingAccount | None] = relationship(foreign_keys=[account_id])
     events: Mapped[list[JobEvent]] = relationship(
         back_populates="job", order_by="JobEvent.seq"
     )

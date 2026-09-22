@@ -8,28 +8,208 @@
 // 而那正是「把額度借出去」讓人敢做的原因 —— 一個 Opus job 八分鐘能燒掉
 // US$25，那是他的錢。
 
-import { useState } from "react";
-import { api, SITE_MODELS, type LendingSettings } from "../api";
+import { useCallback, useEffect, useState } from "react";
+import {
+  api,
+  SITE_MODELS,
+  type LendingAccount,
+  type LendingSettings,
+} from "../api";
 
-export function Lending({
+export function Lending() {
+  const [settings, setSettings] = useState<LendingSettings | null>(null);
+  const reload = useCallback(() => {
+    api.lending().then(setSettings).catch(() => setSettings(null));
+  }, []);
+  useEffect(reload, [reload]);
+
+  if (!settings) return <p className="muted">載入中…</p>;
+  return settings.has_token ? (
+    <>
+      <Conditions settings={settings} reload={reload} />
+      <Accounts settings={settings} reload={reload} />
+    </>
+  ) : (
+    <StartLending reload={reload} />
+  );
+}
+
+/* 出借帳號那一段。**一個帳號的時候也列一列** —— 那一列不是為了多帳號而存在，
+   它是放用量的地方（web-spec §8）。而這也是「出借帳號」這個概念在整個 UI 裡
+   唯一露臉的地方：委託者那側從頭到尾看不到它（ADR-0001）。 */
+function Accounts({
   settings,
   reload,
 }: {
   settings: LendingSettings;
   reload: () => void;
 }) {
-  return settings.has_token ? (
-    <Conditions settings={settings} reload={reload} />
-  ) : (
-    <StartLending reload={reload} />
+  const [adding, setAdding] = useState(false);
+  const [replacing, setReplacing] = useState<LendingAccount | null>(null);
+
+  return (
+    <>
+      <h2>你的出借帳號</h2>
+      <ul className="accounts">
+        {settings.accounts.map((a) => (
+          <AccountRow key={a.id} account={a} reload={reload} onReplace={setReplacing} />
+        ))}
+      </ul>
+
+      {adding || replacing ? (
+        <Authorize
+          account={replacing}
+          onDone={() => {
+            setAdding(false);
+            setReplacing(null);
+            reload();
+          }}
+          onCancel={() => {
+            setAdding(false);
+            setReplacing(null);
+          }}
+        />
+      ) : (
+        <p className="actions">
+          <button type="button" className="small" onClick={() => setAdding(true)}>
+            再授權一個帳號
+          </button>
+        </p>
+      )}
+    </>
+  );
+}
+
+/* 窗名 → 人看得懂的名字。不寫死「只有這兩個」—— 存下來的是整包 unifiedWindows，
+   Anthropic 之後再加一個窗，這裡沒列到就照原名顯示，而不是消失。 */
+const WINDOW_LABELS: Record<string, string> = {
+  five_hour: "五小時窗",
+  seven_day: "七天窗",
+};
+
+function resetsIn(at: string | number | undefined): string | null {
+  if (at === undefined) return null;
+  const ms = (typeof at === "number" ? at * 1000 : Date.parse(at)) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const hours = ms / 3_600_000;
+  if (hours < 1) return `${Math.round(hours * 60)} 分鐘後重置`;
+  if (hours < 48) return `${Math.round(hours)} 小時後重置`;
+  return `${Math.round(hours / 24)} 天後重置`;
+}
+
+function ago(at: string | null): string {
+  if (!at) return "還沒有資料";
+  const mins = (Date.now() - Date.parse(at)) / 60_000;
+  if (mins < 1) return "資料為剛剛";
+  if (mins < 60) return `資料為 ${Math.round(mins)} 分鐘前`;
+  return `資料為 ${Math.round(mins / 60)} 小時前`;
+}
+
+function AccountRow({
+  account,
+  reload,
+  onReplace,
+}: {
+  account: LendingAccount;
+  reload: () => void;
+  onReplace: (a: LendingAccount) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const windows = Object.entries(account.windows);
+
+  async function remove() {
+    setError(null);
+    try {
+      await api.removeAccount(account.id);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "移除不了，請重新整理再試");
+    }
+  }
+
+  return (
+    <li className="account">
+      <div className="account-head">
+        <strong>{account.name}</strong>
+        {account.approver_note && (
+          <span className="muted">（批准者：{account.approver_note}）</span>
+        )}
+        {account.needs_reauth && (
+          <span className="warn">
+            ⚠️ 需重新授權 —— 這個帳號目前不接單，你其他的帳號照常
+          </span>
+        )}
+      </div>
+
+      {/* 百分比與重置倒數**只給本人**。知道「他一小時後就滿血」會直接變成
+          「那我現在多送幾個」—— 這條跟 web-spec §3 不顯示百分比同一個理由。 */}
+      {account.quota_fresh && windows.length > 0 ? (
+        <>
+          {windows.map(([key, w]) => (
+            <div key={key} className="quota-row">
+              <span className="quota-name">{WINDOW_LABELS[key] ?? key}</span>
+              <meter max={1} value={w.utilization ?? 0} />
+              <span className="quota-pct">
+                {w.utilization === undefined
+                  ? "—"
+                  : `${Math.round(w.utilization * 100)}%`}
+              </span>
+              <span className="muted">{resetsIn(w.resetsAt) ?? ""}</span>
+            </div>
+          ))}
+          <p className="hint">{ago(account.quota_updated_at)}</p>
+        </>
+      ) : (
+        /* 過期的數字不顯示成即時的：你自己在別的地方也在燒同一個帳號，站台不會
+           知道 —— 掛一個理直氣壯的 34% 比說「不知道」更糟。 */
+        <p className="hint">
+          目前不知道這個帳號用掉多少 —— 它只在跑 job 時回報。
+          {account.quota_updated_at && `（最後一次是 ${ago(account.quota_updated_at)}）`}
+        </p>
+      )}
+
+      <p className="actions">
+        <button type="button" className="small" onClick={() => onReplace(account)}>
+          重新授權
+        </button>
+        <button type="button" className="small" onClick={remove}>
+          不再出借這個帳號
+        </button>
+      </p>
+      {error && <p className="error">{error}</p>}
+    </li>
   );
 }
 
 /* 還沒授權。這頁的重點是講清楚他答應的是什麼 —— 不是把帳號給出去，
    是讓這個站台用他的額度跑別人的 job，而且上限由他自己定。 */
 function StartLending({ reload }: { reload: () => void }) {
+  return (
+    <>
+      <h2>開始出借</h2>
+      <p>
+        授權一次就結束：<strong>不用開機、不用裝東西、不用讓筆電開著</strong>。
+        之後你只需要偶爾看帳本、去收飲料。
+      </p>
+      <Authorize account={null} onDone={reload} />
+    </>
+  );
+}
+
+/* 授權流程。新增一個帳號與換掉某個帳號的 token 走的是同一條路 ——
+   差別只在送出時帶不帶 account_id，以及上面那句話要講什麼。 */
+function Authorize({
+  account,
+  onDone,
+  onCancel,
+}: {
+  account: LendingAccount | null;
+  onDone: () => void;
+  onCancel?: () => void;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  const [note, setNote] = useState(account?.approver_note ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -49,8 +229,11 @@ function StartLending({ reload }: { reload: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await api.submitAuthorizationCode(code.trim());
-      reload();
+      await api.submitAuthorizationCode(code.trim(), {
+        accountId: account?.id,
+        approverNote: note.trim() || undefined,
+      });
+      onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "這串碼沒有被接受，請再授權一次");
     } finally {
@@ -60,17 +243,40 @@ function StartLending({ reload }: { reload: () => void }) {
 
   return (
     <>
-      <h2>開始出借</h2>
-      <p>
-        授權一次就結束：<strong>不用開機、不用裝東西、不用讓筆電開著</strong>。
-        之後你只需要偶爾看帳本、去收飲料。
-      </p>
       {/* 這段照 web-spec §9 正經寫。他授權出去的是「用他的額度執行別人的內容」，
           不是「把檔案給別人看」，兩者的風險不同，寫錯人會誤判。 */}
       <p className="privacy">
         <strong>你答應的是讓這個站台用你的 Claude 額度，執行同事送進來的內容。</strong>
-        花掉的是你的額度，上限由你在下面設定。授權之後任何畫面都不會再顯示那串
+        花掉的是你的額度，上限由你自己設定。授權之後任何畫面都不會再顯示那串
         token，包含這一頁。
+      </p>
+
+      {/* 換 token 不擋（換帳號、被撤銷後重授權都是正常需求），但**不能無聲** ——
+          舊的那組站台不再用，它在 Claude 那邊卻還有效到期滿，這件事他該知道。 */}
+      {account && (
+        <p className="warn">
+          這會<strong>換掉</strong>「{account.name}」現在那組 token。
+          舊的那組站台不會再用，但它在 Claude 那邊仍然有效到期滿 ——
+          要讓它真的失效，得去 Claude 那邊撤銷。
+        </p>
+      )}
+
+      {/* 公司帳號的具名批准者（SPEC §4.12）。站台不驗證內容 —— 它沒有辦法知道
+          一個帳號是不是公司的。這一欄的用途是三個月後有人問「誰放的」時，
+          答案存在某個地方。 */}
+      <label>
+        這是誰的額度／誰批准的（選填）
+        <input
+          type="text"
+          maxLength={200}
+          value={note}
+          placeholder="例如：我的個人 Max；或 公司帳號，<主管> 已同意"
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </label>
+      <p className="hint under-field">
+        個人帳號留空沒關係。<strong>公司配的帳號請填</strong> ——
+        被停權時出事的是公司資產，而那時一定會有人問是誰放上去的。
       </p>
 
       {url ? (
@@ -115,12 +321,19 @@ function StartLending({ reload }: { reload: () => void }) {
           </button>
         </p>
       )}
+      {onCancel && (
+        <p className="actions">
+          <button type="button" className="small" onClick={onCancel}>
+            取消
+          </button>
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
     </>
   );
 }
 
-/* 已授權：他的出借條件。 */
+/* 已授權：他的出借條件。條件屬於人，不屬於帳號 —— 兩個帳號共用這一份。 */
 function Conditions({
   settings,
   reload,
@@ -172,15 +385,15 @@ function Conditions({
         <div>
           <strong>{settings.accepting ? "接單中" : "已暫停接單"}</strong>{" "}
           <span className="muted">
-            {settings.online ? "🟢 站台可以用你的額度" : "⚫️ 站台目前連不上你的授權"}
+            {settings.online
+              ? "🟢 站台可以用你的額度"
+              : "⚫️ 站台的執行主機目前沒有回報 —— 這時誰的額度都借不出去"}
           </span>
         </div>
         <div className="worker-actions">
           <button
             className="small"
-            onClick={() =>
-              api.updateLending({ accepting: !settings.accepting }).then(reload)
-            }
+            onClick={() => api.setAccepting(!settings.accepting).then(reload)}
           >
             {settings.accepting ? "暫停接單" : "恢復接單"}
           </button>
@@ -188,6 +401,12 @@ function Conditions({
       </div>
 
       <h2>你出借的條件</h2>
+      {settings.accounts.length > 1 && (
+        <p className="hint">
+          這一份條件套用在你<strong>所有</strong>的出借帳號上 ——
+          上限講的是你對風險的態度，不是對某個帳號的態度。
+        </p>
+      )}
 
       <label>
         每個 job 的花費上限（US$）
@@ -202,7 +421,7 @@ function Conditions({
       </label>
       {/* 這個數字是唯一擋得住「一個 job 燒掉一整天額度」的東西，所以要說實話。 */}
       <p className="hint under-field">
-        超過就中止那個 job。<strong>花掉的是你的額度</strong> ——
+        超過就中止那個 job。<strong>花掉的是你借出去的額度</strong> ——
         一個大 model 的 job 跑八分鐘就可能燒掉 US$25。上限最高只能設到 US$100；
         設得太低的話 job 會一開始就被中止。
       </p>

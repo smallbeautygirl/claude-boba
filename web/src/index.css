@@ -398,3 +398,21 @@ button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
 .jobrow:hover .jobrow-title { color: var(--accent); }
 .jobrow-main { min-width: 0; }
 .jobrow-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 出借帳號（SPEC §4.12 / web-spec §8） ──────────────────────────────
+   一個帳號的時候也是一列 —— 那一列不是為了多帳號而存在，它是放用量的地方。 */
+.accounts { list-style: none; margin: 0; padding: 0; }
+.account { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.account-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.account-head .warn { margin: 0; }
+/* 用量那幾行。名稱固定寬度讓多個窗的長條對齊 —— 不對齊的話兩行長條的起點
+   會隨「五小時窗 / 七天窗」的字數浮動，看起來像兩個不相干的東西。 */
+.quota-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 6px; font-size: 13px; color: var(--muted);
+}
+.quota-name { flex-shrink: 0; width: 5.5em; color: var(--ink); }
+.quota-row meter { flex: 1; min-width: 80px; height: 8px; }
+/* 百分比等寬，否則 9% 跳到 34% 時整行會抖。 */
+.quota-pct { flex-shrink: 0; width: 3em; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+.account .actions { margin-top: 10px; }

@@ -6,7 +6,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -19,7 +19,7 @@ from ..auth import require_user
 from ..db import get_session
 from ..enums import JobStatus, SourceType
 from ..failures import classify
-from ..models import Artifact, Job, JobEvent, User, Worker
+from ..models import Artifact, Job, JobEvent, LendingSetting, User
 from ..pricing import label_for
 from ..schemas import (
     MAX_ATTACHMENT_BYTES,
@@ -43,7 +43,7 @@ _HEARTBEAT_SECONDS = 15.0
 
 _LOAD = (
     selectinload(Job.borrower),
-    selectinload(Job.worker).selectinload(Worker.owner),
+    selectinload(Job.lending).selectinload(LendingSetting.owner),
 )
 
 
@@ -62,8 +62,8 @@ def _preview(prompt: str) -> str:
 def _can_stop(job: Job, user: User) -> bool:
     return (
         job.status in (JobStatus.CLAIMED, JobStatus.RUNNING)
-        and job.worker is not None
-        and job.worker.owner_user_id == user.id
+        and job.lending is not None
+        and job.lending.owner_user_id == user.id
     )
 
 
@@ -77,7 +77,7 @@ def _detail(job: Job, user: User | None = None) -> JobDetail:
         borrower=job.borrower.display_name,
         preview=_preview(job.prompt),
         is_follow_up=job.parent_job_id is not None,
-        lender=job.worker.owner.display_name if job.worker else None,
+        lender=job.lending.owner.display_name if job.lending else None,
         parent_job_id=job.parent_job_id,
         # 只有成功且留下 transcript 的 job 能被接續。
         can_follow_up=job.status.creates_debt and job.transcript_key is not None,
@@ -88,7 +88,7 @@ def _detail(job: Job, user: User | None = None) -> JobDetail:
         total_cost_usd=job.total_cost_usd,
         prompt=job.prompt,
         source_type=job.source_type,
-        worker_id=job.worker_id,
+        lending_id=job.lending_id,
         result_text=job.result_text,
         error_kind=job.error_kind,
         error_detail=job.error_detail,
@@ -108,7 +108,7 @@ async def _get_job(job_id: uuid.UUID, session: AsyncSession, user: User) -> Job:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     # 只有借用者本人與執行該 job 的出租者能讀內容（.claude/rules/security.md）。
-    lender_id = job.worker.owner_user_id if job.worker else None
+    lender_id = job.lending.owner_user_id if job.lending else None
     if user.id not in (job.borrower_id, lender_id):
         raise HTTPException(status_code=403, detail="這不是你的 job")
     return job
@@ -186,12 +186,8 @@ def _check_attachments(keys: list[str], user: User, transcript_bytes: int) -> No
         raise HTTPException(413, f"這個 job 的輸入合計超過 {mb} MB")
 
 
-# worker 超過這個秒數沒回報就當它離線（與 routers/workers.py 同一個值）。
-_OFFLINE_AFTER_SECONDS = 75
-
-
 async def _check_model(
-    model: str, requested_worker_id: uuid.UUID | None, session: AsyncSession
+    model: str, requested_lending_id: uuid.UUID | None, session: AsyncSession
 ) -> None:
     """model 必須在站台白名單，而且真的有人跑得動。
 
@@ -199,41 +195,36 @@ async def _check_model(
     model（新舊兩條憑證路徑都一樣，CLI 只拿它擋 fast mode），而 worker 是把
     `--model` 直接帶給 CLI 的。前端的下拉只是方便，直接打 API 就繞過去了。
 
-    不擋的後果不是「跑錯 model」，是**借用者可以讓出租者欠十倍的錢** ——
+    不擋的後果不是「跑錯 model」，是**委託者可以讓代跑者欠十倍的錢** ——
     Opus 的 output 單價是 Haiku 的 10 倍，而債務照實際花費算。
+
+    ⚠️ 2026-09-22：這裡從「**每一位**可接單的代跑者都要跑得動」放寬成「**至少
+    一位**跑得動」。舊的那條是因為當時 Hub 挑不了人（誰先 poll 誰拿到），只能
+    事先保證每個人都行。現在派單在 Hub，跑不動這個 model 的人根本不會被挑中
+    （SPEC §4.12），那條限制已經沒有存在的理由 —— 它只會讓一個人關掉 Sonnet
+    就擋住全站的 Sonnet job。
     """
     if model not in SITE_MODELS:
         raise HTTPException(
             400, f"這個站台只跑 {' 或 '.join(SITE_MODELS)}，不支援 {model}"
         )
 
-    fresh = datetime.now(UTC) - timedelta(seconds=_OFFLINE_AFTER_SECONDS)
-    stmt = select(Worker).where(
-        Worker.accepting.is_(True), Worker.last_seen_at >= fresh
-    )
-    if requested_worker_id is not None:
-        stmt = stmt.where(Worker.id == requested_worker_id)
+    stmt = select(LendingSetting).where(LendingSetting.accepting.is_(True))
+    if requested_lending_id is not None:
+        stmt = stmt.where(LendingSetting.id == requested_lending_id)
     pool = list(await session.scalars(stmt))
 
-    # 一台都沒有就不在這裡擋 —— job 會排隊等人上線，那是正常狀態，
+    # 一個都沒有就不在這裡擋 —— job 會排隊等人上線，那是正常狀態，
     # 不是使用者挑錯 model。派不出去的處理在別處（expired）。
     if not pool:
         return
 
-    if requested_worker_id is not None:
-        if model not in (pool[0].available_models or []):
-            raise HTTPException(400, f"你指定的那台出租者沒有開放 {model}")
-        return
-
-    # 自動派單：派單不按 model 過濾（poll 只看 requested_worker_id），所以
-    # 只要有任何一台可接單的機器跑不動它，這個 job 就可能派給那台然後失敗。
-    # 取交集而不是聯集 —— 與前端的 offeredModels() 同一條規則。
-    cannot = [w for w in pool if model not in (w.available_models or [])]
-    if cannot:
+    if not any(model in (s.available_models or []) for s in pool):
         raise HTTPException(
             400,
-            f"現在有出租者沒開放 {model}，而自動派單可能派給他們。"
-            f"請改挑一個有開放的出租者，或換 model。",
+            f"你指定的那位代跑者沒有開放 {model}"
+            if requested_lending_id is not None
+            else f"現在線上沒有人開放 {model}，請換一個 model 或稍後再送",
         )
 
 
@@ -244,7 +235,7 @@ async def create_job(
     session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
     transcript_bytes = 0
-    await _check_model(body.model, body.requested_worker_id, session)
+    await _check_model(body.model, body.requested_lending_id, session)
     if body.transcript_key:
         _check_transcript(body.transcript_key, user)
         transcript_bytes = storage.stat(body.transcript_key) or 0
@@ -259,7 +250,7 @@ async def create_job(
         source_type=SourceType.TRANSCRIPT if body.transcript_key else body.source_type,
         transcript_key=body.transcript_key,
         attachment_keys=list(body.attachment_keys),
-        requested_worker_id=body.requested_worker_id,
+        requested_lending_id=body.requested_lending_id,
         borrower_cli_version=body.borrower_cli_version,
         status=JobStatus.QUEUED,
     )
@@ -350,9 +341,9 @@ async def follow_up(
         parent_job_id=parent.id,
         transcript_key=parent.transcript_key,
         attachment_keys=body.attachment_keys,
-        # 續問預設回同一台 worker，但不強制 —— transcript 在 MinIO 上，
-        # 任何 worker 都拿得到。那台剛好離線時不該讓使用者卡住。
-        requested_worker_id=None,
+        # 續問不指名代跑者 —— transcript 在 MinIO 上，任何出借帳號都拿得到。
+        # 指名會讓那個人剛好停接單時，使用者卡在一個他看不懂的等待上。
+        requested_lending_id=None,
         status=JobStatus.QUEUED,
     )
     session.add(job)

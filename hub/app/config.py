@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # 不要圖方便寫 ["*"]（.claude/rules/security.md）。
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # 領單主機的共用 token。**沒設就拒絕領單**，不給預設值 ——
+    # 給了等於讓一個空設定檔變成任何人都能領走別人 job（連同一年期 OAuth token）
+    # 的漏洞。這不再由網頁產生：worker 的身分是「我是這台主機」，
+    # 不是「我是某位代跑者」（SPEC §4.12）。
+    worker_shared_token: str = ""
+
     # worker 領單的 long-poll 最長 hold 時間（秒）
     worker_poll_timeout: int = 30
     # 排隊超過這個時間無人接單即作廢（SPEC §5）

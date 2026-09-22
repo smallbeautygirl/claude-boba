@@ -14,9 +14,9 @@ import contextlib
 import hashlib
 import json
 import shutil
+import socket
 import subprocess
 import sys
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -39,17 +39,25 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     hub_url: str = "http://127.0.0.1:8787"
-    # 在網頁「我的 worker」按「產生 token」拿到，貼進 .env。
-    # worker 因此完全不碰出租者的 Observ 帳密。
+    # 這台主機的身分，對應 hub 的 WORKER_SHARED_TOKEN。
+    #
+    # ⚠️ 2026-09-22：它識別的是**這台主機**，不是某位代跑者（SPEC §4.12）。
+    # 一台主機服務所有出借帳號，憑證隨每個 job 派下來。
     worker_token: str = ""
     claude_credentials: str = ""
-    job_budget_usd: Decimal = Decimal(5)
     timeout_seconds: int = 600
-    max_concurrency: int = 1
-    available_models: str = "sonnet,haiku"
-    allow_full_network: bool = False
+    # 這台主機同時跑幾個 job。**每個帳號**能同時跑幾個是 hub 那邊的事 ——
+    # 那是帳號的物理性質，主機管不到。
+    max_concurrency: int = 2
     worker_image: str = "claude-boba-worker:2.1.278"
+    # 開放外網時用哪個 docker network。預設 bridge：白名單那條路走 proxy，
+    # 這條路不走 —— 兩者不能共用同一個網路。
+    open_network: str = "bridge"
     job_root: Path = Path(".jobs")
+
+    # ⚠️ 出借條件（花費上限、可用 model、外網）**不再由這裡設定**。
+    # 它們屬於代跑者，在網頁上設，隨每個 job 派下來 —— 主機只有一台、代跑者
+    # 有很多位，讓 .env 決定等於某個人的設定被另一個人的蓋掉（SPEC §4.12）。
 
 
 settings = Settings()
@@ -77,21 +85,22 @@ def _cli_version() -> str | None:
 
 
 async def report_config(client: httpx.AsyncClient) -> str:
-    """回報自己的設定，順便確認 token 有效。回傳 worker 名稱。"""
+    """回報這台主機，順便確認 token 有效。回傳主機名稱。
+
+    **不回報出借條件** —— 見 Settings 上的那段。
+    """
     global LENDER_CLI_VERSION
     LENDER_CLI_VERSION = _cli_version()
     resp = await client.post(
         "/api/worker/config",
         json={
-            "allow_full_network": settings.allow_full_network,
-            "available_models": [m for m in settings.available_models.split(",") if m],
-            "job_budget_usd": str(settings.job_budget_usd),
+            "name": socket.gethostname()[:80],
             "max_concurrency": settings.max_concurrency,
             "claude_code_version": LENDER_CLI_VERSION,
         },
     )
     if resp.status_code == 401:
-        sys.exit("WORKER_TOKEN 無效。請到網頁的「我的 worker」重新產生一組。")
+        sys.exit("WORKER_TOKEN 無效。它要跟 hub 的 WORKER_SHARED_TOKEN 一致。")
     resp.raise_for_status()
     return resp.json()["name"]
 
@@ -391,10 +400,12 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     # 不約束 model（新舊兩條憑證路徑都一樣，它只拿那份清單擋 fast mode），而
     # run-job.sh 是把 `--model` 直接帶過去的。所以少了這裡，Hub 一有 bug 就
     # 直接變成「別人用我的帳號跑 Opus」。
-    allowed = [m for m in settings.available_models.split(",") if m]
+    # 白名單隨 job 派下來 —— 它是**那位代跑者**的條件，不是這台主機的。
+    # 舊版讀 worker/.env，而託管模型下那等於用主機管理者的設定去約束每個人。
+    allowed = job.get("available_models") or []
     model = job.get("model") or "sonnet"
     if model not in allowed:
-        await _refuse(client, job_id, f"這台 worker 沒有開放 {model}")
+        await _refuse(client, job_id, f"這位代跑者沒有開放 {model}")
         return
 
     workdir, resume_name, inputs = await _prepare_workdir(client, job)
@@ -403,8 +414,10 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         "JOB_WORKDIR": str(workdir),
         "CLAUDE_CREDENTIALS": settings.claude_credentials,
         "TIMEOUT_SECONDS": str(settings.timeout_seconds),
-        "JOB_BUDGET_USD": str(job.get("job_budget_usd", settings.job_budget_usd)),
-        "AVAILABLE_MODELS": ",".join(job.get("available_models") or ["sonnet"]),
+        "JOB_BUDGET_USD": str(job.get("job_budget_usd", "5")),
+        "AVAILABLE_MODELS": ",".join(allowed),
+        # 網路模式也是那位代跑者的條件。空字串 = 走白名單 proxy（預設）。
+        "OPEN_NETWORK": settings.open_network if job.get("allow_full_network") else "",
         "WORKER_IMAGE": settings.worker_image,
         "PATH": "/usr/bin:/bin:/usr/local/bin",
     }
@@ -612,7 +625,7 @@ async def main() -> None:
             flush=True,
         )
     if not settings.worker_token:
-        sys.exit("WORKER_TOKEN 未設定。到網頁的「我的 worker」產生一組，貼進 .env。")
+        sys.exit("WORKER_TOKEN 未設定。它要跟 hub 的 WORKER_SHARED_TOKEN 一致。")
 
     async with httpx.AsyncClient(
         base_url=settings.hub_url,

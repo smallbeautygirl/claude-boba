@@ -49,7 +49,7 @@ export interface JobDetail {
   total_cost_usd: string | null;
   prompt: string;
   source_type: "paste" | "transcript";
-  worker_id: string | null;
+  lending_id: string | null;
   result_text: string | null;
   error_kind: string | null;
   error_detail: string | null;
@@ -69,7 +69,8 @@ export interface StreamItem {
 export interface CreateJobInput {
   prompt: string;
   model: string;
-  requested_worker_id?: string | null;
+  /** 指定代跑者（出借設定 id），不是帳號 —— 委託者看不到帳號的存在。 */
+  requested_lending_id?: string | null;
   // 上傳的 Claude Code session 檔。有帶的話這個 job 走 `claude --resume`，
   // 是真的續跑，不是把對話當文字重貼一次。
   transcript_key?: string | null;
@@ -102,7 +103,11 @@ export interface Me {
   s3_console_url: string;
 }
 
-export interface WorkerRow {
+/** 提交頁下拉的一列：**一位代跑者**，不是一個帳號。
+
+    他底下可能有兩個 Claude 帳號（個人 + 公司），但那對委託者完全不可見 ——
+    他挑的是人，hub 自己決定用哪個帳號跑（ADR-0001）。`id` 是出借設定 id。 */
+export interface LenderRow {
   id: string;
   name: string;
   owner: string;
@@ -111,24 +116,57 @@ export interface WorkerRow {
   allow_full_network: boolean;
   available_models: string[];
   claude_code_version: string | null;
+  /** 這個人的**池子**現在有多滿 —— 取他最充裕的那個帳號，不是平均。
+      只有燈號，沒有百分比（web-spec §3）：精確數字會讓人盤算
+      「他還有 66%，再送一個沒差」。 */
   quota: "green" | "yellow" | "red" | "unknown";
-  /** 這台跑過幾個 job。只有自己的 worker 有這個欄位 —— 別人幫誰跑過幾次
-      不該出現在別人的畫面上。跑過就不能刪（那些紀錄的出租者會斷掉）。 */
+  /** 這個人跑過幾個 job。只有自己那一列有 —— 別人幫誰跑過幾次
+      不該出現在別人的畫面上。 */
   job_count?: number;
   job_budget_usd?: string;
-  max_concurrency?: number;
+  /** 只有自己那一列有。 */
+  accounts?: LendingAccount[];
+}
+
+/** 一個**出借帳號**：被借出去的那個 Claude 帳號本身。
+
+    只出現在代跑者自己的「我來代跑」頁。**token 永遠不在這裡面**，
+    連遮罩後的都沒有（security.md 紅線 2）。 */
+export interface LendingAccount {
+  id: string;
+  name: string;
+  has_token: boolean;
+  /** token 失效（到期／被撤銷／帳號被收回）。**只有這個帳號停接單，
+      其他照跑** —— job 不受影響，另一個帳號會接。 */
+  needs_reauth: boolean;
+  /** 「這是誰的額度／誰批准的」。公司帳號要填（SPEC §4.12）。 */
+  approver_note: string | null;
+  /** `rate_limit_event` 的整包 unifiedWindows。key 是窗名（five_hour、
+      seven_day、還有 Anthropic 之後可能再加的），值含 utilization 與 resetsAt。
+      不寫死窗名 —— 「顯示哪些窗」是這裡的決定，不是一次 migration。 */
+  windows: Record<string, { utilization?: number; resetsAt?: string | number }>;
+  quota_updated_at: string | null;
+  /** 這包數字還算不算「現在」。false 就不要顯示百分比 —— 代跑者自己在別的
+      地方也在燒同一個帳號，站台不會知道，掛一個理直氣壯的 34% 比不顯示更糟。 */
+  quota_fresh: boolean;
 }
 
 /** 一位代跑者的出借條件。新的託管模型下他沒有機器，所以不是一份清單，
     就是一份設定（CONTEXT.md：出借設定）。
     **token 永遠不在這裡面** —— security.md 紅線 2，任何回應都不帶它。 */
 export interface LendingSettings {
+  /** 底下**任何一個**帳號可用就是 true。 */
   has_token: boolean;
   budget_usd: string;
   available_models: string[];
   allow_full_network: boolean;
   accepting: boolean;
+  /** 領單主機在不在。託管模型下 job 全跑在同一台機器上 ——
+      那台沒起來，誰的額度都借不出去。 */
   online: boolean;
+  /** 他的出借帳號。一個的時候也是一列 —— 那一列不是為了多帳號而存在，
+      它是放用量的地方（web-spec §8）。 */
+  accounts: LendingAccount[];
 }
 
 /** 站台的 model 白名單。順序即偏好順序，第一個是預設 —— 預設不是 Opus，
@@ -380,22 +418,13 @@ export const api = {
 
   // 提交頁的代跑者下拉。**不是 /api/workers** —— 那一支在託管模型下改成回
   // 「我的出借設定」單一物件了，清單搬到 /lenders。
-  listWorkers: () =>
-    fetch(`${HUB}/api/workers/lenders`, { headers: authed() }).then(json<WorkerRow[]>),
+  // 提交頁的代跑者下拉。一列一個**人**。
+  listLenders: () =>
+    fetch(`${HUB}/api/workers/lenders`, { headers: authed() }).then(json<LenderRow[]>),
 
-  createWorker: (name: string) =>
-    fetch(`${HUB}/api/workers`, {
-      method: "POST",
-      headers: authed({ "content-type": "application/json" }),
-      body: JSON.stringify({ name }),
-    }).then(json<{ id: string; name: string; token: string }>),
-
-  /** 過渡期：舊 hub 回一個 worker 陣列，新 hub 回一份出借設定（單一物件）。
-      兩種都要接得住 —— 前後端不可能同一秒上線，而中間那段時間使用者還在用。
-      A 的端點落地、舊路徑不再需要之後，這個分岔連同 MyWorker 的舊畫面一起刪。 */
   lending: () =>
-    fetch(`${HUB}/api/workers`, { headers: authed() }).then(
-      json<LendingSettings | WorkerRow[]>,
+    fetch(`${HUB}/api/workers/settings`, { headers: authed() }).then(
+      json<LendingSettings>,
     ),
 
   updateLending: (patch: Partial<Omit<LendingSettings, "has_token" | "online">>) =>
@@ -417,26 +446,40 @@ export const api = {
       spike #9：`redirect_uri` 指向 platform.claude.com 而不是 localhost，
       所以那串碼沒辦法自動回到我們手上，一定要有人貼。
       貼的是用完即失效的碼，**不是一年期的 token** —— 兩者外洩的後果差很遠。 */
-  submitAuthorizationCode: (code: string) =>
+  /** 不帶 accountId = 新增一個出借帳號；帶了 = **換掉**那個帳號的 token。
+      換掉這件事要在按鈕旁講清楚（舊的站台不再用，但它在 Claude 那邊
+      仍然有效到期滿）—— 不擋，但不能無聲。 */
+  submitAuthorizationCode: (
+    code: string,
+    opts?: { accountId?: string; approverNote?: string },
+  ) =>
     fetch(`${HUB}/api/workers/authorize/code`, {
       method: "POST",
       headers: authed({ "content-type": "application/json" }),
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({
+        code,
+        account_id: opts?.accountId ?? null,
+        approver_note: opts?.approverNote ?? null,
+      }),
     }).then(json<LendingSettings>),
 
-  // 只有從來沒跑過 job 的 worker 刪得掉。擋下來時 hub 回 409，訊息會說
-  // 跑過幾個 —— 直接顯示那句，不要自己另外編一句。
-  deleteWorker: async (id: string) => {
-    const res = await fetch(`${HUB}/api/workers/${id}`, {
+  updateAccount: (id: string, patch: { name?: string; approver_note?: string }) =>
+    fetch(`${HUB}/api/workers/accounts/${id}`, {
+      method: "PUT",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify(patch),
+    }).then(json<LendingSettings>),
+
+  /** 移除一個出借帳號。跑過 job 的不會消失，只會被撤掉 token ——
+      那些 job 的「由誰代跑」是人情債的依據，不能斷。 */
+  removeAccount: (id: string) =>
+    fetch(`${HUB}/api/workers/accounts/${id}`, {
       method: "DELETE",
       headers: authed(),
-    });
-    if (res.status === 401) throw new Unauthorized("請重新登入");
-    if (!res.ok) throw new Error(await friendly(res));
-  },
+    }).then(json<LendingSettings>),
 
-  setAccepting: (id: string, accepting: boolean) =>
-    fetch(`${HUB}/api/workers/${id}/accepting?accepting=${accepting}`, {
+  setAccepting: (accepting: boolean) =>
+    fetch(`${HUB}/api/workers/accepting?accepting=${accepting}`, {
       method: "POST",
       headers: authed(),
     }).then(json<{ accepting: boolean }>),

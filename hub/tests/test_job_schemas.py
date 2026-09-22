@@ -23,8 +23,8 @@ def _fake_job(**overrides):
         "status": JobStatus.SUCCEEDED,
         "borrower": SimpleNamespace(display_name="kevin"),
         "borrower_id": uuid.uuid4(),
-        "worker": None,
-        "worker_id": None,
+        "lending": None,
+        "lending_id": None,
         "parent_job_id": None,
         "prompt": "幫我看一下這份需求\n第二行",
         "model": "sonnet",
@@ -85,10 +85,10 @@ def test_only_the_running_lender_can_stop() -> None:
     lender = SimpleNamespace(id=uuid.uuid4())
     borrower = SimpleNamespace(id=uuid.uuid4())
     stranger = SimpleNamespace(id=uuid.uuid4())
-    worker = SimpleNamespace(owner_user_id=lender.id)
+    lending = SimpleNamespace(owner_user_id=lender.id)
 
     running = _fake_job(
-        status=JobStatus.RUNNING, worker=worker, borrower_id=borrower.id
+        status=JobStatus.RUNNING, lending=lending, borrower_id=borrower.id
     )
     assert _can_stop(running, lender) is True
     assert _can_stop(running, borrower) is False
@@ -99,15 +99,17 @@ def test_cannot_stop_a_job_that_already_finished() -> None:
     from app.routers.jobs import _can_stop
 
     lender = SimpleNamespace(id=uuid.uuid4())
-    worker = SimpleNamespace(owner_user_id=lender.id)
+    lending = SimpleNamespace(owner_user_id=lender.id)
     for status in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED):
-        assert _can_stop(_fake_job(status=status, worker=worker), lender) is False
+        assert _can_stop(_fake_job(status=status, lending=lending), lender) is False
 
 
-def test_can_stop_while_still_queued_on_a_worker() -> None:
+def test_can_stop_while_still_claimed() -> None:
     """claimed 也算 —— 已經派出去但還沒開始跑，一樣該能喊停。"""
     from app.routers.jobs import _can_stop
 
     lender = SimpleNamespace(id=uuid.uuid4())
-    worker = SimpleNamespace(owner_user_id=lender.id)
-    assert _can_stop(_fake_job(status=JobStatus.CLAIMED, worker=worker), lender) is True
+    lending = SimpleNamespace(owner_user_id=lender.id)
+    assert (
+        _can_stop(_fake_job(status=JobStatus.CLAIMED, lending=lending), lender) is True
+    )

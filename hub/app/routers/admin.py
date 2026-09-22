@@ -26,8 +26,8 @@ from ..auth import is_admin, require_user
 from ..config import settings
 from ..db import get_session
 from ..enums import JobStatus
-from ..models import Job, User, Worker
-from .workers import OFFLINE_AFTER_SECONDS
+from ..models import Job, LendingAccount, LendingSetting, User, WorkerHost
+from .workers import host_online
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -113,21 +113,38 @@ async def health(
             }
         )
 
-    # 3. 代跑者：last_seen_at 是 worker 真的回報過才會動的。
-    cutoff = datetime.now(UTC) - timedelta(seconds=OFFLINE_AFTER_SECONDS)
-    total = await session.scalar(select(func.count()).select_from(Worker)) or 0
-    online = (
-        await session.scalar(
-            select(func.count()).select_from(Worker).where(Worker.last_seen_at > cutoff)
-        )
-        or 0
-    )
+    # 3. 領單主機：last_seen_at 是它真的回報過才會動的。
+    #    託管模型下只有一台，它沒跑起來就等於沒有人的額度借得出去。
+    up = await host_online(session)
+    seen = await session.scalar(select(func.max(WorkerHost.last_seen_at)))
     checks.append(
         {
-            "key": "workers",
-            "label": "領單的 worker",
-            "ok": online > 0,
-            "detail": f"{online} / {total} 台在過去 {OFFLINE_AFTER_SECONDS} 秒內回報過",
+            "key": "worker_host",
+            "label": "領單主機",
+            "ok": up,
+            "detail": (
+                f"最後回報於 {int((datetime.now(UTC) - seen).total_seconds())} 秒前"
+                if seen
+                else "從來沒有回報過"
+            ),
+        }
+    )
+
+    # 4. 出借帳號：能跑的有幾個、幾個等著重新授權。
+    #    一個帳號的 token 失效只會停掉那個帳號，其他照跑（web-spec §8）——
+    #    所以它不會有任何 job 失敗，也就不會有人發現，除非這裡講。
+    accounts = list(await session.scalars(select(LendingAccount)))
+    usable = [a for a in accounts if a.usable]
+    stale = [a for a in accounts if a.needs_reauth]
+    checks.append(
+        {
+            "key": "lending_accounts",
+            "label": "出借帳號",
+            "ok": bool(usable),
+            "detail": (
+                f"{len(usable)} 個可用"
+                + (f"，{len(stale)} 個等待重新授權" if stale else "")
+            ),
         }
     )
 
@@ -162,6 +179,60 @@ async def _schema_revision(session: AsyncSession) -> str:
         ) or "（未初始化）"
     except Exception:  # noqa: BLE001
         return "（讀不到）"
+
+
+@router.get("/approved-accounts")
+async def approved_accounts(
+    days: int = 30,
+    _: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """有具名批准者的出借帳號，以及它們最近跑了多少 job。
+
+    **這一支是 ADR-0001 的條件，不是裝飾。** 派單挑 utilization 低的帳號，
+    公司帳號因此是穩定的曝險而不是偶爾的溢出。批准者的名字留了痕跡、用量卻
+    沒有人看得到，等於只留了一半 —— 被問起「誰放的、跑了多少」時只答得出一半。
+
+    **不含任何 job 內容**（紅線 1），也不指名委託者 —— 只有帳號、批准者、筆數與金額。
+    """
+    since = datetime.now(UTC) - timedelta(days=days)
+    rows = await session.execute(
+        select(
+            LendingAccount.id,
+            LendingAccount.name,
+            LendingAccount.approver_note,
+            User.display_name,
+            func.count(Job.id),
+            func.coalesce(func.sum(Job.total_cost_usd), 0),
+        )
+        .join(LendingSetting, LendingAccount.lending_id == LendingSetting.id)
+        .join(User, LendingSetting.owner_user_id == User.id)
+        .join(
+            Job,
+            (Job.account_id == LendingAccount.id) & (Job.created_at >= since),
+            isouter=True,
+        )
+        .where(LendingAccount.approver_note.is_not(None))
+        .group_by(
+            LendingAccount.id,
+            LendingAccount.name,
+            LendingAccount.approver_note,
+            User.display_name,
+        )
+        .order_by(func.count(Job.id).desc())
+    )
+    return [
+        {
+            "account_id": str(aid),
+            "name": name,
+            "approver_note": note,
+            "lender": lender,
+            "days": days,
+            "job_count": n,
+            "cost_usd": str(cost),
+        }
+        for aid, name, note, lender, n, cost in rows
+    ]
 
 
 @router.get("/stats")
@@ -199,15 +270,16 @@ async def stuck_jobs(
 ) -> list[dict]:
     """只列異常的 job，不是全站瀏覽。
 
-    **不含任何 job 內容**（紅線 1）—— 只有 id、狀態、卡多久、哪一台 worker。
+    **不含任何 job 內容**（紅線 1）—— 只有 id、狀態、卡多久、哪位代跑者。
     """
     now = datetime.now(UTC)
     queued_cutoff = now - timedelta(seconds=QUEUED_STUCK_SECONDS)
     running_cutoff = now - timedelta(seconds=RUNNING_STUCK_SECONDS)
 
     rows = await session.execute(
-        select(Job, Worker.name)
-        .join(Worker, Job.worker_id == Worker.id, isouter=True)
+        select(Job, User.display_name)
+        .join(LendingSetting, Job.lending_id == LendingSetting.id, isouter=True)
+        .join(User, LendingSetting.owner_user_id == User.id, isouter=True)
         .where(
             ((Job.status == JobStatus.QUEUED) & (Job.created_at < queued_cutoff))
             | (
@@ -219,14 +291,14 @@ async def stuck_jobs(
         .limit(50)
     )
     out = []
-    for job, worker_name in rows:
+    for job, lender_name in rows:
         since = job.started_at or job.claimed_at or job.created_at
         out.append(
             {
                 "id": str(job.id),
                 "status": str(job.status),
                 "stuck_seconds": int((now - since).total_seconds()),
-                "worker": worker_name,
+                "lender": lender_name,
             }
         )
     return out

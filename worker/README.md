@@ -53,13 +53,18 @@ ls -l ~/.claude/.credentials.json
 沒有這個檔案就先在終端機跑一次 `claude` 登入。**這個檔案就是你要出借的東西**，
 待會要把它的路徑填進設定。
 
-### 2. 在網頁產生 token
+### 2. 跟 hub 要主機 token
 
-打開 claude-boba → **我的 worker** → 填一個名字（例如「Vivian 的 MBP」）→
-**產生 worker token**。
+這台 worker 的身分是 hub 的 `WORKER_SHARED_TOKEN`，兩邊填一樣的一串就好。
+它不再由網頁產生。
 
-那串 token **只會顯示一次**，馬上複製。它是這台 worker 的身分 ——
-`worker` 因此完全不需要你的 Observ 帳密，**不要把公司密碼寫進任何設定檔**。
+> ⚠️ **2026-09-22 改過**（SPEC §4.12）。舊協定是「一個 token 對一位代跑者」，
+> 而 job 只能用那一列自己的憑證跑 —— 於是 hub 沒有「挑帳號」這個動作，
+> 帳號是自己跑來搶單的。那讓「一位代跑者出借多個 Claude 帳號」做不出來。
+>
+> 現在一台主機服務所有出借帳號，憑證隨每個 job 派下來。所以這串 token
+> **等於全站的領單權限**（連同各代跑者的一年期 OAuth token），
+> 它跟 hub 的 `.env` 同等敏感，不要貼進聊天室。
 
 ### 3. 起 egress proxy
 
@@ -88,15 +93,18 @@ cp .env.example .env
 一定要改的兩個：
 
 ```ini
-WORKER_TOKEN=<步驟 2 那串>
+WORKER_TOKEN=<跟 hub 的 WORKER_SHARED_TOKEN 一樣那串>
 CLAUDE_CREDENTIALS=/home/你/.claude/.credentials.json   # 要絕對路徑
 ```
 
 **`HUB_URL` 幾乎一定要改。** `.env.example` 的預設是 `http://127.0.0.1:8787`，
 那只對「hub 跑在你這台」的人正確 —— 你多半不是。填錯的症狀是網頁一直顯示離線、
 而且**沒有任何錯誤訊息**，所以先確認一次。hub 的位址跟你開網頁的那個位址同一台，
-只是換成 `:8787`。（`install.sh` 會直接問你，不用自己找這一行。）其餘的（花費上限、逾時、可用 model）
-每一項在 `.env.example` 裡都寫了為什麼是那個值，改之前先讀那幾行。
+只是換成 `:8787`。（`install.sh` 會直接問你，不用自己找這一行。）
+
+**花費上限、可用 model、外網開關不在這裡** —— 它們屬於各位代跑者，在網頁的
+「我來代跑」頁設定，隨每個 job 派下來（SPEC §4.12）。這裡剩下的每一項在
+`.env.example` 裡都寫了為什麼是那個值，改之前先讀那幾行。
 
 ### 6. 跑起來
 
@@ -105,7 +113,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python worker.py
 ```
 
-網頁的「我的 worker」應該在幾秒內變成**線上**。沒有的話看下一節。
+網頁的「我來代跑」應該在幾秒內變成**線上**。沒有的話看下一節。
 
 ---
 
@@ -117,7 +125,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | job 一跑就回 `Not logged in` | 憑證路徑不對，或那個檔案不是登入狀態。**不要加 `--bare`**，它不讀 OAuth，錯誤訊息會把你導向「去登入」這條錯的路 |
 | job 卡在「準備中」很久 | 第一次跑要複製 org skill 模板。之後會快很多 |
 | 借用者說 `pip install` 失敗 | 正常。預設沒有外網，見上面「你實際上答應了什麼」 |
-| 想看 job 的檔案 | 「我的 worker」頁有 MinIO console 的連結。路徑是 `jobs/<job id>/`，job id 在該 job 詳情頁的網址列上 |
+| 想看 job 的檔案 | 「我來代跑」頁有 MinIO console 的連結。路徑是 `jobs/<job id>/`，job id 在該 job 詳情頁的網址列上 |
 
 ---
 
@@ -125,5 +133,5 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 - **暫時**：網頁按「暫停接單」。程式繼續跑，只是不再拿新的 job。
 - **永久**：關掉 `worker.py` 就好。已經在跑的 job 會跑完。
-- **建錯的 worker**：「我的 worker」可以刪除，但**只有從來沒跑過 job 的才能刪** ——
+- **不想再出借的帳號**：「我來代跑」可以移除，**跑過 job 的不會消失，只會撤掉 token** ——
   跑過的刪掉會讓那些 job 失去出租者，而那是人情債的依據。

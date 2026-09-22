@@ -53,7 +53,8 @@ class JobCreate(BaseModel):
     # 上傳的 session 檔，來自 POST /api/uploads/transcript。
     # 有帶的話這個 job 就是 `--resume`，不是把對話當文字重貼一次。
     transcript_key: str | None = Field(default=None, max_length=512)
-    requested_worker_id: uuid.UUID | None = None
+    # 指定代跑者（出借設定 id），不是帳號 —— 委託者看不到帳號（ADR-0001）。
+    requested_lending_id: uuid.UUID | None = None
     borrower_cli_version: str | None = Field(default=None, max_length=32)
     # 借用者先把檔案 PUT 進 MinIO，再把 key 帶過來。Hub 在這裡驗歸屬與大小。
     attachment_keys: list[str] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
@@ -94,7 +95,9 @@ class JobDetail(JobSummary):
     can_follow_up: bool
     prompt: str
     source_type: SourceType
-    worker_id: uuid.UUID | None
+    # 派給誰跑。對外只講到**人** —— 是哪個出借帳號跑的不對委託者顯示
+    # （ADR-0001）。
+    lending_id: uuid.UUID | None
     result_text: str | None
     error_kind: str | None
     error_detail: str | None
@@ -109,12 +112,15 @@ class JobDetail(JobSummary):
 
 
 class WorkerConfig(BaseModel):
-    """worker 啟動時回報自己的設定。身分已由 token 決定，所以沒有 name。"""
+    """領單主機啟動時回報自己。
 
-    allow_full_network: bool = False
-    available_models: list[str] = Field(default_factory=lambda: ["sonnet", "haiku"])
-    job_budget_usd: Decimal = Decimal(5)
-    max_concurrency: int = 1
+    ⚠️ **這裡不再回報出借條件**（上限／model／外網）。那些是代跑者在網頁上設的，
+    屬於人不屬於主機 —— 讓 worker/.env 回報它們，等於主機每次重啟就把使用者
+    在網頁改過的條件蓋掉一次（SPEC §4.12）。
+    """
+
+    name: str = Field(default="host", max_length=80)
+    max_concurrency: int = 2
     claude_code_version: str | None = None
 
 
@@ -161,6 +167,10 @@ class WorkerJob(BaseModel):
     source_type: SourceType
     job_budget_usd: Decimal
     available_models: list[str]
+    # 網路模式現在也隨 job 派下來。舊模型下它在代跑者自己機器的 worker/.env，
+    # 但主機只有一台、代跑者有很多位 —— 讓主機的 .env 決定，等於某個人的
+    # 「只放行 Claude 本身」被另一個人的設定覆蓋掉（SPEC §4.12）。
+    allow_full_network: bool = False
     # 要接續的 transcript（下載用），與這次跑完要把 transcript 放哪（上傳用）。
     resume_from_url: str | None = None
     transcript_put_url: str | None = None

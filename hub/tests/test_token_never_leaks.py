@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import inspect
 import pathlib
+import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -31,14 +32,28 @@ def key():
     settings.token_encryption_key = old
 
 
-def _worker(*, has_token: bool) -> SimpleNamespace:
+def _account(*, has_token: bool) -> SimpleNamespace:
     return SimpleNamespace(
+        id=uuid.uuid4(),
+        name="個人 Max",
         oauth_token_enc=secrets_box.seal(FAKE_TOKEN) if has_token else None,
+        approver_note=None,
+        needs_reauth=False,
+        usable=has_token,
+        rate_limit_windows={"five_hour": {"utilization": 0.34}},
+        quota_updated_at=datetime.now(UTC),
+        utilization=lambda window="five_hour": 0.34,
+    )
+
+
+def _setting(*, has_token: bool) -> SimpleNamespace:
+    """一份出借設定 + 一個出借帳號。token 掛在帳號上（SPEC §4.12）。"""
+    return SimpleNamespace(
         job_budget_usd="5.0000",
         available_models=["sonnet", "haiku"],
         allow_full_network=False,
         accepting=True,
-        last_seen_at=datetime.now(UTC),
+        accounts=[_account(has_token=has_token)],
     )
 
 
@@ -51,7 +66,7 @@ def test_lending_view_has_only_a_boolean() -> None:
     這條寫死成「整份回應裡不能有 sk-ant」而不是「不要有 token 欄位」：
     後者擋不住有人把它塞進別的欄位名。
     """
-    view = _lending_view(_worker(has_token=True))
+    view = _lending_view(_setting(has_token=True), online=True)
     assert view["has_token"] is True
     blob = repr(view)
     assert "sk-ant" not in blob
@@ -59,14 +74,17 @@ def test_lending_view_has_only_a_boolean() -> None:
 
 
 def test_lending_view_without_a_token() -> None:
-    assert _lending_view(_worker(has_token=False))["has_token"] is False
+    assert _lending_view(_setting(has_token=False), online=True)["has_token"] is False
 
 
 def test_no_endpoint_returns_the_ciphertext_either() -> None:
     """密文也不該出去。它擋得住看一眼，但它**就是** token ——
     只要金鑰也漏了就等於明文，而兩者都在同一台主機上。"""
-    view = _lending_view(_worker(has_token=True))
+    view = _lending_view(_setting(has_token=True), online=True)
     assert not any(isinstance(v, bytes) for v in view.values())
+    # 帳號那一層也要檢查 —— 密文現在掛在帳號上，只看外層會漏掉。
+    for account in view["accounts"]:
+        assert not any(isinstance(v, bytes) for v in account.values())
 
 
 # --- 不進錯誤訊息 ---------------------------------------------------------
