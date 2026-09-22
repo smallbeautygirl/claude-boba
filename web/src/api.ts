@@ -93,6 +93,9 @@ export interface Me {
   channel_notifications: boolean;
   /** 那個頻道叫什麼，原字串照顯示。 */
   channel_name: string;
+  /** MinIO console 的網址。空字串代表這個站台沒開，「我的 worker」頁整段不顯示。
+      從 hub 來而不是前端寫死：端點換了畫面要跟著變。 */
+  s3_console_url: string;
 }
 
 export interface WorkerRow {

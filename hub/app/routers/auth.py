@@ -40,6 +40,9 @@ async def me(user: User = Depends(require_user)) -> dict:
         # 前端要能講實話，就得知道這件事。
         "channel_notifications": bool(settings.teams_channel_webhook),
         "channel_name": settings.teams_channel_name,
+        # MinIO console 的網址，只有「我的 worker」頁會用。沒設就是空字串，
+        # 前端據此整段不顯示。
+        "s3_console_url": settings.s3_console_url,
     }
 
 

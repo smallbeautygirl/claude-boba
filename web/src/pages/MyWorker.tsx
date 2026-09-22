@@ -84,6 +84,37 @@ export function MyWorker() {
           </p>
         </div>
       )}
+      {/* MinIO console。只有這一頁有，不放頁尾 —— 這個 bucket 是整站共用、
+          prefix 分區，console 沒有「只看自己」這種權限。借用者點了不是進不去
+          （白給一個挫折），就是繞過 hub 的擁有者檢查。出租者不一樣：這頁只有
+          他們看得到，而且他們手上已經有更敏感的東西（自己的 Anthropic 憑證）。
+          網址沒設就整段不出現 —— 一個連不上的連結比沒有連結更糟。 */}
+      {me?.s3_console_url && (
+        <>
+          <h2>job 的檔案放在哪</h2>
+          <p className="hint">
+            對話紀錄、附件與產出都存在 MinIO 裡，一個 job 一個資料夾：
+            <code>jobs/&lt;job id&gt;/</code>。平常不需要進去 —— job 頁面的下載
+            連結走的是短效期的預簽網址。
+          </p>
+          <p className="privacy">
+            <strong>這個 bucket 是整個站台共用的，沒有「只看自己」的權限。</strong>
+            你在 console 裡看得到的不只是自己的 job，也包含其他人的對話與檔案。
+            這頁之外的地方不會出現這個連結，原因就是這個。
+          </p>
+          <p className="console-open">
+            <a
+              className="chip-btn"
+              href={me.s3_console_url}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              開啟 MinIO console ↗
+            </a>
+          </p>
+          <p className="hint">登入憑證跟管理員拿，畫面上不會有。</p>
+        </>
+      )}
     </div>
   );
 }

@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # 但也可能讓人不好意思借。
     teams_channel_debts: bool = True
 
+    # MinIO console 的網址（跟 S3_PUBLIC_ENDPOINT 不同埠）。不從那個位址推算
+    # 埠號 —— 那是猜的。沒設就代表這個站台沒開 console，前端整段不顯示：
+    # 一個連不上的連結比沒有連結更糟。
+    s3_console_url: str = ""
+
     # 允許的前端來源，逗號分隔。開發時要把區網位址加進來，
     # 否則從別台機器開的瀏覽器會被 CORS 擋下。
     # 不要圖方便寫 ["*"]（.claude/rules/security.md）。

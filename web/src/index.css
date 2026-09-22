@@ -361,7 +361,10 @@ h2 { margin: 24px 0 10px; font-size: 14px; font-weight: 700; color: var(--ink); 
 }
 
 .artifacts { margin-top: 20px; }
-.artifacts a.chip-btn { text-decoration: none; }
+/* 連結長成藥丸按鈕的樣子時，底線要拿掉 —— 不拿的話會變成「有底線的按鈕」，
+   兩種語彙疊在一起。 */
+.artifacts a.chip-btn, .console-open a.chip-btn { text-decoration: none; }
+.console-open { margin: 0 0 12px; }
 
 .steps { margin: 0 0 12px; padding-left: 20px; font-size: 14px; }
 .steps li { margin-bottom: 4px; }
