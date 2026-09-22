@@ -8,7 +8,7 @@
 // 而那正是「把額度借出去」讓人敢做的原因 —— 一個 Opus job 八分鐘能燒掉
 // US$25，那是他的錢。
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   api,
   SITE_MODELS,
@@ -52,29 +52,47 @@ function Accounts({
       <h2>你的出借帳號</h2>
       <ul className="accounts">
         {settings.accounts.map((a) => (
-          <AccountRow key={a.id} account={a} reload={reload} onReplace={setReplacing} />
+          <Fragment key={a.id}>
+            <AccountRow account={a} reload={reload} onReplace={setReplacing} />
+            {/* 表單就地展開在**被按的那一列底下**。原本它渲染在整份清單的最後，
+                所以按第一列的「重新授權」時，表單跳到畫面外的底部 —— 使用者
+                看到的是「按了沒反應」（2026-09-22 回報）。
+
+                帳號多起來之後這個距離只會更遠，而「哪一列」正是這個動作最需要
+                講清楚的事：按錯列會作廢掉另一個帳號的 token。 */}
+            {replacing?.id === a.id && (
+              <li className="account authorizing">
+                <Authorize
+                  account={a}
+                  onDone={() => {
+                    setReplacing(null);
+                    reload();
+                  }}
+                  onCancel={() => setReplacing(null)}
+                />
+              </li>
+            )}
+          </Fragment>
         ))}
       </ul>
 
-      {adding || replacing ? (
+      {adding ? (
         <Authorize
-          account={replacing}
+          account={null}
           onDone={() => {
             setAdding(false);
-            setReplacing(null);
             reload();
           }}
-          onCancel={() => {
-            setAdding(false);
-            setReplacing(null);
-          }}
+          onCancel={() => setAdding(false)}
         />
       ) : (
-        <p className="actions">
-          <button type="button" className="small" onClick={() => setAdding(true)}>
-            再授權一個帳號
-          </button>
-        </p>
+        !replacing && (
+          <p className="actions">
+            <button type="button" className="small" onClick={() => setAdding(true)}>
+              再授權一個帳號
+            </button>
+          </p>
+        )
       )}
     </>
   );
@@ -324,6 +342,10 @@ function Authorize({
             <button type="button" onClick={finish} disabled={busy || !code.trim()}>
               {busy ? "確認中…" : "完成授權"}
             </button>
+            {/* 這一步會等 hub 跟 Anthropic 來回，最久要一分鐘。沒有這句話，
+                使用者會以為畫面當掉了 —— 而他這時最可能做的事是重新整理，
+                那會讓整個授權作廢、要從頭再來一次。 */}
+            {busy && <span className="muted">最久要一分鐘，先不要重新整理</span>}
           </p>
         </>
       ) : (

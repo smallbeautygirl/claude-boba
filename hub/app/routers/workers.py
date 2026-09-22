@@ -267,6 +267,10 @@ async def submit_authorize_code(
     except authorize.AuthorizeError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    # 授權之前有沒有任何能跑的帳號。用來判斷「接單」是不是被系統關掉的 ——
+    # 見下面那段。
+    had_usable = any(a.usable for a in row.accounts)
+
     if body.account_id is not None:
         account = next((a for a in row.accounts if a.id == body.account_id), None)
         if account is None:
@@ -285,6 +289,16 @@ async def submit_authorize_code(
     account.needs_reauth = False
     if body.approver_note is not None:
         account.approver_note = body.approver_note.strip() or None
+
+    # 最後一個帳號失效時，系統會自動把接單關掉（routers/worker.py）。那不是他按的，
+    # 所以他重新授權好之後也不該要他自己再去按一次開回來 —— 授權成功了卻還是
+    # 不接單，而畫面上沒有任何東西解釋為什麼（2026-09-22 真的發生過）。
+    #
+    # **只在「原本一個能跑的帳號都沒有」時才打開。** 他自己按的「暫停接單」
+    # 不能被這裡蓋掉 —— 那是他的決定，而多授權一個帳號不代表他想恢復接單。
+    if not had_usable and account.usable:
+        row.accepting = True
+
     await session.commit()
     await session.refresh(row, ["accounts"])
     return _lending_view(row, online=await host_online(session))

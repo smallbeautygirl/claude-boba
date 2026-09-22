@@ -156,13 +156,16 @@ async def test_claimed_jobs_are_not_swept(session) -> None:
 # --- 提交時的死路 ---------------------------------------------------------
 
 
-async def _kill_every_other_account(session) -> None:
-    """把**開發資料庫裡既有的**帳號也標成失效。
+async def _make_the_whole_site_dead(session) -> None:
+    """把**開發資料庫裡既有的**設定與帳號也一起弄成「沒有人跑得動」。
 
-    `_anyone_can_run()` 問的是全站，而 fixture 只控制得了自己建的那個 ——
-    不處理既有資料的話，這個測試會在「開發機上剛好有一個活著的帳號」時變紅，
-    而那跟它要驗的規則無關。整個測試包在交易裡，結束就 rollback。
+    `_check_model()` 問的是全站，而 fixture 只控制得了自己建的那一份 ——
+    不處理既有資料的話，這個測試會在「開發機上剛好有人在接單」時變紅，
+    而那跟它要驗的規則無關。這已經發生過兩次，第一次只處理了帳號、
+    漏了設定，所以這裡兩個都要。整個測試包在交易裡，結束就 rollback。
     """
+    for setting in await session.scalars(select(LendingSetting)):
+        setting.accepting = False
     for row in await session.scalars(select(LendingAccount)):
         row.needs_reauth = True
     await session.flush()
@@ -171,9 +174,8 @@ async def _kill_every_other_account(session) -> None:
 async def test_submitting_is_refused_when_every_account_is_dead(session) -> None:
     """所有 token 都失效時排隊只是把失敗延後 15 分鐘，
     而使用者會以為自己在等一個會來的人。"""
-    _user, setting, _accounts = await _fixtures(session)
-    setting.accepting = False
-    await _kill_every_other_account(session)
+    _user, _setting, _accounts = await _fixtures(session)
+    await _make_the_whole_site_dead(session)
 
     with pytest.raises(HTTPException) as exc:
         await _check_model("sonnet", None, session)

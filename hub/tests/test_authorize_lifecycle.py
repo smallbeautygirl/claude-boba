@@ -56,19 +56,42 @@ def test_start_returns_the_authorize_url() -> None:
     assert url.startswith("https://claude.com/cai/oauth/authorize")
 
 
-def test_pressing_authorize_again_replaces_the_old_session() -> None:
-    """不然重複點按鈕會累積行程。"""
+def test_pressing_authorize_again_reuses_the_live_session() -> None:
+    """🚨 **再按一次不可以換掉還活著的 session。**
+
+    每起一次就在 Claude 那邊產生一組新的 code_challenge（PKCE），舊的當場作廢 ——
+    連同使用者可能已經開著、甚至已經按完同意的那一頁。他回來貼碼時，碼對應的是
+    被殺掉的那個 session，而 CLI 只會說 "Invalid code"，看起來像他複製錯了。
+
+    2026-09-22 真的發生過，從 log 才看得出來：貼碼之前 POST /authorize 被打了
+    兩次。最容易觸發的是重新整理頁面 —— 畫面回到「開始出借」，再按一次就死了。
+
+    這條原本釘的是相反的行為（「再按一次就換一個新的」），而那正是 bug 本身。
+    重用同樣不會累積行程：根本不 spawn 第二個。
+    """
+    wid = uuid.uuid4()
+    first_url = asyncio.run(authorize.start(wid))
+    first = authorize._sessions[wid].proc.pid
+
+    second_url = asyncio.run(authorize.start(wid))
+    second = authorize._sessions[wid].proc.pid
+
+    assert first == second, "又 spawn 了一個，使用者手上的碼會作廢"
+    assert first_url == second_url
+    assert len(authorize._sessions) == 1
+    assert _alive(first)
+
+
+def test_a_dead_session_is_replaced_not_reused() -> None:
+    """重用只限還活著的。行程已經死掉的話，回一個永遠不會成功的網址更糟。"""
     wid = uuid.uuid4()
     asyncio.run(authorize.start(wid))
     first = authorize._sessions[wid].proc.pid
+    authorize._sessions[wid].close()
+    time.sleep(0.2)
 
     asyncio.run(authorize.start(wid))
-    second = authorize._sessions[wid].proc.pid
-
-    assert first != second
-    assert len(authorize._sessions) == 1
-    time.sleep(0.2)
-    assert not _alive(first), "舊的行程沒有被殺掉"
+    assert authorize._sessions[wid].proc.pid != first
 
 
 def test_close_kills_the_process_and_removes_the_temp_home() -> None:
@@ -197,3 +220,162 @@ def test_a_token_that_fails_verification_is_not_returned(monkeypatch) -> None:
     with pytest.raises(authorize.AuthorizeError) as exc:
         asyncio.run(authorize.submit_code(wid, "code-123"))
     assert "驗證" in str(exc.value)
+
+
+def test_the_pty_is_wide_enough_that_a_token_cannot_wrap(monkeypatch) -> None:
+    """🚨 80 欄是 pty 的預設值，而一年期 token 比它長。
+
+    不設視窗大小的話，CLI 會把 token 折成兩行 —— 中間多一個換行字元，
+    `_TOKEN_RE` 就永遠比對不到完整的那串，而症狀是「等 60 秒然後說授權沒完成」。
+    這不是保險起見，是不設就穩定地壞掉。
+    """
+    monkeypatch.setattr(
+        authorize,
+        "COMMAND",
+        [
+            "python3",
+            "-c",
+            (
+                "import os, sys, time;"
+                "print('https://claude.com/x cols=%d' % os.get_terminal_size().columns,"
+                " flush=True);"
+                "time.sleep(30)"
+            ),
+        ],
+    )
+    wid = uuid.uuid4()
+    asyncio.run(authorize.start(wid))
+    sess = authorize._sessions[wid]
+    cols = int(sess.buf.split(b"cols=")[1].split()[0])
+    assert cols >= 200, f"pty 只有 {cols} 欄，token 會被折行"
+
+
+def test_a_rejected_code_keeps_the_session_alive_and_quotes_the_cli(
+    monkeypatch,
+) -> None:
+    """貼錯一次不該讓人重跑整個流程。
+
+    CLI 自己說 "Press Enter to retry" —— 它還活著、還在同一個 PKCE 上等下一次
+    輸入。收掉 session 的話使用者得從「開始出借」重來，而重來會換一組
+    code_challenge，連他手上那個已經開著的授權頁也一起作廢。
+
+    錯誤訊息也要用 CLI 的原話：「full code was copied」指向一個很具體的動作，
+    而我們原本那句「可能是碼貼錯或過期了」把兩件不同的事混在一起。
+    """
+    monkeypatch.setattr(
+        authorize,
+        "COMMAND",
+        [
+            "python3",
+            "-c",
+            (
+                "import sys, time;"
+                "print('https://claude.com/x', flush=True);"
+                "sys.stdin.readline();"
+                "print('OAuth error: Invalid code. "
+                "Please make sure the full code was copied', flush=True);"
+                "time.sleep(30)"
+            ),
+        ],
+    )
+    wid = uuid.uuid4()
+    asyncio.run(authorize.start(wid))
+    pid = authorize._sessions[wid].proc.pid
+
+    with pytest.raises(authorize.AuthorizeError) as exc:
+        asyncio.run(authorize.submit_code(wid, "wrong-code"))
+
+    assert "full code was copied" in str(exc.value)
+    assert wid in authorize._sessions, "session 被收掉了，使用者得從頭再來"
+    assert _alive(pid)
+
+
+def test_the_cli_is_not_allowed_to_open_a_browser_on_the_host(monkeypatch) -> None:
+    """🚨 那個授權連結是**別人帳號的**。
+
+    `claude setup-token` 啟動時會自己 xdg-open 授權網址，而這個行程跑在站台
+    主機上 —— 所以彈窗會跳在主機管理者面前，不是代跑者面前。他順手點下去並
+    登入的話，會把自己的 Claude 帳號授權進別人的那一格。
+
+    這裡驗的是 spawn 的環境，不是「有沒有真的開起來」—— 後者取決於那台機器
+    裝了什麼，測不出穩定的結果。
+    """
+    captured: dict = {}
+
+    class _Fake:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs.get("env") or {})
+        return _Fake()
+
+    monkeypatch.setattr(authorize.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(authorize, "COMMAND", ["true"])
+    authorize._spawn(uuid.uuid4())
+
+    assert captured.get("BROWSER") == "/bin/true"
+    assert "DISPLAY" not in captured
+    assert "WAYLAND_DISPLAY" not in captured
+    # 憑證也不該漏進去（原本就有的約束，順手一起釘）。
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in captured
+    assert "ANTHROPIC_API_KEY" not in captured
+
+
+def test_a_rejected_code_fails_immediately(monkeypatch) -> None:
+    """碼被拒絕時不該讓人盯著「確認中…」一分鐘。
+
+    `_read_until` 原本只盯 token，所以 CLI 早就印了拒絕訊息，我們還站在那裡
+    等滿 TOKEN_TIMEOUT_SECONDS。使用者看到的是一分鐘的靜止，然後才拿到一句
+    其實早就在畫面上的話。
+    """
+    monkeypatch.setattr(
+        authorize,
+        "COMMAND",
+        [
+            "python3",
+            "-c",
+            (
+                "import sys, time;"
+                "print('https://claude.com/x', flush=True);"
+                "sys.stdin.readline();"
+                "print('OAuth error: Invalid code.', flush=True);"
+                "time.sleep(30)"
+            ),
+        ],
+    )
+    wid = uuid.uuid4()
+    asyncio.run(authorize.start(wid))
+
+    started = time.monotonic()
+    with pytest.raises(authorize.AuthorizeError):
+        asyncio.run(authorize.submit_code(wid, "wrong"))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 10, (
+        f"花了 {elapsed:.0f} 秒才說失敗，逾時是 {authorize.TOKEN_TIMEOUT_SECONDS} 秒"
+    )
+
+
+def test_the_code_is_written_in_small_pieces(monkeypatch) -> None:
+    """🚨 一次把整串碼寫進 pty，CLI 會**完全沒有反應**。
+
+    2026-09-22 實測：87 字元一次寫入 → 等 75 秒也沒有任何輸出（遮罩星號都出現了，
+    代表字元有進去，但它從來沒有把碼送出去）；21 字元一次寫入 → 立刻回應。
+    真實的授權碼是 90 幾個字元，所以這條路一次都沒有成功過。
+
+    這條測試擋的是「順手簡化回一次寫完」—— 那個寫法看起來完全合理，
+    而且用短字串測起來是好的。
+    """
+    writes: list[bytes] = []
+    monkeypatch.setattr(authorize.os, "write", lambda _fd, b: writes.append(b))
+    monkeypatch.setattr(authorize.time, "sleep", lambda _s: None)
+
+    code = "x" * 95
+    authorize._write_code(7, code)
+
+    assert b"".join(writes) == code.encode() + b"\r"
+    assert len(writes) > 2, "又變成一次寫完了"
+    assert all(len(w) <= authorize._CODE_CHUNK_BYTES for w in writes)

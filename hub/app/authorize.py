@@ -32,14 +32,17 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import fcntl
 import os
 import pty
 import re
 import select
 import shutil
 import signal
+import struct
 import subprocess
 import tempfile
+import termios
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -48,6 +51,8 @@ import httpx
 
 # 授權網址長怎樣不預設，抓 https:// 開頭的第一個。
 _URL_RE = re.compile(rb"https://[^\s\x1b\"'<>]+")
+# 去 ANSI 用。CLI 是個 TUI，輸出裡幾乎每一行都夾著控制碼。
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB0-2]")
 # token 的格式（`claude setup-token` 產生的長期 OAuth token）。
 #
 # 🚨 **後面那個 lookahead 不能拿掉。** token 是分好幾次寫進 pty 的，而
@@ -82,6 +87,14 @@ _PR_SET_PDEATHSIG = 1
 # 真的會死鎖，不是理論風險。提前載入之後，子行程裡只剩 setsid 與 prctl
 # 兩個 syscall，兩個都不碰鎖。
 _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
+
+
+def _set_winsize(fd: int, *, rows: int, cols: int) -> None:
+    """設 pty 的視窗大小。設不起來不該讓授權整個失敗 —— 那時它仍然可能成功。"""
+    try:
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    except OSError:
+        pass
 
 
 def _die_with_parent() -> None:
@@ -145,6 +158,7 @@ def _read_until(
     timeout: float,
     *,
     settle: float = 0.0,
+    abort: re.Pattern[bytes] | None = None,
 ) -> bytes | None:
     """一直讀 pty 直到吐出符合的東西，或逾時。
 
@@ -169,6 +183,9 @@ def _read_until(
             if not chunk:
                 break
             sess.buf += chunk
+            if abort is not None and abort.search(sess.buf):
+                # CLI 已經表態了，再等下去只是讓使用者多盯一分鐘。
+                return None
             if found := pattern.search(sess.buf):
                 got = found.group(0)
                 if got != best:
@@ -204,8 +221,36 @@ def _spawn(worker_id: uuid.UUID) -> Session:
     """
     home = tempfile.mkdtemp(prefix="boba-auth-")
     master, slave = pty.openpty()
-    env = os.environ | {"HOME": home, "TERM": "xterm-256color"}
+    # 🚨 **視窗要夠寬，否則 token 會被終端機硬換行。**
+    #
+    # `pty.openpty()` 不設大小，CLI 會當成 80 欄。一年期 token 比 80 個字元長，
+    # 所以它會被折成兩行 —— 中間多一個換行字元，`_TOKEN_RE` 就永遠比對不到
+    # 完整的那一串，只會在 60 秒之後逾時。
+    #
+    # 這不是「保險起見設寬一點」：80 欄是預設值，而 token 一定比它長，
+    # 所以不設就是穩定地壞掉。
+    _set_winsize(master, rows=200, cols=400)
+    env = os.environ | {
+        "HOME": home,
+        "TERM": "xterm-256color",
+        # 🚨 **不要讓它在主機上開瀏覽器。**
+        #
+        # `claude setup-token` 啟動時會自己 xdg-open 授權網址。這個行程跑在
+        # **站台主機**上，不是代跑者的機器 —— 所以那個視窗（或遠端開發環境的
+        # 「要不要造訪外部連結」彈窗）會跳在**主機管理者**面前，而那是**別人
+        # 帳號的授權連結**。他順手點下去並登入的話，會把自己的 Claude 帳號
+        # 授權進別人的那一格。
+        #
+        # CLI 有 fallback（"Browser didn't open? Use the url below to sign in"），
+        # 而那正是我們要的那條路：網址由 hub 解析出來、顯示在網頁上給本人。
+        # 主機這端從頭到尾不該嘗試開任何東西。
+        "BROWSER": "/bin/true",
+    }
     for k in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
+        env.pop(k, None)
+    # 沒有顯示裝置就沒有東西好開。BROWSER 擋第一層，這兩個擋沒有讀 BROWSER 的
+    # 那些 opener。
+    for k in ("DISPLAY", "WAYLAND_DISPLAY"):
         env.pop(k, None)
 
     proc = subprocess.Popen(
@@ -223,10 +268,28 @@ def _spawn(worker_id: uuid.UUID) -> Session:
 
 
 async def start(worker_id: uuid.UUID) -> str:
-    """起一個授權 session，回授權網址。"""
-    # 同一個人再按一次就換一個新的 —— 不然重複點按鈕會累積行程。
-    if old := _sessions.pop(worker_id, None):
-        old.close()
+    """起一個授權 session，回授權網址。
+
+    🚨 **已經有活著的 session 就把原本那個網址回去，不要換掉。**
+
+    每起一次就在 Claude 那邊產生一組新的 `code_challenge`（PKCE），而舊的那組
+    當場作廢 —— 連同使用者可能已經開著、甚至已經按完同意的那一頁。他回來貼碼
+    時，碼對應的是被殺掉的那個 session，CLI 只會說 "Invalid code"，而那句話
+    看起來像他複製錯了。
+
+    2026-09-22 真的發生過，而且從 log 才看得出來：貼碼之前 `POST /authorize`
+    被打了兩次。最容易觸發的動作是**重新整理頁面**——畫面回到「開始出借」，
+    再按一次，手上那串碼就失效了。
+
+    原本這裡寫「再按一次就換一個新的 —— 不然重複點按鈕會累積行程」。重用同樣
+    不會累積（根本不 spawn 第二個），而且不會把使用者手上的碼弄死。
+    """
+    if live := _sessions.get(worker_id):
+        if live.proc.poll() is None and time.monotonic() < live.expires_at:
+            return live.authorize_url
+        # 死掉或過期的才收掉。
+        _sessions.pop(worker_id, None)
+        live.close()
 
     # spawn 在這條 thread 上（見 _spawn 的 docstring），只有讀丟進 to_thread。
     sess = _spawn(worker_id)
@@ -276,6 +339,67 @@ async def verify(token: str) -> bool:
     return resp.status_code != 401
 
 
+# CLI 自己講的錯誤。**這不是機密** —— 它講的是那串一次性碼的狀態，不是 token。
+# 原樣傳回去比我們改寫有用：`Please make sure the full code was copied` 指向一個
+# 很具體的動作，而我們原本那句「可能是碼貼錯或過期了」兩件事混在一起。
+_CLI_ERROR_RE = re.compile(rb"OAuth error:[^\r\n\x1b]{1,200}")
+
+
+def _cli_error(buf: bytes) -> str | None:
+    found = _CLI_ERROR_RE.search(buf)
+    return found.group(0).decode("utf-8", "replace").strip() if found else None
+
+
+def _last_line(buf: bytes) -> str | None:
+    """CLI 最後說的那句話，去掉 ANSI。
+
+    **只在拿不到 token 時用來診斷。** 會先確認裡面沒有 token 的痕跡再回傳 ——
+    寧可少講一句話，也不要把憑證放進錯誤訊息（security.md 紅線 2）。
+
+    存在的理由：`OAuth error:` 只涵蓋一種失敗。CLI 說別的（碼過期、網路不通、
+    要求重新登入）時，我們原本一律回「授權沒有完成」，把唯一的線索丟掉。
+    """
+    if b"sk-ant" in buf:
+        return None
+    text = _ANSI_RE.sub("", buf.decode("utf-8", "replace"))
+    lines = [ln.strip() for ln in text.replace("\r", "\n").split("\n")]
+    meaningful = [ln for ln in lines if len(ln) > 3 and not set(ln) <= set("·*✢✶✻✽ ")]
+    return meaningful[-1][:200] if meaningful else None
+
+
+# 一次寫給 CLI 的最大位元組數，以及每段之間的間隔。
+#
+# 🚨 **不可以一次把整串碼寫進去。** 2026-09-22 實測（三次獨立驗證）：
+#
+#   87 字元一次寫入 → CLI **完全沒有反應**，等 75 秒也沒有。輸入的遮罩星號
+#                     都出現了（代表字元有進去），但它從來沒有把碼送出去。
+#   85 字元一次寫入 → 同樣沒有反應（所以不是 `#` 的問題，是長度）。
+#   21 字元一次寫入 → 正常，CLI 立刻回 OAuth error。
+#   分成 16／32／64 一段寫 → 正常，而且**只送出一次**。
+#
+# 真實的授權碼是 90 幾個字元，所以這條路一次都沒有成功過 —— 症狀是使用者盯著
+# 「確認中…」一分鐘，然後拿到一句「授權沒有完成」，而 CLI 其實什麼都沒說。
+#
+# 32 是留了餘裕的選擇（門檻在 64 與 85 之間）。整串碼多花不到 0.2 秒。
+_CODE_CHUNK_BYTES = 32
+_CODE_CHUNK_GAP_SECONDS = 0.05
+
+
+def _write_code(fd: int, code: str) -> None:
+    """把授權碼**分段**寫進 pty，最後才送 Enter。
+
+    理由見 `_CODE_CHUNK_BYTES` 上面那段。不要「順手」改回一次寫完 —— 它看起來
+    完全合理，而且在短字串上測起來是好的。
+    """
+    data = code.encode()
+    for i in range(0, len(data), _CODE_CHUNK_BYTES):
+        os.write(fd, data[i : i + _CODE_CHUNK_BYTES])
+        time.sleep(_CODE_CHUNK_GAP_SECONDS)
+    # 最後一段跟 Enter 之間也要留一下，否則等於又變成一次大寫入。
+    time.sleep(_CODE_CHUNK_GAP_SECONDS)
+    os.write(fd, b"\r")
+
+
 async def submit_code(worker_id: uuid.UUID, code: str) -> str:
     """把授權碼寫進 pty，回拿到的 token。
 
@@ -287,21 +411,51 @@ async def submit_code(worker_id: uuid.UUID, code: str) -> str:
         raise AuthorizeError("這個授權已經過期了，請重新開始")
 
     sess.buf = b""  # 只看貼碼之後的輸出，不要撈到前面那段
-    os.write(sess.master_fd, code.strip().encode() + b"\r")
+    _write_code(sess.master_fd, code.strip())
 
+    # ⚠️ **也要盯錯誤，不能只盯 token。** 只找 token 的話，碼被拒絕時我們仍然
+    # 站在那裡等滿 60 秒 —— 使用者看到的是「確認中…」一分鐘，然後才拿到一句
+    # 其實早就印在畫面上的錯誤。
     token = await asyncio.to_thread(
         _read_until,
         sess,
         _TOKEN_RE,
         TOKEN_TIMEOUT_SECONDS,
         settle=_TOKEN_SETTLE_SECONDS,
+        abort=_CLI_ERROR_RE,
     )
+
+    # **碼被拒絕時不要收掉 session。** CLI 自己說 "Press Enter to retry" ——
+    # 它還活著、還在同一個 PKCE 上等下一次輸入。殺掉的話使用者得從「開始出借」
+    # 重來，而重來會換一組 code_challenge，讓他手上那個授權頁也一起作廢。
+    # 一個貼錯的碼不該讓人重跑整個流程。
+    if not token and (cli := _cli_error(sess.buf)) is not None:
+        os.write(sess.master_fd, b"\r")  # 它在等 Enter 才會回到輸入狀態
+        sess.buf = b""
+        raise AuthorizeError(
+            f"{cli}。碼要整串複製 —— 包含 # 後面那一段。可以直接再貼一次。"
+        )
+
     _sessions.pop(worker_id, None)
     sess.close()
 
     if not token:
-        # 不要把 pty 的輸出放進錯誤訊息 —— 那裡面可能有 token 的片段。
-        raise AuthorizeError("授權沒有完成。可能是碼貼錯或過期了，請重新開始")
+        # **不要把 pty 的輸出放進錯誤訊息** —— 那裡面可能有 token 的片段。
+        # 但「有沒有看到 token 的開頭」是安全的，而它把兩種完全不同的失敗分開：
+        #   看到了 → CLI 有吐 token，是我們讀壞了（格式變了？又被換行切斷？）
+        #   沒看到 → 碼不對、過期，或 CLI 根本沒走到那一步
+        # 少了這個分岔，兩邊的症狀都是「授權沒有完成」，而它們該修的地方不同。
+        if b"sk-ant-oat" in sess.buf:
+            raise AuthorizeError(
+                "CLI 有回一組 token，但站台讀不完整，沒有存起來。"
+                "這是站台的問題，請把這句話告訴維護者。"
+            )
+        tail = _last_line(sess.buf)
+        raise AuthorizeError(
+            f"授權沒有完成。CLI 最後說的是：{tail}"
+            if tail
+            else "授權沒有完成，而且 CLI 什麼都沒說。請把這句話告訴維護者。"
+        )
 
     value = token.decode()
     # **存進去之前先驗一次。** 沒有這一步，壞掉的 token 會安靜地待在資料庫裡，

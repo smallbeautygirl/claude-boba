@@ -431,3 +431,11 @@ button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
 /* 網址會很長，窄螢幕上一定要能折 —— 不折的話它會把整張卡片撐寬，
    旁邊的燈號跟著被推出畫面。 */
 .check-target code { word-break: break-all; color: var(--muted); }
+
+/* 就地展開的授權表單。縮排 + 左側線，讓它明顯屬於上面那一列 ——
+   「這是在替哪個帳號授權」是這個動作最需要講清楚的事：按錯列會作廢掉
+   另一個帳號的 token。 */
+.account.authorizing {
+  margin-left: 12px; padding-left: 14px;
+  border-left: 2px solid var(--accent, var(--line));
+}
