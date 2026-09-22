@@ -97,6 +97,10 @@ function StartLending({ reload }: { reload: () => void }) {
           <p className="hint under-field">
             這串是<strong>用完即失效的一次性碼</strong>，不是你的 token ——
             它換到的 token 由這個站台自己收下，不會回到這個畫面上。
+            {/* 五分鐘是 hub 那邊 authorize.SESSION_TTL_SECONDS 的值。
+                碼本身的有效期還沒實測（spike #9 標為未驗），所以這句只講
+                「站台這邊保留多久」，不要講成「這串碼五分鐘後失效」。 */}
+            站台這邊只保留五分鐘，超過就回來重按一次「開始出借」。
           </p>
           <p className="actions">
             <button type="button" onClick={finish} disabled={busy || !code.trim()}>
@@ -134,6 +138,12 @@ function Conditions({
     budget !== settings.budget_usd ||
     network !== settings.allow_full_network ||
     models.join() !== settings.available_models.join();
+
+  // hub 會擋掉這兩種（400），但擋在這裡才講得出原因 —— 送出去才被拒絕的話，
+  // 使用者看到的是一句錯誤訊息，而不是「哪一格要改」。
+  const amount = Number(budget);
+  const badBudget = !(amount > 0 && amount <= 100);
+  const canSave = dirty && models.length > 0 && !badBudget;
 
   function toggleModel(value: string) {
     setModels((m) => (m.includes(value) ? m.filter((x) => x !== value) : [...m, value]));
@@ -181,7 +191,8 @@ function Conditions({
         每個 job 的花費上限（US$）
         <input
           type="number"
-          min="0"
+          min="0.5"
+          max="100"
           step="0.5"
           value={budget}
           onChange={(e) => setBudget(e.target.value)}
@@ -190,8 +201,10 @@ function Conditions({
       {/* 這個數字是唯一擋得住「一個 job 燒掉一整天額度」的東西，所以要說實話。 */}
       <p className="hint under-field">
         超過就中止那個 job。<strong>花掉的是你的額度</strong> ——
-        一個大 model 的 job 跑八分鐘就可能燒掉 US$25。
+        一個大 model 的 job 跑八分鐘就可能燒掉 US$25。站台允許的範圍是
+        US$0.5 到 US$100。
       </p>
+      {badBudget && <p className="warn">要填 US$0.5 到 US$100 之間的數字。</p>}
 
       <h2 className="sr-only">可用 model</h2>
       <p className="hint">
@@ -211,7 +224,7 @@ function Conditions({
         ))}
       </div>
       {models.length === 0 && (
-        <p className="warn">一個都沒勾的話不會有 job 派給你。</p>
+        <p className="warn">至少要留一個 —— 一個都沒有的話沒有人派得動你。</p>
       )}
 
       {/* 外網不是效能設定，是安全邊界（security.md 紅線 3）。預設關著，
@@ -233,7 +246,7 @@ function Conditions({
       </div>
 
       <div className="actions">
-        <button type="button" onClick={save} disabled={!dirty}>
+        <button type="button" onClick={save} disabled={!canSave}>
           儲存條件
         </button>
         {saved && !dirty && <span className="muted">已儲存</span>}
