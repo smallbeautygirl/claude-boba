@@ -83,6 +83,16 @@ _BY_STATUS: dict[JobStatus, Failure] = {
 
 _SYSTEM_KINDS = {"no_result_event", "worker_error", "storage_error"}
 
+# 代跑者的授權失效。這一類**不是委託者能修的**，所以它跟 FIXABLE 不同 ——
+# 給他一個「再試一次」的建議只會讓他再燒一輪等待。
+_AUTH_FAILURE = Failure(
+    FailureKind.SYSTEM,
+    "代跑者的授權失效了，這個 job 沒跑成",
+    "不是你的問題，也不計債。那個帳號已經停止接單，重送會換一位代跑者；"
+    "如果站台上只有他一個人，等他重新授權之後再送。",
+    show_detail=False,
+)
+
 
 def classify(
     status: JobStatus, error_kind: str | None, error_detail: str | None
@@ -91,10 +101,18 @@ def classify(
     if not status.is_terminal or status is JobStatus.SUCCEEDED:
         return None
 
+    blob = f"{error_kind or ''} {error_detail or ''}".lower()
+
+    # ⚠️ **這一條要排在 _BY_STATUS 前面。** 狀態本身可能是錯的 —— worker 曾經
+    # 把每一個失敗都標成 over_budget（對整包 result JSON 比對 "budget"，而
+    # result 裡本來就有那個欄位）。那個 bug 修掉了，但「先看原因、再看狀態」
+    # 這個順序本身是對的：認證失效跟花費上限是兩件完全不同的事，而給錯建議
+    # （「換成 Haiku 再送一次」）比只說「失敗了」更糟。
+    if error_kind == "auth_failed" or "oauth access token is invalid" in blob:
+        return _AUTH_FAILURE
+
     if fixed := _BY_STATUS.get(status):
         return fixed
-
-    blob = f"{error_kind or ''} {error_detail or ''}".lower()
 
     # 白名單擋到是 RD 最常撞的牆。只寫「執行失敗」的話，他們會以為工具壞了。
     if any(s in blob for s in _NETWORK_SIGNS) and any(

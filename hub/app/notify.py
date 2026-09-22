@@ -143,6 +143,31 @@ def job_finished(user: Any, job_id: object, status: str, cost: object) -> None:
     )
 
 
+def account_needs_reauth(lender: Any, account_name: str) -> None:
+    """某個出借帳號的授權失效了，通知它的主人。
+
+    **沒有這個通知，他不會知道。** 那個帳號停掉之後站台照常運作（其他帳號會接），
+    所以不會有任何東西壞給他看 —— 而他每少一個能跑的帳號，同事就多等一輪。
+
+    不帶金額也不帶 job 內容：這件事跟哪一個 job 無關，是帳號的狀態。
+    """
+    text = (
+        f"你的出借帳號「{account_name}」授權失效了，已經停止接單。\n\n"
+        "到「我來代跑」重新授權一次就好。**要把授權碼貼回來完成流程** —— "
+        "中途放棄的話它會維持停用。\n\n"
+        f"[去重新授權]({settings.web_base_url.rstrip('/')}/worker)"
+    )
+    if lender is not None and lender.teams_webhook_url:
+        _fire(lender.teams_webhook_url, _card("出借帳號要重新授權", text, _BAD))
+        return
+    if not settings.teams_channel_webhook or lender is None:
+        return
+    _fire(
+        settings.teams_channel_webhook,
+        _mention_card(lender.email, lender.display_name, "{@} " + text),
+    )
+
+
 def job_stopped(borrower, lender_name: str, job_id: object, note: str | None) -> None:
     """出租者中止了 job。
 

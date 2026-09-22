@@ -373,6 +373,7 @@ async def push_result(
             )
         )
 
+    await _absorb_auth_failure(job, body, session)
     debt = await _maybe_create_debt(job, session)
 
     await session.commit()
@@ -386,6 +387,35 @@ async def push_result(
         )
     _emit(job.id, -1, {"type": "stream_end", "status": str(job.status)})
     return {"ok": True}
+
+
+async def _absorb_auth_failure(
+    job: Job, body: JobResult, session: AsyncSession
+) -> None:
+    """代跑者的授權失效了 —— 把那個出借帳號停掉。
+
+    **這一步不能少，因為失效是沉默的。** 那個帳號的 token 死了之後，站台仍然
+    認為它可用、仍然把 job 派給它，而每一個都會用一模一樣的方式失敗。沒有人
+    會發現，因為畫面上它還是綠的（2026-09-22 實際發生過一次）。
+
+    只停**那一個帳號**，其他照跑（web-spec §8）。設定層的「接單中」不動 ——
+    那是他自己按的，不該被系統改掉；但如果他已經沒有任何能跑的帳號了，
+    留著「接單中」只會讓 job 排隊等一個不會來的人。
+    """
+    if body.error_kind != "auth_failed" or job.account_id is None:
+        return
+    account = await session.get(LendingAccount, job.account_id)
+    if account is None or account.needs_reauth:
+        return
+
+    account.needs_reauth = True
+    setting = await session.get(LendingSetting, account.lending_id)
+    if setting is not None:
+        await session.refresh(setting, ["accounts"])
+        if not any(a.usable for a in setting.accounts):
+            setting.accepting = False
+        lender = await session.get(User, setting.owner_user_id)
+        notify.account_needs_reauth(lender, account.name)
 
 
 async def _maybe_create_debt(job: Job, session: AsyncSession) -> Debt | None:

@@ -69,3 +69,49 @@ def test_anything_else_is_shown_verbatim() -> None:
     assert f is not None
     assert f.kind is FailureKind.CLAUDE
     assert f.show_detail is True
+
+
+# --- 授權失效（2026-09-22 真的發生過一次） --------------------------------
+
+
+def test_auth_failure_is_not_an_over_budget_job() -> None:
+    """🚨 這是一個真的把人導去錯路的 bug，不是分類潔癖。
+
+    實際發生的事：job 跑 2 秒、花 $0、死在 401，但畫面說「超過花費上限，
+    已中止 —— 換成 Haiku，或把範圍縮小再送一次」。換成 Haiku 會用一模一樣的
+    方式再死一次。
+
+    成因有兩層，兩層都要擋：worker 把每個失敗都標成 over_budget（對整包
+    result JSON 比對 "budget"，而 result 本來就有那個欄位），而 classify()
+    無條件相信那個狀態。所以這裡故意餵**錯的狀態**進去 ——
+    原因要贏過狀態。
+    """
+    f = classify(
+        JobStatus.OVER_BUDGET,
+        "auth_failed",
+        "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+    )
+    assert f is not None
+    assert "授權" in f.title
+    assert f.hint and "Haiku" not in f.hint
+
+
+def test_auth_failure_is_not_the_borrowers_problem() -> None:
+    """委託者修不了它，所以不能給「再試一次」那種建議。"""
+    f = classify(JobStatus.FAILED, "auth_failed", None)
+    assert f is not None
+    assert f.kind is FailureKind.SYSTEM
+    assert f.hint and "不是你的問題" in f.hint
+
+
+def test_auth_failure_recognised_from_the_message_alone() -> None:
+    """舊 worker 送上來的 error_kind 是 "success"（subtype 在失敗時也可能是它）。
+
+    所以只靠 error_kind 認不出來 —— 訊息本身也要看。
+    """
+    f = classify(
+        JobStatus.OVER_BUDGET,
+        "success",
+        "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+    )
+    assert f is not None and f.kind is FailureKind.SYSTEM

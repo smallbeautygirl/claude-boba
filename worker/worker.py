@@ -530,6 +530,21 @@ class _JobState:
         resp.raise_for_status()
 
 
+# 認證失效的跡象。只比對**講原因的欄位**，不比對整包 JSON ——
+# 那正是 over_budget 誤判的成因。
+_AUTH_SIGNS = (
+    "oauth access token is invalid",
+    "authentication_failed",
+    "authentication_error",
+    "failed to authenticate",
+    "401",
+)
+
+
+def _looks_like_auth_failure(reason: str) -> bool:
+    return any(sign in reason for sign in _AUTH_SIGNS)
+
+
 def _result_payload(
     result: dict[str, Any] | None,
     returncode: int,
@@ -553,16 +568,34 @@ def _result_payload(
         }
 
     if result.get("is_error"):
-        # --max-budget-usd 觸發時的確切 subtype 尚未實測（沒有便宜的方式製造它），
-        # 所以先用字串比對，並保留 failed 作為預設 —— 兩者都不計債，
-        # 分類錯誤只影響顯示，不影響帳。
-        blob = json.dumps(result, ensure_ascii=False).lower()
-        status = "over_budget" if "budget" in blob else "failed"
+        # 🚨 **不要對整包 result 做字串比對。** 原本這裡是
+        # `"budget" in json.dumps(result)`，而 result 本來就有一個 `budget`
+        # 欄位 —— 於是**每一個失敗的 job 都被標成「超出預算」**（2026-09-22
+        # 第一個真的失敗的 job 才暴露出來：它跑了 2 秒、花 $0、死在認證，
+        # 畫面卻叫使用者「換成 Haiku 再送一次」）。
+        #
+        # 分類錯不影響帳（都不計債），但它會把人導去一條錯的路，
+        # 而那比只說「失敗了」更糟。所以只看**講原因的那幾個欄位**。
+        reason = " ".join(
+            str(result.get(k) or "") for k in ("subtype", "terminal_reason", "result")
+        ).lower()
+
+        if _looks_like_auth_failure(reason):
+            # 代跑者的授權失效了。這跟委託者做了什麼完全無關，
+            # 而且**每一個派給這個帳號的 job 都會這樣死**，所以要講得出來 ——
+            # Hub 收到這個 kind 會把那個出借帳號停掉（routers/worker.py）。
+            status, kind = "failed", "auth_failed"
+        elif "budget" in reason:
+            status, kind = "over_budget", "over_budget"
+        else:
+            status = "failed"
+            # subtype 在失敗時仍然可能是字面上的 "success"（實測過），
+            # 拿它當 error_kind 會在畫面上印出「success」。
+            kind = result.get("terminal_reason") or "api_error"
+
         return base | {
             "status": status,
-            "error_kind": result.get("subtype")
-            or result.get("terminal_reason")
-            or "api_error",
+            "error_kind": kind,
             "error_detail": str(result.get("result"))[:4000],
             "total_cost_usd": str(result.get("total_cost_usd") or 0),
             "model_usage": result.get("modelUsage") or {},
