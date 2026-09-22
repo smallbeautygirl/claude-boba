@@ -9,7 +9,7 @@ from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import authorize
+from . import authorize, expiry
 from .config import settings
 from .db import engine
 from .routers import admin, auth, commands, jobs, ledger, uploads, worker, workers
@@ -56,12 +56,18 @@ async def lifespan(app: FastAPI):
     # 環境一次都沒跑過，而八個生命週期測試全綠，因為它們呼叫的是同步的
     # `sweep()`，不是這個迴圈。**測試呼叫得到內層函式，不代表外層有人啟動它。**
     sweeper = asyncio.create_task(authorize.sweeper(), name="authorize-sweeper")
+
+    # 派不出去的 job 的清潔工。同樣地，**這行 create_task 是它唯一的啟動點** ——
+    # `expired` 這個狀態、它的文案與 job_queue_expiry_seconds 在這之前就都存在了，
+    # 只是沒有任何程式會去設它，所以 job 會永遠停在「排隊中」（見 app/expiry.py）。
+    expirer = asyncio.create_task(expiry.sweeper(), name="job-expiry-sweeper")
     try:
         yield
     finally:
-        sweeper.cancel()
-        with suppress(asyncio.CancelledError):
-            await sweeper
+        for task in (sweeper, expirer):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
         await engine.dispose()
 
 

@@ -36,21 +36,31 @@ def _lender(*models: str, lid: uuid.UUID | None = None) -> SimpleNamespace:
 
 
 class _FakeSession:
-    """只回答 _check_model 會問的那一件事：現在有哪些可接單的代跑者。
+    """只回答 _check_model 會問的兩件事：
 
-    查詢條件（accepting）由 SQL 負責，這裡不重現它 —— 重現一次等於測到自己
-    寫的假貨，不是測那條規則。
+      scalars  現在有哪些可接單的代跑者
+      scalar   站台上還有沒有**任何**跑得動的出借帳號（`_anyone_can_run`）
+
+    查詢條件（accepting、needs_reauth）由 SQL 負責，這裡不重現它 ——
+    重現一次等於測到自己寫的假貨，不是測那條規則。
     """
 
-    def __init__(self, lenders: list[SimpleNamespace]) -> None:
+    def __init__(self, lenders: list[SimpleNamespace], *, alive: bool) -> None:
         self.lenders = lenders
+        self.alive = alive
 
     async def scalars(self, _stmt):
         return self.lenders
 
+    async def scalar(self, _stmt):
+        return uuid.uuid4() if self.alive else None
 
-def check(model: str, lending_id=None, lenders=None):
-    return asyncio.run(_check_model(model, lending_id, _FakeSession(lenders or [])))
+
+def check(model: str, lending_id=None, lenders=None, alive: bool = True):
+    """`alive` 預設為真 —— 多數測試在意的是 model，不是憑證死活。"""
+    return asyncio.run(
+        _check_model(model, lending_id, _FakeSession(lenders or [], alive=alive))
+    )
 
 
 # --- 站台白名單 -----------------------------------------------------------
@@ -115,10 +125,22 @@ def test_auto_refused_when_nobody_offers_it() -> None:
 # --- 沒人在線 -------------------------------------------------------------
 
 
-def test_no_lenders_accepting_is_not_the_users_fault() -> None:
-    """一位都沒有就不在這裡擋 —— job 排隊等人上線是正常狀態。
+def test_nobody_accepting_but_credentials_alive_is_not_the_users_fault() -> None:
+    """一位都沒在接單就不在這裡擋 —— job 排隊等人上線是正常狀態。
 
     在這裡回 400 的話，使用者會以為自己挑錯 model，而實際上只是還沒人上工。
-    派不出去的處理在別處（expired）。
+    半夜送一個、早上有人開機才跑，是這個工具該支援的用法。
     """
-    check("sonnet", lenders=[])
+    check("sonnet", lenders=[], alive=True)
+
+
+def test_every_credential_dead_is_a_dead_end_not_a_queue() -> None:
+    """⚠️ 2026-09-22：「沒人在線」與「一個可用帳號都沒有」是兩件事。
+
+    後者不是等待，是死路 —— 排隊只會把失敗延後 15 分鐘，而使用者會以為
+    自己在等一個會來的人。實際發生過：唯一的帳號授權失效，job 停在排隊中。
+    """
+    with pytest.raises(HTTPException) as e:
+        check("sonnet", lenders=[], alive=False)
+    assert e.value.status_code == 400
+    assert "授權" in e.value.detail

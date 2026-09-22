@@ -19,7 +19,7 @@ from ..auth import require_user
 from ..db import get_session
 from ..enums import JobStatus, SourceType
 from ..failures import classify
-from ..models import Artifact, Job, JobEvent, LendingSetting, User
+from ..models import Artifact, Job, JobEvent, LendingAccount, LendingSetting, User
 from ..pricing import label_for
 from ..schemas import (
     MAX_ATTACHMENT_BYTES,
@@ -186,6 +186,26 @@ def _check_attachments(keys: list[str], user: User, transcript_bytes: int) -> No
         raise HTTPException(413, f"這個 job 的輸入合計超過 {mb} MB")
 
 
+async def _anyone_can_run(session: AsyncSession) -> bool:
+    """站台上還有沒有**任何**跑得動的出借帳號。
+
+    問的不是「現在有沒有人接單」（那是暫時的，值得排隊），是「有沒有一組還活著
+    的憑證」。全部失效的時候，排隊等的是一個不會來的人。
+
+    `needs_reauth` 由 job 回報認證失敗時自動設起來（routers/worker.py）。
+    """
+    return bool(
+        await session.scalar(
+            select(LendingAccount.id)
+            .where(
+                LendingAccount.oauth_token_enc.is_not(None),
+                LendingAccount.needs_reauth.is_(False),
+            )
+            .limit(1)
+        )
+    )
+
+
 async def _check_model(
     model: str, requested_lending_id: uuid.UUID | None, session: AsyncSession
 ) -> None:
@@ -215,8 +235,18 @@ async def _check_model(
     pool = list(await session.scalars(stmt))
 
     # 一個都沒有就不在這裡擋 —— job 會排隊等人上線，那是正常狀態，
-    # 不是使用者挑錯 model。派不出去的處理在別處（expired）。
+    # 不是使用者挑錯 model。派不出去的處理在別處（sweep_expired_jobs）。
+    #
+    # ⚠️ 但「暫時沒人在線」與「站台上一個可用帳號都沒有」是兩件事，只有前者
+    # 值得排隊。後者是死路：所有 token 都失效的時候排隊只是把失敗延後十五分鐘，
+    # 而使用者會以為自己在等一個會來的人（2026-09-22 真的發生過）。
     if not pool:
+        if not await _anyone_can_run(session):
+            raise HTTPException(
+                400,
+                "現在站台上沒有任何可用的額度 —— 代跑者的授權失效了，"
+                "等他重新授權好再送。這不是你的問題，送出去也只會排隊到過期。",
+            )
         return
 
     if not any(model in (s.available_models or []) for s in pool):
