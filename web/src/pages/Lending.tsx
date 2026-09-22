@@ -141,6 +141,8 @@ function Conditions({
 
   // hub 會擋掉這兩種（400），但擋在這裡才講得出原因 —— 送出去才被拒絕的話，
   // 使用者看到的是一句錯誤訊息，而不是「哪一格要改」。
+  // 範圍跟 hub 的 LendingPatch 一模一樣（`gt=0, le=100`）。前端不要自己發明
+  // 更嚴的下限 —— 那會讓人填得出來的值被畫面擋掉，而擋它的理由只存在於這裡。
   const amount = Number(budget);
   const badBudget = !(amount > 0 && amount <= 100);
   const canSave = dirty && models.length > 0 && !badBudget;
@@ -191,7 +193,7 @@ function Conditions({
         每個 job 的花費上限（US$）
         <input
           type="number"
-          min="0.5"
+          min="0.01"
           max="100"
           step="0.5"
           value={budget}
@@ -201,10 +203,10 @@ function Conditions({
       {/* 這個數字是唯一擋得住「一個 job 燒掉一整天額度」的東西，所以要說實話。 */}
       <p className="hint under-field">
         超過就中止那個 job。<strong>花掉的是你的額度</strong> ——
-        一個大 model 的 job 跑八分鐘就可能燒掉 US$25。站台允許的範圍是
-        US$0.5 到 US$100。
+        一個大 model 的 job 跑八分鐘就可能燒掉 US$25。上限最高只能設到 US$100；
+        設得太低的話 job 會一開始就被中止。
       </p>
-      {badBudget && <p className="warn">要填 US$0.5 到 US$100 之間的數字。</p>}
+      {badBudget && <p className="warn">要填大於 0、不超過 100 的數字。</p>}
 
       <h2 className="sr-only">可用 model</h2>
       <p className="hint">
