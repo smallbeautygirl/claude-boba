@@ -9,12 +9,14 @@ import {
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { JobDetail } from "./pages/JobDetail";
+import { Leaderboard } from "./pages/Leaderboard";
 import { Ledger } from "./pages/Ledger";
 import { Login } from "./pages/Login";
 import { MyJobs } from "./pages/MyJobs";
 import { MyWorker } from "./pages/MyWorker";
 import { Notifications } from "./pages/Notifications";
 import { Submit } from "./pages/Submit";
+import { THEMES, useTheme } from "./theme";
 
 export default function App() {
   return (
@@ -33,6 +35,7 @@ const TITLES: Record<string, string> = {
   "/ledger": "帳本",
   "/worker": "我的 worker",
   "/notifications": "通知",
+  "/leaderboard": "排行榜",
 };
 
 function useDocumentTitle() {
@@ -54,6 +57,30 @@ function Tab({ to, children }: { to: string; children: React.ReactNode }) {
     >
       {children}
     </NavLink>
+  );
+}
+
+/* 三格分段控制，不是循環按鈕。循環按鈕在按下去之前看不出下一個是什麼，
+   三態尤其糟 —— 想從「暗」回到「跟隨系統」得先猜要按幾次。
+   三格則是三個選項同時看得見，而且看得出現在是哪一個。 */
+function ThemeToggle() {
+  const [theme, choose] = useTheme();
+  return (
+    <div className="theme-seg" role="group" aria-label="主題">
+      {THEMES.map((t) => (
+        <button
+          key={t.value}
+          type="button"
+          className={t.value === theme ? "theme-opt on" : "theme-opt"}
+          aria-pressed={t.value === theme}
+          title={t.label}
+          onClick={() => choose(t.value)}
+        >
+          <span aria-hidden="true">{t.short}</span>
+          <span className="sr-only">{t.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -81,11 +108,17 @@ function Shell() {
         <Tab to="/ledger">帳本</Tab>
         <Tab to="/worker">我的 worker</Tab>
         <Tab to="/notifications">通知</Tab>
-        <span className="spacer" />
-        <span className="who">{me.display_name}</span>
-        <button className="secondary" onClick={signOut}>
-          登出
-        </button>
+        <Tab to="/leaderboard">排行榜</Tab>
+        {/* 名字、主題、登出是同一組「我」。包成一個元素才不會在換行時被拆散
+            —— 導覽列的可用寬度只有 760px，六個分頁加主題切換已經塞不下一行，
+            不包的話登出會單獨掉到下一行的左邊，離名字十萬八千里。 */}
+        <div className="me">
+          <span className="who">{me.display_name}</span>
+          <ThemeToggle />
+          <button className="secondary" onClick={signOut}>
+            登出
+          </button>
+        </div>
       </nav>
       <Routes>
         <Route path="/" element={<Submit />} />
@@ -94,6 +127,7 @@ function Shell() {
         <Route path="/ledger" element={<Ledger />} />
         <Route path="/worker" element={<MyWorker />} />
         <Route path="/notifications" element={<Notifications />} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

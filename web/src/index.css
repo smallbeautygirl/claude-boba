@@ -7,47 +7,36 @@
  *
  * 舊配色的中性色是冷灰（#6b7280、#1f2430）配暖底，兩者互相拉髒。
  * 所有顏色組合都過 WCAG AA。
+ *
+ * 亮暗兩套值寫在同一行的 light-dark() 裡，由 color-scheme 決定取哪一個。
+ * 以前是 :root 一份、@media (prefers-color-scheme: dark) 再一份 ——
+ * 那樣要加第三種「使用者自己選暗色」就得把整組值抄第三遍，而抄三遍的東西
+ * 一定會走鐘。現在切換只需要改 color-scheme，值只有一個地方可以改。
  */
 :root {
-  --bg: #F7F2EA;          /* 奶蓋 */
-  --card: #FFFDFA;
-  --ink: #2A1F18;         /* 珍珠 · 15.7:1 */
-  --muted: #7A6A5C;       /* 5.2:1 */
-  --line: #E4DACB;
-  --accent: #9A5A30;      /* 焙茶 · 配白字 5.4:1 */
-  --accent-hover: #7A4522;
-  --accent-soft: #F0E4D6; /* 選取、hover 底 */
-  --on-accent: #fff;
-  --ok: #2F6B45;          /* 抹茶 */
-  --ok-soft: #E2F0E7;
-  --ok-ink: #235233;
-  --bad: #A8322A;         /* 焦 */
-  --bad-soft: #F8E3E1;
-  --bad-ink: #8C2A23;
-  --warn: #8A6317;        /* 糖漿 */
-  color-scheme: light;
+  /* 兩個值 = 跟隨系統。下面兩條把使用者的選擇釘死。 */
+  color-scheme: light dark;
+
+  --bg:           light-dark(#F7F2EA, #1A1512);  /* 奶蓋 · 深焙 */
+  --card:         light-dark(#FFFDFA, #231C17);
+  --ink:          light-dark(#2A1F18, #EDE4D9);  /* 珍珠 · 15.7:1 */
+  --muted:        light-dark(#7A6A5C, #A69384);  /* 5.2:1 */
+  --line:         light-dark(#E4DACB, #362B23);
+  --accent:       light-dark(#9A5A30, #D9A066);  /* 焙茶 · 亮配白字 5.4:1、暗配深字 7.3:1 */
+  --accent-hover: light-dark(#7A4522, #E8B57F);
+  --accent-soft:  light-dark(#F0E4D6, #33251A);  /* 選取、hover 底 */
+  --on-accent:    light-dark(#fff,    #2A1B0C);
+  --ok:           light-dark(#2F6B45, #5FBF8C);  /* 抹茶 */
+  --ok-soft:      light-dark(#E2F0E7, #1E3328);
+  --ok-ink:       light-dark(#235233, #7FD3A5);
+  --bad:          light-dark(#A8322A, #F08A84);  /* 焦 */
+  --bad-soft:     light-dark(#F8E3E1, #3A211F);
+  --bad-ink:      light-dark(#8C2A23, #F4A29D);
+  --warn:         light-dark(#8A6317, #E0B85A);  /* 糖漿 */
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1A1512;        /* 深焙 */
-    --card: #231C17;
-    --ink: #EDE4D9;
-    --muted: #A69384;
-    --line: #362B23;
-    --accent: #D9A066;    /* 配深字 7.3:1 */
-    --accent-hover: #E8B57F;
-    --accent-soft: #33251A;
-    --on-accent: #2A1B0C;
-    --ok: #5FBF8C;
-    --ok-soft: #1E3328;
-    --ok-ink: #7FD3A5;
-    --bad: #F08A84;
-    --bad-soft: #3A211F;
-    --bad-ink: #F4A29D;
-    --warn: #E0B85A;
-    color-scheme: dark;
-  }
-}
+/* 導覽列的三格切換寫的就是這兩個屬性值。沒有 data-theme 就是跟隨系統。 */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 body {
@@ -274,18 +263,52 @@ button.small:hover:not(:disabled) { background: var(--accent-soft); border-color
 .nav .tab { padding: 9px 14px; border-radius: 999px; color: var(--ink); text-decoration: none; }
 .nav .tab:hover { background: var(--accent-soft); }
 .nav .tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
-.nav .spacer { flex: 1; }
+/* 「我」那組靠右，而且整組一起換行。margin-left: auto 取代了以前那個
+   撐開用的 .spacer —— spacer 是 nav 的項目，換行時它會跟著跑，反而把
+   這組人推到奇怪的位置。 */
+.nav .me { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .nav .who { color: var(--muted); padding: 0 4px; }
 /* 窄螢幕：身分那組留在第一行，頁面藥丸整批換到第二行。
    不重排的話名字與登出會夾在藥丸中間，三段結構就散了。 */
+/* 窄螢幕：「我」那組整組排在分頁前面。不重排的話名字與登出會夾在藥丸中間，
+   三段結構就散了。（以前是靠 .who / .secondary 各自的 order 排，現在它們
+   在 .me 裡面，換成排 .me 一個。） */
 @media (max-width: 560px) {
   .nav .brand { order: 1; }
-  .nav .spacer { order: 2; }
-  .nav .who { order: 3; }
-  .nav .secondary { order: 4; }
+  /* 自己占滿一行：不這樣的話它後面會擠進第一個分頁，六個藥丸被拆成
+     「一個」與「五個」兩堆。 */
+  .nav .me { order: 2; flex-basis: 100%; justify-content: flex-end; }
   .nav .sep { display: none; }
-  .nav .tab { order: 5; }
+  .nav .tab { order: 3; }
 }
+/* 主題三格切換。三個選項同時看得見，所以不需要文字 —— 但圖示不是名字，
+   讀螢幕的人與 hover 的人都要拿得到「跟隨系統／亮色／暗色」。 */
+.theme-seg {
+  display: flex; flex-shrink: 0;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card); overflow: hidden;
+}
+.theme-opt {
+  padding: 6px 10px; font-size: 13px; line-height: 1.2; font-weight: 400;
+  background: transparent; color: var(--muted);
+  border: none; border-radius: 0;
+}
+.theme-opt:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+/* 選中的那格。用 accent-soft 的底而不是只換文字顏色 —— 三格並排時
+   只換顏色分不出「選中」與「hover」。
+   文字用 --accent-hover 不用 --accent：量過，accent 配 accent-soft 在亮色
+   只有 4.32:1，13px 的字過不了 AA；accent-hover 是 7.3:1。這跟 .chip 的
+   選擇是同一條（深色模式兩者都過，這裡以亮色為準）。 */
+.theme-opt.on { background: var(--accent-soft); color: var(--accent-hover); font-weight: 600; }
+/* 焦點框畫在藥丸外面會被 overflow: hidden 切掉，所以往內縮。 */
+.theme-opt:focus-visible { outline-offset: -2px; border-radius: 999px; }
+
+/* 只給輔助技術讀的文字。visibility/display: none 會讓讀螢幕也讀不到。 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+
 
 .card.narrow { max-width: 420px; margin: 40px auto; }
 /* 區段標題要贏過它底下的內容。原本是 15px muted，而帳本的 .debt-label 是

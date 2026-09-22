@@ -5,6 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>claude-boba 🧋</title>
+    <!-- 在 React 掛載前就把選擇補上，不然選了暗色的人每次載入都會先閃一下
+         系統的亮色。key 與值的定義在 src/theme.ts，改一邊要改兩邊。 -->
+    <script>
+      try {
+        var t = localStorage.getItem("boba-theme");
+        if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
