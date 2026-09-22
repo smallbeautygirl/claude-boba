@@ -89,7 +89,7 @@ function StopPanel({ job, onChange }: { job: Job; onChange: (j: Job) => void }) 
         />
       </label>
       {/* 那句話是選填的，但沒有它，對方收到的只會是「你的 job 被終止了」。 */}
-      <p className="hint">不填也可以，但對方只會看到「你的 job 被中止了」。</p>
+      <p className="hint under-field">不填也可以，但對方只會看到「你的 job 被中止了」。</p>
       {error && <p className="error">{error}</p>}
       <button type="button" className="danger" onClick={stop} disabled={busy}>
         {busy ? "中止中…" : "中止"}

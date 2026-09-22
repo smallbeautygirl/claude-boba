@@ -171,7 +171,7 @@ export function Submit() {
           }
         />
       </label>
-      <p className="hint">
+      <p className="hint under-field">
         {session ? (
           <>
             ✅ 這是真的續跑 —— 出租者那邊會用 <code>--resume</code> 接上你這份 session，

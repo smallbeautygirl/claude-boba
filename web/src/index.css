@@ -85,10 +85,12 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .field-row { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
 .field-row label { flex-grow: 1; margin-bottom: 0; }
 
-.hint { margin: -8px 0 20px; font-size: 13px; color: var(--muted); }
-/* 那個負 margin 是為「說明接在欄位腳下」設計的（label 有 16px 下緣）。
-   接在按鈕後面時沒有那段下緣可以吃，說明會被拉進按鈕的盒子裡。 */
-button + .hint { margin-top: 12px; }
+.hint { margin: 0 0 20px; font-size: 13px; color: var(--muted); }
+/* 緊貼欄位的說明要自己掛 .under-field。那個負 8px 吃的是 label 的下緣，
+   所以它有前提：前面必須真的是一個欄位。以前它是 .hint 的預設，於是接在
+   按鈕、標題、步驟清單後面時全都不成立 —— 其中接 .actions 那處直接疊上去。
+   命名講前提而不是講長相（不叫 .tight），誤用才會當場看起來就是錯的。 */
+.hint.under-field { margin-top: -8px; }
 
 /* 上傳 session 檔。原生的 file input 在每個瀏覽器上長得都不一樣而且都很醜，
    所以藏起來、用 label 當按鈕 —— label 點下去會觸發它，不需要 JS。 */
