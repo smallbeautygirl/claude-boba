@@ -1114,6 +1114,22 @@ GET /api/workers/lenders  → 405   路由不在，被 DELETE /{worker_id} 接�
 不需要登入）。uvicorn 沒有掛 `--reload` 的話 commit 不會自己生效。
 重啟請記 PID 精確 kill。
 
+**重啟之前先在另一個 port 把新碼跑起來。** 這一輪 `2da7e02` 加了
+「`TOKEN_ENCRYPTION_KEY` 沒設就拒絕啟動」—— 金鑰剛好有人設好，所以沒事；
+沒設的話那次重啟會把「一顆下拉壞掉」變成「整個 hub 起不來」。多花三十秒在
+8799 確認 healthz 與路由表，換掉「停掉之後才發現起不來」。
+
+#### 前端與後端的欄位，可以用 `/openapi.json` 逐欄位比
+
+不需要帳號也不需要跑起前端。這樣抓到過一個**我自己發明的**限制：hub 的
+`budget_usd` 是 `gt=0, le=100`，前端卻訂了 0.5 的下限，於是伺服器接受的值
+被畫面擋掉（`0100014` 修掉）。另外 401 與 405 分得出「路由在但沒帶 token」
+與「路由根本不在」。
+
+⚠️ `POST /api/workers/authorize` 的 200 回應在 OpenAPI 裡是無型別的 dict，
+所以 `authorize_url` 這個欄位名**比不出來**，只能讀原始碼。要讓它可比的話，
+hub 那邊給那個回應一個 response model 就好。
+
 #### C 那半的交付（`dabcbc2` 詞彙、`61af4d8` 出借設定）
 
 **兩種後端都接得住**：`GET /api/workers` 回陣列就渲染舊畫面，回單一物件才渲染
