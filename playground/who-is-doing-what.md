@@ -187,6 +187,10 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 - **`.hint` 不再有負 margin**（2026-09-22）。它以前預設 `margin-top: -8px`，
   前提是前面接的是 `<label>`；十處用例只有兩處成立，接 `div.actions` 那處直接
   疊在按鈕上。現在預設安全，**要緊貼欄位得自己掛 `class="hint under-field"`**。
+- **`/me` 多了 `s3_console_url`**（`42d29e5`）：MinIO console 的網址，空字串代表
+  站台沒開。**只有「我的 worker」頁可以用它** —— 那個 console 是整個 bucket 全開，
+  看得到所有人的對話與檔案，所以不要把它擴散到其他頁或頁尾。hub 對應新的
+  `S3_CONSOLE_URL`，`.env.example` 已更新。
 - **`/me` 多了兩個欄位**：`channel_notifications`（共用頻道的 webhook 在 hub 上
   有沒有設）與 `channel_name`。`web/src/api.ts` 的 `Me` 已同步。hub 對應新的
   `TEAMS_CHANNEL_NAME`，`.env.example` 已更新 —— **`.env` 要自己補，不補的話
@@ -696,7 +700,7 @@ Playwright **後註冊的 route 先比對**，所以規則裡那段片段的 `**
 
 ---
 
-### → session C：MinIO console 連結，只放在「我的 worker」頁（2026-09-22 指派）
+### ~~→ session C：MinIO console 連結，只放在「我的 worker」頁~~ ✅ 已完成（`42d29e5`）
 
 使用者想讓進階使用者知道「job 的檔案要去哪裡找」，提議放 MinIO console
 （`:9001`）。**放，但只放在 `MyWorker.tsx`。**
@@ -735,6 +739,13 @@ Playwright **後註冊的 route 先比對**，所以規則裡那段片段的 `**
 
 加一個 `S3_CONSOLE_URL` env，沒設就**不顯示這一段**（沒設代表這個站台沒開 console，
 顯示一個連不上的連結比不顯示更糟）。走哪個端點給前端由你決定，`/me` 有先例。
+
+**交付**：走 `/me`（`s3_console_url`），`.env.example` 已補。驗法是真的打
+`/api/auth/me`（TestClient + 覆寫 `require_user`），有設回網址、沒設回空字串；
+前端 390／1280 × 亮暗都渲染過。
+
+一件派工沒提、實作時才看到的：這段原本插在「產生 worker token」與 token 揭示
+區塊中間，**會把剛發出的、只顯示一次的 token 擠下去**。改排在卡片最後。
 
 ---
 
