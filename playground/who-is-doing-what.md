@@ -50,7 +50,7 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 
 | 區域 | 誰 | 狀態 |
 |---|---|---|
-| `web/src/pages/Submit.tsx`、`index.css` 的 `.sources` | session A | 進行中 —— 未 commit |
+| `web/src/pages/Submit.tsx`、`CommandPicker.tsx`、`App.tsx`、`index.css` 的色票與元件 | session A | 2026-09-22 告一段落（見下方兩節）|
 | `web/src/pages/Login.tsx`、`Notifications.tsx`、`api.ts` | session B | 2026-09-22 告一段落 |
 | `web/src/index.css` 的 `.hint` | session B | 同上（見下方契約）|
 | `hub/app/config.py`、`hub/app/routers/auth.py` | session B | 同上 |
@@ -80,6 +80,55 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 - **通知的詞彙定在 [`../CONTEXT.md`](../CONTEXT.md)**：目的地有三種 ——
   私訊、頻道、**沒有**。**不要再寫「開啟通知」「關閉通知」**，那是假的：
   沒設個人 webhook 的人一樣會被通知，只是通知在頻道裡。
+- **`index.css` 的色票整組換過，而且多了幾個 token**（`dd580b8`）。
+  新增 `--accent-hover`、`--accent-soft`、`--on-accent`、`--ok/bad-soft`、
+  `--ok/bad-ink`。**不要再寫死 `#fff` 當按鈕文字**（深色模式的 accent 是淺橘，
+  白字只有 2.7:1）。按鈕已有三階：預設實心、`.secondary` 描邊、`.small` 小藥丸
+  —— **要次要按鈕請用這些，不要自己刻**。`.chip` 也已按狀態分三組底色。
+- **`CommandPicker` 的介面換了**（`bda7b8d`）：從 `onPick(name)` 改成
+  `value` / `onChange`。它現在自己擁有「選一個指令」的語意（讀得出目前選哪個、
+  換掉、再點一次取消）。**不要再從外面自己把指令併進文字**。
+
+---
+
+## 已定案的取捨（不要重新發明）
+
+只記結論與理由，細節看 hash，對不上時以 commit 為準。列在這裡的標準是
+「重新想一次會浪費半小時以上」。
+
+### session A
+
+| 決定 | 為什麼 | commit |
+|---|---|---|
+| **奶茶色是底，不是強調色** | 中性色全部帶暖，飽和度只留給 `--ok`/`--warn`/`--bad`。整個介面都染色的話，web-spec §9 那三個「必須正經的地方」就沒地方跳出來 | `dd580b8` |
+| **指令是「選一個」，不是一直插入** | worker 把整個文字框當一個 prompt 交給 `claude -p`，而 Claude Code 只認開頭那一個 slash command，後面的會變成它的參數。疊四個 ≠ 做四件事 | `bda7b8d` |
+| **上傳 `.jsonl` 不用動 worker** | resume 管線本來就在（`resume_from_url` → `.home/resume.jsonl` → `--resume`），「接著問」用的就是它。上傳 = 把新 job 的 `transcript_key` 指到使用者上傳的物件 | `bca3312` |
+| **`transcript_key` 一定要驗 prefix 屬於呼叫者** | 不驗的話任何人都能指到 `jobs/<別人的 job>/transcript.jsonl`，讓 worker 把別人的對話 resume 出來。「不是你的」與「不存在」回同一個 404，分開講等於給人探測 job id 的工具 | `bca3312` |
+| **不做 BD/PM 專屬的上傳入口** | 分界是工具不是職稱；沒有 transcript 的對話就算合成一份，裝的資訊也跟貼上一樣 | `8743097` |
+
+### ⚠️ 「該上傳還是該貼上」這段文案，動之前先讀
+
+**同一段話錯了三次**，每次都是拿表象當分界：
+
+1. 照**職稱**（RD 上傳 / BD/PM 貼上）→ 用過 Claude Code 的 PM 也有檔案（`b670b53`）
+2. 照 **app 名稱**（Claude app / Claude Code app）→ Claude Desktop 一個 app 裡就有
+   Chat / Cowork / Code 三個分頁（`e33b094`）
+3. 照**「對話有沒有碰你的檔案」**→ Cowork 會讀寫本機檔案，但跑在雲端（`cf4e737`）
+
+共同原因：**都要求使用者（和寫文案的人）懂產品架構，而產品架構會變。**
+
+現在的作法是讓指令自己當測試 —— `ls -t ~/.claude/projects/*/*.jsonl | head -5`，
+有東西就上傳、沒有就貼上（`8b1582e`）。成立的前提是 SPEC §11 spike #7 實測出
+**Cowork 的 local session 也寫在同一棵樹**。
+
+**要改這段之前，先確認新寫法不需要使用者判斷自己屬於哪一類。**
+
+附帶：不要教人「全選複製」整段對話 —— 貼最後幾輪就夠。貼越多讀越久越貴，
+而那筆錢要算進人情債（`483e73c`）。
+
+### session B
+
+（B 自己填）
 
 ---
 
