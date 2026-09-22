@@ -258,6 +258,12 @@ button.small:hover:not(:disabled) { background: var(--accent-soft); border-color
      該在「丟 job」那張卡片。間距拆成 padding + margin，不拆的話線會貼著分頁。 */
   padding-bottom: 12px; margin-bottom: 20px;
   border-bottom: 1px solid var(--line);
+  /* 導覽列比內容寬：往兩側各長出最多 86px（= 900 − 728），讓那排標籤排成一行。
+     **不要改 #root 的 max-width** —— 760 是內容的行寬，改它等於把每一頁的卡片
+     都變寬，那是整個產品的閱讀寬度。
+     減 800 而不是減 760：100vw 含捲軸（桌機約 15px），拿 760 當界線的話，
+     視窗剛好落在 760～790 之間時會長出橫向捲軸。多留 40px 買安全。 */
+  margin-inline: calc(-1 * min(86px, max(0px, (100vw - 800px) / 2)));
 }
 /* 只有一個 🧋。字級從 16 放大到 22 —— 照 16px 縮著它會變成一個看不出
    可按的小點，而它現在是整個 header 唯一的回首頁入口。 */
