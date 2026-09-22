@@ -516,8 +516,15 @@ export function Submit() {
               <p className="muted">
                 Cowork 的對話沒有專案路徑可以對，改用標題找（macOS）：
               </p>
-              <pre>{`grep -l '你對話標題的關鍵字' \
-  ~/Library/Application\ Support/Claude/claude-code-sessions/*/*/local_*.json`}</pre>
+              {/* 路徑用引號包住、glob 留在引號外，整條不含任何反斜線。
+                  原本寫成 `Application\ Support` 加行尾續行 —— 那兩個反斜線是
+                  **JS 的**跳脫，在 template literal 裡就被吃掉了，渲染出來是一行
+                  沒跳脫的 Application Support，貼進 bash 會 No such file or
+                  directory。畫面上看起來對，實際是假的。
+                  用 $HOME 不用 ~，因為 ~ 在引號裡不展開。 */}
+              <pre>
+                {'grep -l \'你對話標題的關鍵字\' "$HOME/Library/Application Support/Claude/claude-code-sessions"/*/*/local_*.json'}
+              </pre>
               <p className="muted">
                 找到的 <code>local_*.json</code> 裡有 <code>cliSessionId</code>，
                 那就是 <code>~/.claude/projects/</code> 底下對應的檔名。
