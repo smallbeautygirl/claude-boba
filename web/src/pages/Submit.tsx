@@ -243,7 +243,7 @@ export function Submit() {
       <p className="hint">
         {session ? (
           <>
-            ✅ 這是真的續跑 —— 出租者那邊會用 <code>--resume</code> 接上你這份 session，
+            ✅ 這是真的續跑 —— 代跑者那邊會用 <code>--resume</code> 接上你這份 session，
             不是把對話當文字重讀一次。
           </>
         ) : (
@@ -272,7 +272,7 @@ export function Submit() {
           才是主要動作，session 檔是少數人的路。 */}
       <div className="row">
         <label>
-          出租者
+          代跑者
           <select value={workerId} onChange={(e) => pickWorker(e.target.value)}>
             <option value="">自動（推薦）</option>
             {workers.map((w) => (
@@ -306,13 +306,13 @@ export function Submit() {
           <span>
             我了解{" "}
             <strong>
-              {lender ? `${lender} 技術上可以看到我送出的內容` : "出租者技術上可以看到我送出的內容"}
+              {lender ? `${lender} 技術上可以看到我送出的內容` : "代跑者技術上可以看到我送出的內容"}
             </strong>
           </span>
         </label>
         <p>
           這個 job 會在{lender ? ` ${lender} ` : "對方"}的電腦上執行。
-          系統預設不讓出租者查看內容，但技術上他有能力看到。
+          系統預設不讓代跑者查看內容，但技術上他有能力看到。
           請不要送出公司機密、客戶個資，或任何你不希望被對方看到的東西。
         </p>
       </div>
@@ -360,7 +360,7 @@ export function Submit() {
             <p className="muted">
               在自己電腦上用 Claude Code 跑到一半、額度沒了？（終端機、IDE 擴充、
               Desktop 的 Code 分頁，以及 Cowork 的 local session）選出那份
-              session，出租者那邊會真的 <code>--resume</code> 接上去，
+              session，代跑者那邊會真的 <code>--resume</code> 接上去，
               不是把對話當文字重讀。
             </p>
 

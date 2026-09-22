@@ -33,7 +33,7 @@ const TITLES: Record<string, string> = {
   "/": "丟 job",
   "/jobs": "我的 job",
   "/ledger": "帳本",
-  "/worker": "我的 worker",
+  "/worker": "我來代跑",
   "/notifications": "通知",
   "/leaderboard": "排行榜",
 };
@@ -110,7 +110,7 @@ function Shell() {
         <Tab to="/">丟 job</Tab>
         <Tab to="/jobs">我的 job</Tab>
         <Tab to="/ledger">帳本</Tab>
-        <Tab to="/worker">我的 worker</Tab>
+        <Tab to="/worker">我來代跑</Tab>
         <Tab to="/notifications">通知</Tab>
         <Tab to="/leaderboard">排行榜</Tab>
         {/* 名字、主題、登出是同一組「我」。包成一個元素才不會在換行時被拆散

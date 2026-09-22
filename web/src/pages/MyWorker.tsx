@@ -52,8 +52,13 @@ export function MyWorker() {
 
   return (
     <div className="card">
-      <h1>我的 worker</h1>
-      <p className="lede">借出額度給同事。你的 Claude 憑證不會離開這台機器。</p>
+      <h1>我來代跑</h1>
+      {/* 標題跟分頁一致，都是動詞，跟「丟 job」對稱。頁面主體還在描述
+          「在自己機器上代跑」那條路 —— 那條仍然支援，所以這裡還不能改寫成
+          託管模型的說法，整頁重寫是另一筆。 */}
+      <p className="lede">
+        借出額度給同事。這條路是在你自己的電腦上跑，Claude 憑證不會離開那台機器。
+      </p>
 
       {mine.map((w) => (
         <div key={w.id} className="worker">
@@ -96,7 +101,7 @@ export function MyWorker() {
       ))}
       {mine.some((w) => (w.job_count ?? 0) > 0) && (
         <p className="hint">
-          跑過 job 的機器不能刪 —— 那些紀錄會失去出租者，而「由誰代跑」是人情債的依據。
+          跑過 job 的機器不能刪 —— 那些紀錄會失去代跑者，而「由誰代跑」是人情債的依據。
         </p>
       )}
       {error && <p className="error">{error}</p>}

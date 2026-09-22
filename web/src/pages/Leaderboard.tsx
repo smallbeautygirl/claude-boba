@@ -16,7 +16,7 @@ export function Leaderboard() {
       <ol className="steps">
         <li>把這個網址傳給一個同事</li>
         <li>他用自己的 Observ 帳號登入</li>
-        <li>他丟一個 job，由你的 worker 跑</li>
+        <li>他丟一個 job，用你的額度跑</li>
       </ol>
       <p className="hint">
         那一筆跑完的當下，他欠你一杯，這頁就會有第一行。

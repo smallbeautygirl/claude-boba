@@ -80,7 +80,7 @@ function StopPanel({ job, onChange }: { job: Job; onChange: (j: Job) => void }) 
   return (
     <div className="stop-panel">
       <label>
-        中止這個 job（你是出租者）
+        中止這個 job（你是代跑者）
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
@@ -104,7 +104,7 @@ function VersionNote({ job }: { job: Job }) {
   if (!a || !b || a === b) return null;
   return (
     <p className="warn">
-      ⚠️ 你的 Claude Code 是 {a}，出租者是 {b}。實測跨版本可行，但若結果怪怪的，這可能是原因。
+      ⚠️ 你的 Claude Code 是 {a}，代跑者是 {b}。實測跨版本可行，但若結果怪怪的，這可能是原因。
     </p>
   );
 }

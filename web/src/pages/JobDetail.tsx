@@ -229,7 +229,7 @@ function FollowUp({ jobId }: { jobId: string }) {
           拿得到，原本那台離線時不該讓使用者卡住。提交頁的勾選點名了一個人，
           而這一輪可能是別人。 */}
       <p className="hint">
-        ⚠️ 這一輪會派給當下有空的出租者，<strong>不一定是剛才那一位</strong>
+        ⚠️ 這一輪會派給當下有空的代跑者，<strong>不一定是剛才那一位</strong>
         —— 你接下來寫的內容與附件，那個人技術上一樣看得到。
       </p>
       <Composer
@@ -264,7 +264,7 @@ function LineView({ line }: { line: Line }) {
 
 const STATUS_LABEL: Record<Job["status"], string> = {
   queued: "排隊中",
-  claimed: "已派給出租者",
+  claimed: "已派給代跑者",
   running: "執行中",
   succeeded: "完成",
   failed: "失敗",
@@ -303,7 +303,7 @@ function StatusChip({ status }: { status: Job["status"] }) {
 // 數字，不如說清楚它在做什麼。
 function phaseOf(job: Job): { label: string; since: string | null } | null {
   if (job.status === "queued") return { label: "排隊中", since: job.created_at };
-  if (job.status === "claimed") return { label: "準備中 · 出租者的容器正在啟動", since: null };
+  if (job.status === "claimed") return { label: "準備中 · 代跑者的 job 容器正在啟動", since: null };
   if (job.status === "running") return { label: "已執行", since: job.started_at };
   // 終態：有 started_at 才講得出「實際跑了多久」。
   if (job.started_at && job.finished_at) {
