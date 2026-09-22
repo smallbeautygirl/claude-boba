@@ -6,7 +6,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -26,6 +26,7 @@ from ..schemas import (
     MAX_ATTACHMENTS_TOTAL_BYTES,
     MAX_JOB_INPUT_BYTES,
     MAX_TRANSCRIPT_BYTES,
+    SITE_MODELS,
     TRANSCRIPT_SNIFF_BYTES,
     TRANSCRIPT_SNIFF_LINES,
     FollowUp,
@@ -185,6 +186,57 @@ def _check_attachments(keys: list[str], user: User, transcript_bytes: int) -> No
         raise HTTPException(413, f"這個 job 的輸入合計超過 {mb} MB")
 
 
+# worker 超過這個秒數沒回報就當它離線（與 routers/workers.py 同一個值）。
+_OFFLINE_AFTER_SECONDS = 75
+
+
+async def _check_model(
+    model: str, requested_worker_id: uuid.UUID | None, session: AsyncSession
+) -> None:
+    """model 必須在站台白名單，而且真的有人跑得動。
+
+    **這是唯一擋得住的位置。** spike #8 實測 `--settings availableModels` 不擋
+    model（新舊兩條憑證路徑都一樣，CLI 只拿它擋 fast mode），而 worker 是把
+    `--model` 直接帶給 CLI 的。前端的下拉只是方便，直接打 API 就繞過去了。
+
+    不擋的後果不是「跑錯 model」，是**借用者可以讓出租者欠十倍的錢** ——
+    Opus 的 output 單價是 Haiku 的 10 倍，而債務照實際花費算。
+    """
+    if model not in SITE_MODELS:
+        raise HTTPException(
+            400, f"這個站台只跑 {' 或 '.join(SITE_MODELS)}，不支援 {model}"
+        )
+
+    fresh = datetime.now(UTC) - timedelta(seconds=_OFFLINE_AFTER_SECONDS)
+    stmt = select(Worker).where(
+        Worker.accepting.is_(True), Worker.last_seen_at >= fresh
+    )
+    if requested_worker_id is not None:
+        stmt = stmt.where(Worker.id == requested_worker_id)
+    pool = list(await session.scalars(stmt))
+
+    # 一台都沒有就不在這裡擋 —— job 會排隊等人上線，那是正常狀態，
+    # 不是使用者挑錯 model。派不出去的處理在別處（expired）。
+    if not pool:
+        return
+
+    if requested_worker_id is not None:
+        if model not in (pool[0].available_models or []):
+            raise HTTPException(400, f"你指定的那台出租者沒有開放 {model}")
+        return
+
+    # 自動派單：派單不按 model 過濾（poll 只看 requested_worker_id），所以
+    # 只要有任何一台可接單的機器跑不動它，這個 job 就可能派給那台然後失敗。
+    # 取交集而不是聯集 —— 與前端的 offeredModels() 同一條規則。
+    cannot = [w for w in pool if model not in (w.available_models or [])]
+    if cannot:
+        raise HTTPException(
+            400,
+            f"現在有出租者沒開放 {model}，而自動派單可能派給他們。"
+            f"請改挑一個有開放的出租者，或換 model。",
+        )
+
+
 @router.post("", response_model=JobDetail, status_code=201)
 async def create_job(
     body: JobCreate,
@@ -192,6 +244,7 @@ async def create_job(
     session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
     transcript_bytes = 0
+    await _check_model(body.model, body.requested_worker_id, session)
     if body.transcript_key:
         _check_transcript(body.transcript_key, user)
         transcript_bytes = storage.stat(body.transcript_key) or 0

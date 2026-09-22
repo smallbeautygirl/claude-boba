@@ -355,8 +355,42 @@ async def _upload_transcript(client: httpx.AsyncClient, url: str, path: Path) ->
     return True
 
 
+async def _refuse(client: httpx.AsyncClient, job_id: str, why: str) -> None:
+    """還沒開容器就拒掉這個 job。
+
+    走一般的 result 回報，狀態是 failed —— 失敗不計債（SPEC §5），所以借用者
+    不會為了一個從沒跑起來的 job 欠人情。error_detail 要講得出原因，不然他
+    只看得到「執行失敗」，會以為工具壞了。
+    """
+    resp = await client.post(
+        f"/api/worker/jobs/{job_id}/result",
+        json={
+            "status": "failed",
+            "error_kind": "model_not_allowed",
+            "error_detail": why,
+            "lender_cli_version": LENDER_CLI_VERSION,
+            "transcript_uploaded": False,
+        },
+    )
+    resp.raise_for_status()
+
+
 async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     job_id = job["job_id"]
+
+    # 出租者自己的最後一道防線。Hub 已經擋過一次，但燒的是**這台機器的**額度，
+    # 所以不能只靠上游。
+    #
+    # CLI 那層是不會擋的：2026-09-22 spike #8 實測 `--settings availableModels`
+    # 不約束 model（新舊兩條憑證路徑都一樣，它只拿那份清單擋 fast mode），而
+    # run-job.sh 是把 `--model` 直接帶過去的。所以少了這裡，Hub 一有 bug 就
+    # 直接變成「別人用我的帳號跑 Opus」。
+    allowed = [m for m in settings.available_models.split(",") if m]
+    model = job.get("model") or "sonnet"
+    if model not in allowed:
+        await _refuse(client, job_id, f"這台 worker 沒有開放 {model}")
+        return
+
     workdir, resume_name, inputs = await _prepare_workdir(client, job)
 
     env = {

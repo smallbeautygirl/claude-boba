@@ -30,12 +30,25 @@ MAX_ATTACHMENTS_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_JOB_INPUT_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 20
 
+# 站台白名單（SPEC §9）。不含 Fable：它的 output 單價是 Haiku 的 10 倍、
+# Sonnet 的 5 倍，同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料。
+#
+# **這份清單必須在伺服器端強制，前端的下拉只是方便。** 2026-09-22 spike #8
+# 實測：`--settings availableModels` 根本不擋 model —— 掛 .credentials.json
+# 的舊路徑與環境變數 token 的新路徑都一樣，CLI 只用它擋了 fast mode。所以
+# 「站台白名單 ∩ 出租者白名單」這條線在 CLI 那層不存在，Hub 是唯一擋得住的
+# 位置。不擋的話，借用者直接打 API 帶 model: "opus" 就能用出租者的額度跑
+# Opus，讓對方欠十倍的錢。
+SITE_MODELS = ("sonnet", "haiku")
+
 
 class JobCreate(BaseModel):
     # 借用者身分由 Authorization header 決定，不接受從 body 指定 ——
     # 否則任何人都能用別人的名義掛債。
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
     model: str = Field(default="sonnet", max_length=64)
+    # 值由 _check_model() 對站台白名單與出租者白名單驗證 ——
+    # 這裡不用 Literal，因為錯誤訊息要講得出「這台跑不動」還是「站台不支援」。
     source_type: SourceType = SourceType.PASTE
     # 上傳的 session 檔，來自 POST /api/uploads/transcript。
     # 有帶的話這個 job 就是 `--resume`，不是把對話當文字重貼一次。
