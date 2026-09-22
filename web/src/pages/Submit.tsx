@@ -332,22 +332,9 @@ export function Submit() {
           會擋住送出、或決定這個 job 花多少錢的東西，全部排在送出鍵**上面** ——
           送出鍵現在在輸入列裡，參數放它下面的話，使用者會按到一顆不會動的鍵
           卻不知道原因。 */}
-      {/* 舊註解：帶了 session 檔之後，這個框的意思就變了：上下文在檔案裡，
-          這裡要填的是「接下來做什麼」，不再是「把對話貼進來」。 */}
-      <label>
-        {session ? "接下來要它做什麼" : "對話內容"}
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          rows={session ? 5 : 12}
-          placeholder={
-            session
-              ? "沿用上傳的 session 繼續問…"
-              : "把你的對話貼進來，或直接寫你要它做什麼"
-          }
-        />
-      </label>
-      <p className="hint under-field">
+      {/* under-field 拿掉了：它的負上緣是為了緊貼欄位，而這段警告現在上面
+          沒有欄位（輸入列在它下面），留著會讓它往上貼到 lede。 */}
+      <p className="hint">
         {session ? (
           <>
             ✅ 這是真的續跑 —— 出租者那邊會用 <code>--resume</code> 接上你這份 session，
@@ -477,6 +464,11 @@ export function Submit() {
             ))}
           </ul>
         )}
+        {/* 錯誤貼著送出鍵。送出鍵搬進輸入列之後，錯誤如果還留在頁尾（在
+            session 檔面板之下），按了送出失敗的人根本看不到它。上傳附件與
+            掃資料夾的錯誤也都走這裡，而那兩個動作也在這條列上。 */}
+        {error && <p className="error composer-error">{error}</p>}
+
         <div className="composer-bar">
           <label className="icon-btn" title="加附件">
             <span aria-hidden="true">+</span>
@@ -636,7 +628,6 @@ export function Submit() {
       </div>
 
 
-      {error && <p className="error">{error}</p>}
 
     </form>
   );

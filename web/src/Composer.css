@@ -76,3 +76,6 @@
 /* 附件清單排在文字框與工具列之間：它是這次提交的一部分，不是設定。 */
 .composer .attach-list { margin: 8px 4px 0; }
 .composer > .muted { margin: 10px 4px 2px; }
+
+/* 錯誤貼著送出鍵，不要留在頁尾。 */
+.composer-error { margin: 8px 4px 0; font-size: 13px; }
