@@ -190,23 +190,24 @@ export function Submit() {
           而對他們來說貼上本來就幾乎不會少東西，因為那種對話沒有本機環境。 */}
       {!session && (
         <div className="sources">
-          {/* 不要用產品名稱當分界。先前寫過「RD vs BD/PM」（職稱不是分界，
-              用過 Claude Code 的 PM 也有檔案），又寫過「Claude app vs
-              Claude Code app」（Claude Desktop 一個 app 裡就有 Chat 與 Code
-              兩個分頁，這個分界根本不成立）。名稱與分頁結構還會再變。
+          {/* 分界不是「有沒有碰你的檔案」，是 **session 存在哪裡**。
+              Cowork 會讀寫你指定資料夾裡的檔案，但它跑在 Anthropic 的伺服器上、
+              session 存在你的 Claude 帳號裡（所以手機上打得開同一個工作）——
+              本機沒有 .jsonl。用「有沒有碰檔案」當條件會把 Cowork 判錯邊。
 
-              問使用者自己答得出、而且不會過期的那件事：那個對話有沒有碰過
-              你電腦上的東西。會留下 session 檔的正是這件事本身。 */}
+              也不要用產品名稱：職稱不是分界（用過 Claude Code 的 PM 也有檔案），
+              app 也不是（Claude Desktop 一個 app 裡就有 Chat / Cowork / Code）。
+              名稱與分頁結構還會再變，但「狀態存在哪」是這件事的成因。 */}
           <p>
-            <strong>那個對話有讀寫過你電腦上的檔案、或跑過指令嗎？</strong>
-            有的話它就在你機器上留了 session 檔（Claude Desktop 的 Code 分頁、
-            終端機的 <code>claude</code>、VS Code / JetBrains 擴充）——
-            上傳 <code>.jsonl</code> 才是真的續跑。
+            <strong>你能在手機上打開同一個對話、接著問嗎？</strong>
+            可以的話它存在你的 Claude 帳號裡（Chat、Cowork、claude.ai）——
+            本機沒有 session 檔，全選複製、貼上就好。那種對話貼上幾乎不會少東西，
+            <em>也不需要</em>檔案。附件目前還帶不過來。
           </p>
           <p>
-            <strong>只是在對話</strong>（Chat 分頁、claude.ai、手機）：全選複製、
-            貼上就好。那種對話沒有本機 session 檔，<em>也不需要</em> ——
-            它本來就沒有本機環境，貼上幾乎不會少東西。附件目前還帶不過來。
+            <strong>只存在那一台電腦上</strong>（終端機的 <code>claude</code>、
+            VS Code / JetBrains 擴充、Claude Desktop 的 Code 分頁）：那是
+            Claude Code，它留了 <code>.jsonl</code> —— 上傳它才是真的續跑。
           </p>
           <p>不論哪一種，這個 job 跑完之後用「接著問」，之後每一輪都是真的續跑。</p>
         </div>
