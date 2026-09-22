@@ -10,6 +10,8 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die() { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 IMAGE_TAG="claude-boba-worker:2.1.278"
+# 出租者通常不是 hub 那台，所以預設問一次，不要沿用 .env.example 的 127.0.0.1。
+DEFAULT_HUB="${HUB_URL:-http://127.0.0.1:8787}"
 
 # --- 0. 先擋掉跑到一半才發現的失敗 ---------------------------------------
 say "檢查環境"
@@ -61,6 +63,21 @@ p.write_text(p.read_text(encoding="utf-8").replace(
     f"CLAUDE_CREDENTIALS={sys.argv[1]}"), encoding="utf-8")
 PY
   echo "  憑證路徑已填好"
+
+  # HUB_URL 的預設值只對「hub 跑在自己這台」的人正確。出租者多半是別台機器，
+  # 而填錯的症狀是「網頁一直顯示離線」、沒有任何錯誤訊息 —— 所以直接問，
+  # 不要讓人事後去猜。
+  printf '\nhub 在哪裡？（直接按 Enter 用 %s）\nHUB_URL: ' "$DEFAULT_HUB"
+  read -r HUB_INPUT </dev/tty || HUB_INPUT=""
+  HUB_URL="${HUB_INPUT:-$DEFAULT_HUB}"
+  python3 - "$HUB_URL" <<'ENVPY'
+import pathlib, re, sys
+p = pathlib.Path(".env")
+p.write_text(re.sub(r"^HUB_URL=.*$", f"HUB_URL={sys.argv[1]}",
+                    p.read_text(encoding="utf-8"), count=1, flags=re.M),
+             encoding="utf-8")
+ENVPY
+  echo "  HUB_URL=$HUB_URL"
 fi
 
 # --- 5. 剩下的只有人能做 ---------------------------------------------------
