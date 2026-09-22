@@ -19,6 +19,10 @@ export function MyWorker() {
   const [workers, setWorkers] = useState<WorkerRow[]>([]);
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<string | null>(null);
+  // 刪除是兩段式：先按「刪除」，那一列才換成「確定刪除？」。
+  // 不用 window.confirm —— 它跳出來的字沒辦法講「這台跑過幾個 job」。
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
@@ -26,6 +30,18 @@ export function MyWorker() {
   useEffect(load, [load]);
 
   const mine = workers.filter((w) => w.owner === me?.display_name);
+
+  async function remove(id: string) {
+    setError(null);
+    try {
+      await api.deleteWorker(id);
+      setConfirming(null);
+      load();
+    } catch (e) {
+      // hub 的 409 訊息已經說得出「跑過幾個 job」，直接顯示它。
+      setError(e instanceof Error ? e.message : "刪不掉，請重新整理再試");
+    }
+  }
 
   async function create() {
     const w = await api.createWorker(name || "我的電腦");
@@ -50,16 +66,49 @@ export function MyWorker() {
               {w.claude_code_version && ` · CLI ${w.claude_code_version}`}
             </span>
           </div>
-          <button
-            className="small"
-            onClick={() => api.setAccepting(w.id, !w.accepting).then(load)}
-          >
-            {w.accepting ? "暫停接單" : "恢復接單"}
-          </button>
+          <div className="worker-actions">
+            <button
+              className="small"
+              onClick={() => api.setAccepting(w.id, !w.accepting).then(load)}
+            >
+              {w.accepting ? "暫停接單" : "恢復接單"}
+            </button>
+            {/* 跑過 job 的機器不給刪，但**不是把按鈕灰掉** —— 灰掉的按鈕不會
+                告訴人為什麼。刪掉會讓那些 job 失去出租者，而「由誰代跑」
+                正是人情債的依據。 */}
+            {w.job_count === 0 &&
+              (confirming === w.id ? (
+                <>
+                  <button className="small danger" onClick={() => remove(w.id)}>
+                    確定刪除
+                  </button>
+                  <button className="small" onClick={() => setConfirming(null)}>
+                    取消
+                  </button>
+                </>
+              ) : (
+                <button className="small" onClick={() => setConfirming(w.id)}>
+                  刪除
+                </button>
+              ))}
+          </div>
         </div>
       ))}
+      {mine.some((w) => (w.job_count ?? 0) > 0) && (
+        <p className="hint">
+          跑過 job 的機器不能刪 —— 那些紀錄會失去出租者，而「由誰代跑」是人情債的依據。
+        </p>
+      )}
+      {error && <p className="error">{error}</p>}
 
       <h2>新增一台</h2>
+      {/* 使用者真的問過「新增一台 worker 後，背後是新建一個 container 嗎？」——
+          那個疑問本身就是問題：這顆按鈕讀起來像雲端幫你開了一台機器。
+          詞的定義在 CONTEXT.md。 */}
+      <p className="hint">
+        這裡產生的只是一組 token。<strong>實際接單的是你自己電腦上跑起來的程式</strong>，
+        不是雲端幫你開的機器；每個 job 會在那台電腦上另外開一個用完即丟的容器。
+      </p>
       {/* 以前用一個 &nbsp; 的 label 包住按鈕來對齊 —— label 裡包 button，
           讀屏軟體會念得很奇怪。改成一般的底端對齊。 */}
       <div className="field-row">
@@ -82,6 +131,15 @@ export function MyWorker() {
             這串只會顯示這一次。worker 用它連 Hub，完全不需要你的 Observ 帳密 ——
             把公司密碼寫進 <code>.env</code> 是不必要的風險。
           </p>
+          {/* 這頁以前到這裡就結束了，於是沒有任何地方說還要設 CLAUDE_CREDENTIALS
+              —— 少了它 worker 根本跑不起來。步驟不抄進頁面（web-spec §10 選的是
+              文件而不是互動式引導），這裡只指路。寫檔案路徑不寫連結：出租者
+              手上本來就有這份 repo，worker 就是從那裡跑起來的。 */}
+          <p>
+            <strong>還沒完</strong>：worker 還要設定你的 Claude Code 憑證，
+            照 <code>worker/README.md</code>〈出借你的額度〉做。
+            懶得一步步做的話跑 <code>worker/install.sh</code>。
+          </p>
         </div>
       )}
       {/* MinIO console。只有這一頁有，不放頁尾 —— 這個 bucket 是整站共用、
@@ -94,8 +152,9 @@ export function MyWorker() {
           <h2>job 的檔案放在哪</h2>
           <p className="hint">
             對話紀錄、附件與產出都存在 MinIO 裡，一個 job 一個資料夾：
-            <code>jobs/&lt;job id&gt;/</code>。平常不需要進去 —— job 頁面的下載
-            連結走的是短效期的預簽網址。
+            <code>jobs/&lt;job id&gt;/</code>，<strong>job id 就在該 job 詳情頁的
+            網址列上</strong>。平常不需要進去 —— job 頁面的下載連結走的是短效期的
+            預簽網址。
           </p>
           <p className="privacy">
             <strong>這個 bucket 是整個站台共用的，沒有「只看自己」的權限。</strong>

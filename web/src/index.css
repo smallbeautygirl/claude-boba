@@ -341,6 +341,13 @@ h2 { margin: 24px 0 10px; font-size: 14px; font-weight: 700; color: var(--ink); 
   padding: 12px 0; border-bottom: 1px solid var(--line);
 }
 .debt-label { font-size: 16px; }
+/* worker 那一列右邊的動作群。兩段式刪除會一次出現兩顆，不包起來的話
+   flex 會把它們跟左邊的說明擠在一起。 */
+.worker-actions { display: flex; flex-shrink: 0; gap: 8px; align-items: center; }
+/* 小號的危險按鈕。文字色刻意不設 —— 它繼承 button 的 var(--on-accent)，
+   淺色自動白字、深色自動深字，兩邊都過 AA。不要「順手」指定固定文字色。 */
+button.small.danger { background: var(--bad); color: var(--on-accent); border-color: transparent; }
+button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
 /* 右邊那顆不准被擠。窄螢幕上左邊的說明一長，沒有這條「暫停接單」會被壓成
    四個字直排，一行一個字。flex 項目預設可以縮到比內容窄，而按鈕的內容
    就是它的全部。（.attach-list button 已經有同一條，這裡是補上既有的幾排。）*/

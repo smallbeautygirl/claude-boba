@@ -108,6 +108,9 @@ export interface WorkerRow {
   available_models: string[];
   claude_code_version: string | null;
   quota: "green" | "yellow" | "red" | "unknown";
+  /** 這台跑過幾個 job。只有自己的 worker 有這個欄位 —— 別人幫誰跑過幾次
+      不該出現在別人的畫面上。跑過就不能刪（那些紀錄的出租者會斷掉）。 */
+  job_count?: number;
   job_budget_usd?: string;
   max_concurrency?: number;
 }
@@ -333,6 +336,17 @@ export const api = {
       headers: authed({ "content-type": "application/json" }),
       body: JSON.stringify({ name }),
     }).then(json<{ id: string; name: string; token: string }>),
+
+  // 只有從來沒跑過 job 的 worker 刪得掉。擋下來時 hub 回 409，訊息會說
+  // 跑過幾個 —— 直接顯示那句，不要自己另外編一句。
+  deleteWorker: async (id: string) => {
+    const res = await fetch(`${HUB}/api/workers/${id}`, {
+      method: "DELETE",
+      headers: authed(),
+    });
+    if (res.status === 401) throw new Unauthorized("請重新登入");
+    if (!res.ok) throw new Error(await friendly(res));
+  },
 
   setAccepting: (id: string, accepting: boolean) =>
     fetch(`${HUB}/api/workers/${id}/accepting?accepting=${accepting}`, {
