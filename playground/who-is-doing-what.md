@@ -841,7 +841,7 @@ Playwright **後註冊的 route 先比對**，所以規則裡那段片段的 `**
 
 ---
 
-### → 誰有空都可以：「我的 worker」頁的四件事（2026-09-22 指派）
+### ~~→ 「我的 worker」頁的四件事~~ ✅ 已完成（`5074539`，session C）
 
 使用者針對那頁問了三個問題，grill 完得到四件要做的。**文件那半已經做完**
 （`worker/README.md` 與 `worker/install.sh`，`cbe66da`），這裡是 UI 與 hub。
@@ -899,6 +899,39 @@ migration、`web/src/pages/MyWorker.tsx`、`web/src/api.ts`。動手前 `git sta
 「路徑是 `jobs/<job id>/`，job id 在該 job 詳情頁的網址列上。」
 
 使用者選了只放這裡、**不要**在 job 詳情頁也放一份。
+
+#### 交付（`5074539`）
+
+**不需要 migration** —— 除了 `jobs.worker_id` 與 `jobs.requested_worker_id`，
+沒有別的東西指到 `workers`，沒跑過 job 的那一列直接刪得掉。`models.py` 沒動。
+
+**判定多擋一個 `requested_worker_id`**：有人指名這台、job 還在排隊時
+`worker_id` 還是 NULL，只看 `worker_id` 會刪掉一台正被指名的機器，讓那筆 job
+指向不存在的 worker。訊息也不同（「有 job 指名這台在排隊」）。
+
+交易：取 worker 那一列時就 `FOR UPDATE` —— 派單那邊設 `Job.worker_id` 時
+Postgres 會對這一列拿 `FOR KEY SHARE`，兩者互斥。外鍵是最後一道防線，
+撞上回 409 不是 500。
+
+列表多回 `job_count`，**只給自己的 worker** —— 別人幫誰跑過幾次不該出現在
+別人的畫面上，那跟額度紅綠燈的粗略分寸是兩回事。
+
+憑證那句寫的是**檔案路徑不是連結**：出租者手上本來就有這份 repo，
+worker 就是從那裡跑起來的；寫 GitHub 網址等於在前端寫死一個會過期的東西。
+
+#### 🚨 測試檔可以跑真的資料庫，但有兩個坑（`5074539` 踩過）
+
+`hub/tests/` 以前全是純函式測試，這是第一個碰資料庫的。兩件事寫在這裡免得重踩：
+
+1. **每個測試自己開一個 `NullPool` 的 engine。** 共用 `app.db.engine` 的話，
+   它的連線池會留著上一個測試的事件迴圈，第二個測試起就會拿到
+   「attached to a different loop」。
+2. **`except Exception: pytest.skip()` 會把那個錯誤吞成「沒有資料庫」。**
+   第一版就是這樣：四條測試兩條綠兩條 skip，看起來像環境問題，其實是程式壞了。
+   只捕捉 `OperationalError` 與 `OSError`。
+
+交易包住整個測試、結束 `rollback`，所以不會弄髒開發用的資料庫。
+非同步測試用 anyio 的 plugin（隨 anyio 裝的），沒有為此多加一個開發相依。
 
 ---
 
