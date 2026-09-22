@@ -240,7 +240,9 @@ export interface CommandGroup {
   title: string;
   audience: string;
   hint: string;
-  commands: { name: string; label: string; desc: string }[];
+  // chip：文字框空著時直接露在框內的那幾個（docs/web-spec.md §3）。
+  // 由 hub 的 commands.json 標記 —— 露哪幾個是編輯判斷，不是前端的事。
+  commands: { name: string; label: string; desc: string; chip?: boolean }[];
 }
 
 export interface CommandCatalog {

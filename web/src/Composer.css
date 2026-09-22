@@ -79,3 +79,16 @@
 
 /* 錯誤貼著送出鍵，不要留在頁尾。 */
 .composer-error { margin: 8px 4px 0; font-size: 13px; }
+
+/* 文字框空著時露在框內的那幾個指令（docs/web-spec.md §3）。
+   `/` 那顆按鈕只有已經知道它是什麼的人會去點，而這個功能是為了不知道的人做的。
+
+   位置刻意在 textarea 底下、而不是 placeholder 裡：placeholder 點不下去，
+   而這幾顆的重點是**點了會發生事情**。左內距對齊 textarea 的文字，
+   看起來像是從框裡長出來的，不是另外一列工具。
+
+   .chip-btn 沿用 index.css 既有的樣式，這裡只排版。 */
+.composer-chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 0 8px 6px;
+}

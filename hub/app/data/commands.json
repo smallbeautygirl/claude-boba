@@ -1,5 +1,5 @@
 {
-  "note": "推薦清單，不是完整清單。CLI 內建的指令有 30 幾個，全列出來只會讓人不知所措 —— 這裡只挑對這個平台的使用情境真的有用的。新增前請先實測該指令在 job 容器裡跑得動。",
+  "note": "推薦清單，不是完整清單。CLI 內建的指令有 30 幾個，全列出來只會讓人不知所措 —— 這裡只挑對這個平台的使用情境真的有用的。新增前請先實測該指令在 job 容器裡跑得動。 來源有三種，可靠度不同（SPEC §4.13）：job-claude/（走 PR、釘 v1.2.3）、CLI 內建（由 image 的 claude-code 2.1.278 釘住）、帳號 org 同步的 anthropic-skills:*（不在 repo 裡、跟著代跑者的帳號走，換個人跑可能就沒有 —— 這一組是清單目前唯一會說謊的地方）。 chip: true 的會在文字框空著時直接露在框內（docs/web-spec.md §3）。",
   "groups": [
     {
       "id": "office",
@@ -9,11 +9,13 @@
       "commands": [
         {
           "name": "/anthropic-skills:pptx",
+          "chip": true,
           "label": "做簡報",
           "desc": "把內容整理成 PowerPoint"
         },
         {
           "name": "/anthropic-skills:xlsx",
+          "chip": true,
           "label": "做表格",
           "desc": "整理成 Excel，含公式與格式"
         },
@@ -37,11 +39,13 @@
       "commands": [
         {
           "name": "/dataviz",
+          "chip": true,
           "label": "畫圖表",
           "desc": "把數字變成看得懂的圖"
         },
         {
           "name": "/boba-help",
+          "chip": true,
           "label": "這裡能做什麼",
           "desc": "列出這個平台目前的能力與限制"
         }

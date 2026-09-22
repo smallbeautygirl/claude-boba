@@ -285,16 +285,30 @@ job 內容跑在出租者機器上，技術上出租者有能力看到。**不�
 ### 4.13 指令：清單是推薦，掃描只做刪去（2026-09-22）
 
 **先記一個現在就成立的 bug。** `hub/app/data/commands.json` 列 19 項，
-`worker/job-claude/skills/` 只有 8 個、`commands/` 只有 1 個。對不上的 9 項 ——
-`/anthropic-skills:pptx` `:xlsx` `:docx` `:pdf`、`/dataviz`、`/code-review`、
-`/simplify`、`/security-review`、`/claude-api` —— **全部來自代跑者帳號的 org 同步**，
-不在 repo 裡、沒走過 PR、沒有釘版本。其中 `pptx/xlsx/docx` 那組正是 BD/PM 唯一
-真正想要的能力，而 §9 只說了它們的**相依套件**預裝在 image 裡，`SKILL.md` 本身不是。
+而 `worker/job-claude/` 裡只有 9 項。剩下 10 項來自哪裡，實際查過之後是**兩種**來源，
+可靠度差很多：
+
+| 來源 | 項目 | 在容器裡？ | 走過 PR？ | 釘版本？ |
+|---|---|---|---|---|
+| `job-claude/skills/` | mattpocock 那 8 個 | ✅ | ✅ | ✅ v1.2.3 |
+| `job-claude/commands/` | `/boba-help` | ✅ | ✅ | ✅ |
+| **CLI 內建** | `/dataviz` `/code-review` `/simplify` `/security-review` `/claude-api` | ✅ | ❌ | ✅ 由 image 的 CLI 2.1.278 釘住 |
+| **帳號 org 同步** | `/anthropic-skills:pptx` `:xlsx` `:docx` `:pdf` | ⚠️ **看是誰的 token** | ❌ | ❌ |
+
+> **2026-09-22 修正**：這一節初稿寫「對不上的 9 項全部來自 org 同步」，錯的。
+> 那 5 個 CLI 內建的字串就在 `claude.exe` 裡（`strings` 可驗），
+> 而 Dockerfile 把 CLI 釘在 2.1.278 —— 它們其實是整份清單裡**最穩的**一組。
+> 真正會漂的只有 `anthropic-skills:*` 那 4 個，它們同步自代跑者的帳號
+> （`~/.claude/skills/synced/`），不在 repo 裡。
+
+**所以清單說謊的範圍比初判小，但位置比初判糟**：唯一會漂的那 4 個，
+正好是 BD/PM 唯一真正想要的能力（產出文件）。§9 只說了它們的**相依套件**
+預裝在 image 裡，`SKILL.md` 本身不是。
 
 後果是 `worker/job-claude/README.md` 承諾的「全站一致、可以 code review」**此刻不成立**：
-換一位代跑者的 token 跑，同一顆按鈕可能就沒有作用，而且沒有人會知道為什麼。
+換一位代跑者的 token 跑，那四顆按鈕可能就沒有作用，而且沒有人會知道為什麼。
 
-**根治不是把那 9 個 PR 進來，是不要再手寫「存不存在」這件事。**
+**根治不是把它們 PR 進來，是不要再手寫「存不存在」這件事。**
 
 #### 兩條原則
 
@@ -326,8 +340,14 @@ job 內容跑在出租者機器上，技術上出租者有能力看到。**不�
 
 #### 止血與根治
 
-改成掃描之前，先把「產出文件」那四項以外對不上的從清單拿掉。
-**掃描這條路順帶解掉授權問題**：那 9 個照舊由帳號同步下來，我們只是讀它們，
+**止血的結論是「什麼都不拿掉」** —— 初稿打算砍掉對不上的那幾項，但查完來源之後
+只有 `anthropic-skills:*` 那 4 個是會漂的，而它們正是不能砍的那 4 個。
+CLI 內建的 5 個比清單裡大部分東西都穩。
+
+所以止血只剩「把來源寫下來」：`commands.json` 的 `note` 現在講清楚三種來源與
+各自的可靠度，讓下一個維護的人不會再花半天重查一次。
+
+**掃描這條路順帶解掉授權問題**：那 4 個照舊由帳號同步下來，我們只是讀它們，
 不需要把 Anthropic 的 org skill 重新散布進這個 repo。
 
 ---

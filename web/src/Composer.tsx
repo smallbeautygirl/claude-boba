@@ -8,7 +8,7 @@
 // —— 那是安全與計費相關的規則。
 
 import { useState, type ReactNode } from "react";
-import { CommandPicker } from "./CommandPicker";
+import { CommandChips, CommandPicker } from "./CommandPicker";
 import { api } from "./api";
 import "./Composer.css";
 
@@ -159,6 +159,10 @@ export function Composer({
           placeholder={placeholder}
         />
       </label>
+
+      {/* 空的時候才出現，一打字就收。它教的不只是「有哪些指令」，
+          還有 `/` 這個手勢本身 —— 點下去文字框開頭就會出現那個指令。 */}
+      <CommandChips value={value} onChange={onChange} />
 
       {files.length > 0 && (
         <ul className="attach-list">

@@ -12,6 +12,80 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CommandCatalog } from "./api";
 
+// 指令清單由 CommandPicker 與 CommandChips 共用，而兩者會同時掛載 ——
+// 各自 fetch 就是同一頁打兩次同一支 API。這裡存的是 Promise 不是結果，
+// 所以兩個元件在同一個 tick 掛載也只會有一個請求在飛。
+let catalogPromise: Promise<CommandCatalog> | null = null;
+
+function useCatalog(): CommandCatalog | null {
+  const [catalog, setCatalog] = useState<CommandCatalog | null>(null);
+  useEffect(() => {
+    let alive = true;
+    catalogPromise ??= api.commands();
+    catalogPromise.then(
+      (c) => alive && setCatalog(c),
+      () => {
+        // 失敗就不要留著一個永遠 reject 的 promise，下次掛載還有機會。
+        catalogPromise = null;
+        if (alive) setCatalog(null);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return catalog;
+}
+
+// 清單裡所有指令的名字。`setCommand` 要靠它分辨「使用者自己打的 /tmp/foo」
+// 與「真的是一個指令」。
+function allNames(catalog: CommandCatalog): string[] {
+  return catalog.groups.flatMap((g) => g.commands.map((c) => c.name));
+}
+
+// 文字框空著時露在框內的那幾個。
+//
+// 為什麼要有這個東西：`/` 已經在輸入列上了，但**知道 `/` 是什麼的人不需要被告知，
+// 不知道的人永遠不會去點它** —— 而後者正是這個平台的價值所在（他的 Claude app
+// 產不出 pptx，這裡可以）。所以不能只靠那顆按鈕。
+//
+// 為什麼是「空的時候才出現」而不是常駐：這一頁的使用情境是「額度爆了，很急」，
+// 最短路徑優先。使用者一開始打字就表示他知道自己要什麼，這時四顆按鈕只是雜訊。
+//
+// 露哪幾個由 hub 的 commands.json 標 `chip` 決定，不寫死在這裡 ——
+// 那是編輯判斷（要向 BD/PM 講什麼），會改，而且改它不該要動前端。
+export function CommandChips({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const catalog = useCatalog();
+  if (!catalog) return null;
+  if (value.trim() !== "") return null;
+
+  const names = allNames(catalog);
+  const chips = catalog.groups.flatMap((g) => g.commands.filter((c) => c.chip));
+  if (chips.length === 0) return null;
+
+  return (
+    <div className="composer-chips">
+      {chips.map((c) => (
+        <button
+          type="button"
+          key={c.name}
+          className="chip-btn"
+          title={`${c.name} — ${c.desc}`}
+          onClick={() => onChange(setCommand(value, c.name, names))}
+        >
+          {c.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // 開頭的那一個 token。後面要對照目錄才算數 —— 不然使用者自己打的
 // 「/tmp/foo.log 這個檔案」會被當成指令砍掉。
 const LEADING = /^\s*(\/[A-Za-z0-9_:.-]+)(\s|$)/;
@@ -42,16 +116,9 @@ export function CommandPicker({
   // 那顆 `/`，自己再包一層 <details> 會變成兩個開關管同一件事。
   bare?: boolean;
 }) {
-  const [catalog, setCatalog] = useState<CommandCatalog | null>(null);
+  const catalog = useCatalog();
 
-  useEffect(() => {
-    api.commands().then(setCatalog).catch(() => setCatalog(null));
-  }, []);
-
-  const names = useMemo(
-    () => catalog?.groups.flatMap((g) => g.commands.map((c) => c.name)) ?? [],
-    [catalog],
-  );
+  const names = useMemo(() => (catalog ? allNames(catalog) : []), [catalog]);
 
   if (!catalog) return null;
 
