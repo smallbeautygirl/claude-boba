@@ -1126,9 +1126,24 @@ GET /api/workers/lenders  → 405   路由不在，被 DELETE /{worker_id} 接�
 被畫面擋掉（`0100014` 修掉）。另外 401 與 405 分得出「路由在但沒帶 token」
 與「路由根本不在」。
 
-⚠️ `POST /api/workers/authorize` 的 200 回應在 OpenAPI 裡是無型別的 dict，
-所以 `authorize_url` 這個欄位名**比不出來**，只能讀原始碼。要讓它可比的話，
-hub 那邊給那個回應一個 response model 就好。
+~~⚠️ `POST /api/workers/authorize` 的回應是無型別 dict，欄位名比不出來~~
+→ `6d17011` 給了四支 response model（`LendingView` / `AuthorizeStart` /
+`AuthorizeCode` / `LendingPatch`），現在四支全部比得出來。2026-09-22 跑完的結果：
+四支與前端完全一致，`LendingView` 只有 `has_token` 一個布林、沒有任何 token 欄位。
+
+**端點加 response model 不只是型別整齊**：沒有型別的話，跨 session 對接只剩
+「照我以為的去讀對方的程式碼」，而那正是今天所有錯誤的共同形狀 ——
+手寫的 harness、沒求值的跳脫、推錯方向的 CSS 特異性。
+
+比法（不用帳號、不用跑前端）：
+
+```bash
+curl -s http://127.0.0.1:8787/openapi.json > /tmp/api.json
+# 再用 python 把 components.schemas 的欄位集合跟 web/src/api.ts 的 interface 比
+```
+
+**請求 body 要用瀏覽器實際送出的那一份來比，不要用程式碼推的** ——
+攔截 API 時把 `request.postDataJSON()` 印出來，那才是真的送出去的東西。
 
 #### C 那半的交付（`dabcbc2` 詞彙、`61af4d8` 出借設定）
 
