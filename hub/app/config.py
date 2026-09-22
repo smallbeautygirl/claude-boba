@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # 共用頻道的 Workflows webhook。沒設個人 webhook 的人走這裡，
     # 用 @mention 讓當事人收到紅點通知。
     teams_channel_webhook: str = ""
+    # 那個頻道叫什麼，原字串直接顯示在通知設定頁上。跟 webhook 放在一起是
+    # 刻意的：分開放的話，webhook 改指到別的頻道時，畫面上的名字不會跟著變。
+    teams_channel_name: str = ""
     # 掛債通知要不要進頻道。開著比較符合這個產品的社交機制，
     # 但也可能讓人不好意思借。
     teams_channel_debts: bool = True

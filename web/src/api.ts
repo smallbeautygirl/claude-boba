@@ -84,6 +84,11 @@ export interface Me {
   email: string;
   display_name: string;
   has_teams_webhook: boolean;
+  /** 共用頻道的 webhook 有沒有在 hub 上設好。沒有的話，沒設個人 webhook 的人
+      一則通知都收不到 —— 通知設定頁要靠這個才講得出實話。 */
+  channel_notifications: boolean;
+  /** 那個頻道叫什麼，原字串照顯示。 */
+  channel_name: string;
 }
 
 export interface WorkerRow {

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import notify, observ
 from ..auth import require_user
+from ..config import settings
 from ..db import get_session
 from ..models import User
 
@@ -35,6 +36,10 @@ async def me(user: User = Depends(require_user)) -> dict:
         "email": user.email,
         "display_name": user.display_name,
         "has_teams_webhook": bool(user.teams_webhook_url),
+        # 沒設個人 webhook 的人到底收不收得到通知，取決於這個 env 有沒有設。
+        # 前端要能講實話，就得知道這件事。
+        "channel_notifications": bool(settings.teams_channel_webhook),
+        "channel_name": settings.teams_channel_name,
     }
 
 

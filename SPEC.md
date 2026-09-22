@@ -501,51 +501,53 @@ worker                                   Hub
 | ~~5~~ | ✅ **已解**：內部網路 + tinyproxy 白名單實測通過，Claude Code 吃 `HTTPS_PROXY`（見下方） | — |
 | ~~5b~~ | ✅ **已決**：worker 跑在 host 上，自己 `docker run` job。不掛 docker.sock | — |
 | 6 | ~~cache read / cache write 的官方費率~~ | 降級：#1b 已答，計費改採信 `total_cost_usd`，不再需要自算費率 |
-| 7 | **Cowork 的 local session 能不能 `--resume`？** 見下方 | 不能的話，Cowork 使用者只能貼上；能的話 BD/PM 也有真正的續跑 |
+| ~~7~~ | ✅ **已解**：Cowork 的 local session `--resume` 得起來，而且 transcript 就在 `~/.claude/projects/`，跟 CLI 同一棵樹。原本記的路徑結構是錯的（見下方） | — |
 
-### #7 Cowork 的 local session 能不能續跑（未驗）
+### ~~#7 Cowork 的 local session 能不能續跑~~ → 已解（2026-09-22 實測）
 
 **為什麼重要：** BD/PM 主要用 Cowork（非寫程式的 agentic 工作），而那正是他們會把
-額度燒爆的地方 —— 也就是這個系統存在的情境。如果他們的 session 能 `--resume`，
-「上傳 `.jsonl`」就不再是 RD 專屬的路。
+額度燒爆的地方 —— 也就是這個系統存在的情境。
 
-Cowork 有兩種執行模式，只有後者會在本機留檔：
+**結論：通了，而且比預期簡單。** `claude --resume <transcript>` 完整接上一個真實的
+Cowork local session，不是退化成「把文字當上下文重貼」：
 
-- **Cloud session** —— 跑在 Anthropic 伺服器上，session 存在 Claude 帳號裡
-  （所以手機上打得開同一個工作）。本機沒有 transcript。
-- **Local session** —— 會寫 JSONL，但**不在 `~/.claude/projects/`**：
+- 回傳的 `session_id` 與原 session 一致 —— 真的接上同一個，不是開了新的
+- `cache_creation_input_tokens: 187031` —— 整份 3.3 MB 的 transcript 都讀進去了
+- 問了一個只有讀過前文才答得出來、又不是常識的細節，答案完全正確且具體
+- `num_turns: 1`、無 tool call、`permission_denials: []` —— 沒有因為找不到原始附件而卡住
 
-  | OS | 路徑 |
-  |---|---|
-  | Linux | `$XDG_CONFIG_HOME/Claude/local-agent-mode-sessions/`（預設 `~/.config/Claude/…`） |
-  | macOS | `~/Library/Application Support/Claude/local-agent-mode-sessions/` |
-  | Windows | `%APPDATA%\Claude\local-agent-mode-sessions\` |
+transcript 刻意先複製到一個與原始 `cwd` 無關的目錄再跑，排除「剛好在同一個工作目錄
+才續得上」。這與 worker 的實際用法一致 —— 容器裡本來就是全新工作目錄。
 
-  社群逆向出來的結構：每個 session 一個 `local_<uuid>.json`（metadata）加一個同名
-  目錄裝 `audit.jsonl`；真正的 transcript 更深一層，在
-  `local-agent-mode-sessions/<org-id>/<user-id>/<sessionId>/.claude/projects/…jsonl`。
+**原本記在這裡的路徑結構是錯的。** 社群逆向猜的是
+`local-agent-mode-sessions/<org>/<user>/<sessionId>/.claude/projects/…jsonl`。
+實測是兩層，而且 `local-agent-mode-sessions/` 裡裝的其實是 plugin/skill 的 manifest，
+**不是** transcript：
 
-**還沒答的就是那一個問題：`claude --resume <那個檔案>` 接不接得起來。**
-「格式讀得懂」與「resume 得起來」是兩件事，而 worker 跑的就是那一行。有兩個理由
-覺得可能可以 —— 那個巢狀路徑結尾就是 Claude Code 自己的佈局，而官方文件說 Cowork
-與 Claude Code 共用架構 —— 但那是推測，spike #2/#3 的教訓就是推測會錯。
+| | 路徑（macOS） | 內容 |
+|---|---|---|
+| metadata | `~/Library/Application Support/Claude/claude-code-sessions/<org>/<user>/local_<uuid>.json` | 標題、`cwd`、model，**以及關鍵的 `cliSessionId`** |
+| **transcript** | `~/.claude/projects/<encoded-cwd>/<cliSessionId>.jsonl` | 跟一般 CLI session **同一個位置、同一種格式** |
 
-**怎麼驗（十分鐘）：** 上傳功能本身就是 harness。用 local 模式跑一個 Cowork
-session → 從上面的路徑撈出 jsonl → 丟進提交頁上傳 → 問一句只有看過前文才答得出來
-的問題。答得出來就通。
+也解釋了為什麼 `--resume` 通得了：Cowork 的 local 模式底層跑的就是 Claude Code CLI
+引擎，寫出來的自然是同一種檔案。
 
-**驗過之前不要把那個路徑寫進畫面。** 把人導去上傳一個會跑出壞結果的檔案，比少給
-一條路徑糟（提交頁目前的找檔指令只涵蓋 `~/.claude/projects/`，是刻意的）。
+**這一點決定了提交頁怎麼寫。** 既然兩種來源的 transcript 在同一棵樹，
+`ls -t ~/.claude/projects/*/*.jsonl` 一行就同時涵蓋 RD 與 Cowork —— 使用者不需要
+知道自己用的是哪個分頁。提交頁因此改成「跑這行、看有沒有檔案」，不再要使用者推理
+自己屬於哪一類（那段文案照職稱、照 app 名稱、照「狀態存在哪」各寫錯過一次）。
 
-**就算通了也有三個保留：**
+**四個保留仍然成立，這次驗證沒有解除任何一條：**
 
-1. **沒有官方 schema。** 全是社群逆向，Anthropic 沒有文件化，隨時可能改。
-2. **會被更新洗掉。** 有回報指出 Desktop 小版本更新會 provision 新的 VM instance，
-   舊 instance 的 session 檔不會搬過去，歷史紀錄消失。
-3. **Linux 上的 Desktop 還在 beta**，行為可能與 macOS/Windows 不同。
+1. **沒有官方 schema。** 社群逆向，Anthropic 沒有文件化，隨時可能改。
+2. **會被更新洗掉。** Desktop 小版本更新會 provision 新的 VM instance，舊 instance
+   的 session 檔不會搬過去。
+3. **Linux 上的 Desktop 還在 beta。**
+4. **只在 macOS 上驗過** —— Linux 是否走同一套標準路徑未驗。
 
-所以即使 spike 通過，這條路也該標成「可用但不保證」，不能讓它變成 BD/PM 的**唯一**
-指引 —— 貼上仍然是那條一定會動的路。
+所以調性維持：**可用但不保證**，不能變成 BD/PM 的**唯一**指引，貼上仍然是那條一定
+會動的路。提交頁那行指令是經驗性的（跑了看有沒有），所以 Linux 的未知不會害到
+使用者 —— 沒有就是沒有，自然落到貼上那一邊。
 
 ### ~~`--bare` 與 OAuth 憑證互斥~~ → 已解（2026-09-21 實測）
 

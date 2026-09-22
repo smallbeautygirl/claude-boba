@@ -74,19 +74,23 @@ Model：  [ Sonnet（預設） ▾ ]
 Claude Code 的 PM 就有 `.jsonl`，照職稱寫會讓他以為這功能不關他的事。
 畫面上要問的是「這個對話是在你電腦上用 Claude Code 跑的嗎」。
 
-注意有**兩個**桌面 app，很容易混淆：
+**不要在畫面上叫使用者判斷自己屬於哪一類。** 這段文案照職稱寫過、照 app 名稱
+寫過、照「session 存在哪」寫過，三次都錯 —— 那需要使用者（和寫文案的人）懂產品
+架構，而產品架構會變。
 
-| | 是什麼 | 有 `.jsonl` 嗎 |
-|---|---|---|
-| **Claude** 桌面 app | 通用助理的聊天，claude.ai 的 app 版。對話存伺服器 | ❌ |
-| **Claude Code** 桌面 app | 編碼 agent 的桌面介面，跑在你機器上 | ✅ |
+改成讓指令當測試：`ls -t ~/.claude/projects/*/*.jsonl | head -5`，有東西就上傳，
+沒有就貼上。這行之所以夠用，是因為 **Cowork 的 local session 也寫在
+`~/.claude/projects/`**，跟 CLI 同一棵樹（SPEC §11 spike #7 實測）。
 
-**而「沒有 `.jsonl`」不是少了一個功能。**
+| 來源 | 本機有 transcript？ |
+|---|---|
+| 終端機 `claude`、VS Code / JetBrains 擴充、Desktop 的 Code 分頁 | ✅ |
+| Cowork **local** session | ✅ 同一棵樹。metadata 另放，靠 `cliSessionId` 對應 |
+| Cowork **cloud** session | ❌ 跑在 Anthropic 伺服器，session 存帳號 |
+| Chat、claude.ai、手機 | ❌ |
 
-`claude --resume` 只吃 Claude Code 的 session 檔。claude.ai 與桌面 app 的對話
-是另一套東西，不存在可以餵進 `--resume` 的匯出格式 —— 就算生得出一個檔案，
-worker 那行 `claude --resume <file>` 也用不了它。所以這不是我們少做一條路，
-是那條路在技術上不存在。
+**而「沒有 transcript」不是少了一個功能。** 那些對話跑在伺服器上，不存在可以餵進
+`--resume` 的匯出格式；就算生得出一個檔案，裝的資訊也跟貼上一模一樣。
 
 而**對 BD/PM 來說，貼上損失的東西遠比對 RD 少**：`--resume` 比貼上多帶的是
 工具呼叫的結果與本機檔案狀態，而 claude.ai 的對話本來就沒有這些。他們真正
