@@ -588,6 +588,14 @@ function Reactions({
                  useTheme()：picker 只在打開的那一刻才存在，而 useTheme 的 effect
                  會再寫一次 document 的屬性，那不該由一個彈出選單來做。 */
               theme={PICKER_THEME[readTheme()] as Theme}
+              /* 底下那條「What's Your Mood?」預覽列關掉。它是給「挑一顆 emoji
+                 插進文字」那種情境用的 —— 這裡挑完就直接送出，預覽的那一顆
+                 從來不會被看第二眼，只占高度。 */
+              previewConfig={{ showPreview: false }}
+              /* 壓小。預設尺寸會蓋掉下面一整則願望，而這個選單是**暫時**的
+                 東西：它擋住的內容正是你按完之後要回去看的。 */
+              width={300}
+              height={360}
             />
           </Suspense>
         </div>
