@@ -103,3 +103,67 @@ def test_resume_file_is_never_uploaded_as_output(tmp_path: Path) -> None:
 
     names = {str(p.relative_to(tmp_path)) for p in _collect_artifacts(tmp_path)}
     assert names == {"real-output.md"}
+
+
+# ---- 附件：輸入檔的進出 ----
+
+
+def test_untouched_inputs_are_not_returned_as_output(tmp_path: Path) -> None:
+    """五份沒動過的 PDF 出現在「產出的檔案」裡只是噪音。"""
+    from worker import _collect_artifacts, _digest
+
+    _scaffold(tmp_path)
+    (tmp_path / "來源.pdf").write_bytes(b"%PDF-1.4 original")
+    inputs = {"來源.pdf": _digest(tmp_path / "來源.pdf")}
+
+    assert _collect_artifacts(tmp_path, inputs) == []
+
+
+def test_modified_inputs_are_returned(tmp_path: Path) -> None:
+    """「幫我改這份簡報」的成果就是那個檔案本身。
+
+    照檔名排除的話使用者會什麼都拿不到 —— 這是這個判斷的核心。
+    """
+    from worker import _collect_artifacts, _digest
+
+    _scaffold(tmp_path)
+    deck = tmp_path / "deck.pptx"
+    deck.write_bytes(b"original")
+    inputs = {"deck.pptx": _digest(deck)}
+
+    deck.write_bytes(b"edited by claude")
+
+    names = {p.name for p in _collect_artifacts(tmp_path, inputs)}
+    assert names == {"deck.pptx"}
+
+
+def test_rewriting_identical_content_is_still_untouched(tmp_path: Path) -> None:
+    """有些工具會原樣重寫檔案。用 mtime 判斷會誤判，用內容雜湊不會。"""
+    import os
+    import time
+
+    from worker import _collect_artifacts, _digest
+
+    _scaffold(tmp_path)
+    f = tmp_path / "note.txt"
+    f.write_bytes(b"same")
+    inputs = {"note.txt": _digest(f)}
+
+    time.sleep(0.01)
+    f.write_bytes(b"same")
+    os.utime(f, None)
+
+    assert _collect_artifacts(tmp_path, inputs) == []
+
+
+def test_new_files_are_returned_even_with_inputs_present(tmp_path: Path) -> None:
+    from worker import _collect_artifacts, _digest
+
+    _scaffold(tmp_path)
+    src = tmp_path / "input.csv"
+    src.write_text("a,b")
+    inputs = {"input.csv": _digest(src)}
+    (tmp_path / "report.md").write_text("分析結果")
+
+    names = {p.name for p in _collect_artifacts(tmp_path, inputs)}
+    assert names == {"report.md"}

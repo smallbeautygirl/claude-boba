@@ -130,6 +130,9 @@ class Job(Base):
         UUID(as_uuid=True), ForeignKey("jobs.id")
     )
     transcript_key: Mapped[str | None] = mapped_column(String(512))
+    # 借用者上傳的輸入檔。worker 會把它們放進工作目錄，Claude 才有東西可讀 ——
+    # 沒有這些，BD 的 job 拿到空目錄卻不報錯，會硬生一份沒有依據的產出。
+    attachment_keys: Mapped[list[str]] = mapped_column(JSONB, default=list)
     output_prefix: Mapped[str | None] = mapped_column(String(512))
 
     # 版本閘門是「記錄 + 警告」，不擋下（SPEC §11 spike 3）

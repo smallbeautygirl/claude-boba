@@ -20,7 +20,12 @@ from fastapi import APIRouter, Depends
 from .. import storage
 from ..auth import require_user
 from ..models import User
-from ..schemas import MAX_TRANSCRIPT_BYTES, UploadTicket
+from ..schemas import (
+    MAX_ATTACHMENT_BYTES,
+    MAX_TRANSCRIPT_BYTES,
+    AttachmentUploadRequest,
+    UploadTicket,
+)
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
@@ -32,4 +37,26 @@ async def create_transcript_upload(user: User = Depends(require_user)) -> Upload
         key=key,
         put_url=storage.presign_put(key),
         max_bytes=MAX_TRANSCRIPT_BYTES,
+    )
+
+
+@router.post("/attachment", response_model=UploadTicket)
+async def create_attachment_upload(
+    body: AttachmentUploadRequest, user: User = Depends(require_user)
+) -> UploadTicket:
+    """要一張附件的上傳票券。一次一個檔，要傳多個就呼叫多次。
+
+    為什麼需要附件：BD 用 Cowork 的工作標的就是一個資料夾裡的檔案。只能搬文字
+    的話，job 拿到的是空工作目錄 —— 而它**不會報錯**，會從貼上的文字硬生一份
+    沒有依據的產出，然後那算「成功」並記一筆人情債。使用者用一杯飲料換到一份
+    瞎編的簡報。
+
+    檔名由 Hub 淨化後放進 key（`storage.attachment_key`）—— key 最後會變成
+    容器裡的檔案路徑。
+    """
+    key = storage.attachment_key(user.id, body.filename)
+    return UploadTicket(
+        key=key,
+        put_url=storage.presign_put(key),
+        max_bytes=MAX_ATTACHMENT_BYTES,
     )

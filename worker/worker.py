@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import shutil
 import subprocess
@@ -163,9 +164,49 @@ def _seed_synced(home: Path) -> None:
             shutil.copytree(src, home / sub, dirs_exist_ok=True, symlinks=False)
 
 
+def _digest(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+async def _download(client: httpx.AsyncClient, url: str, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    async with client.stream("GET", url) as resp:
+        resp.raise_for_status()
+        with target.open("wb") as fh:
+            async for chunk in resp.aiter_bytes():
+                fh.write(chunk)
+
+
+async def _place_attachments(
+    client: httpx.AsyncClient, workdir: Path, attachments: list[dict[str, Any]]
+) -> dict[str, str]:
+    """把借用者的輸入檔放進工作目錄根層，回傳 {相對路徑: 內容雜湊}。
+
+    放根層而不是子目錄，因為 Claude 一進去就該看到它們 —— 這些是 job 的標的。
+
+    回傳的雜湊供 `_collect_artifacts()` 判斷哪些是「原封不動的輸入」。
+    """
+    placed: dict[str, str] = {}
+    for item in attachments:
+        name = Path(item["name"]).name or "attachment"
+        target = workdir / name
+        # 同名就加序號，不要讓後一個蓋掉前一個 —— 使用者傳了兩份就是要兩份。
+        stem, suffix, n = target.stem, target.suffix, 2
+        while target.exists():
+            target = workdir / f"{stem}-{n}{suffix}"
+            n += 1
+        await _download(client, item["url"], target)
+        placed[target.name] = _digest(target)
+    return placed
+
+
 async def _prepare_workdir(
     client: httpx.AsyncClient, job: dict[str, Any]
-) -> tuple[Path, str]:
+) -> tuple[Path, str, dict[str, str]]:
     """建好這個 job 的工作目錄，回傳 (目錄, 要 resume 的檔名)。
 
     每個 job 一個全新目錄，跑完刪掉。HOME 也在裡面（`.home/`），所以出租者的
@@ -197,7 +238,9 @@ async def _prepare_workdir(
             with target.open("wb") as fh:
                 async for chunk in resp.aiter_bytes():
                     fh.write(chunk)
-    return workdir, resume_name
+
+    inputs = await _place_attachments(client, workdir, job.get("attachments") or [])
+    return workdir, resume_name, inputs
 
 
 # 這兩個目錄絕對不能上傳。
@@ -209,7 +252,9 @@ _NEVER_UPLOAD = {HOME_DIR, ".claude"}
 _NOT_OUTPUT = {"resume.jsonl"}
 
 
-def _collect_artifacts(workdir: Path) -> list[Path]:
+def _collect_artifacts(
+    workdir: Path, inputs: dict[str, str] | None = None
+) -> list[Path]:
     """挑出這個 job 真正產出的檔案。
 
     排除規則寫得保守，因為錯一次的後果是把出租者的憑證上傳到 S3：
@@ -226,6 +271,12 @@ def _collect_artifacts(workdir: Path) -> list[Path]:
             continue
         if path.is_symlink() or not path.is_file():
             continue
+        # 借用者自己傳進來的檔案，原封不動就不要再傳回去 —— 五份沒動過的 PDF
+        # 出現在「產出的檔案」裡只是噪音。但**改過的要傳**：
+        # 「幫我改這份簡報」的成果就是那個檔案，照檔名排除會讓人什麼都拿不到。
+        # 用內容雜湊比對而不是 mtime：有些工具會原樣重寫檔案，mtime 會誤判。
+        if inputs and (before := inputs.get(str(rel))) and _digest(path) == before:
+            continue
         try:
             resolved = path.resolve(strict=True)
             resolved.relative_to(workdir.resolve())
@@ -236,9 +287,9 @@ def _collect_artifacts(workdir: Path) -> list[Path]:
 
 
 async def _upload_artifacts(
-    client: httpx.AsyncClient, job_id: str, workdir: Path
+    client: httpx.AsyncClient, job_id: str, workdir: Path, inputs: dict[str, str]
 ) -> int:
-    files = _collect_artifacts(workdir)
+    files = _collect_artifacts(workdir, inputs)
     if not files:
         return 0
 
@@ -306,7 +357,7 @@ async def _upload_transcript(client: httpx.AsyncClient, url: str, path: Path) ->
 
 async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     job_id = job["job_id"]
-    workdir, resume_name = await _prepare_workdir(client, job)
+    workdir, resume_name, inputs = await _prepare_workdir(client, job)
 
     env = {
         "JOB_WORKDIR": str(workdir),
@@ -349,7 +400,7 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         uploaded = await _upload_transcript(client, put_url, found)
 
     try:
-        n = await _upload_artifacts(client, job_id, workdir)
+        n = await _upload_artifacts(client, job_id, workdir, inputs)
         if n:
             print(f"[worker] 上傳了 {n} 個產出檔案", flush=True)
     except (httpx.HTTPError, OSError) as exc:

@@ -23,6 +23,13 @@ MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024
 TRANSCRIPT_SNIFF_BYTES = 64 * 1024
 TRANSCRIPT_SNIFF_LINES = 5
 
+# 附件（docs/web-spec.md §3）。單一 job 的總量含 transcript 一起算 ——
+# 兩個各自 50 MB 但加起來 100 MB 的 job，worker 要搬的還是 100 MB。
+MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+MAX_ATTACHMENTS_TOTAL_BYTES = 50 * 1024 * 1024
+MAX_JOB_INPUT_BYTES = 100 * 1024 * 1024
+MAX_ATTACHMENTS = 20
+
 
 class JobCreate(BaseModel):
     # 借用者身分由 Authorization header 決定，不接受從 body 指定 ——
@@ -35,6 +42,13 @@ class JobCreate(BaseModel):
     transcript_key: str | None = Field(default=None, max_length=512)
     requested_worker_id: uuid.UUID | None = None
     borrower_cli_version: str | None = Field(default=None, max_length=32)
+    # 借用者先把檔案 PUT 進 MinIO，再把 key 帶過來。Hub 在這裡驗歸屬與大小。
+    attachment_keys: list[str] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
+
+
+class AttachmentUploadRequest(BaseModel):
+    # 原始檔名。Hub 會淨化後放進 key —— job 執行時 Claude 會看到這個名字。
+    filename: str = Field(min_length=1, max_length=255)
 
 
 class UploadTicket(BaseModel):
@@ -103,6 +117,11 @@ class FollowUp(BaseModel):
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
 
 
+class Attachment(BaseModel):
+    name: str
+    url: str
+
+
 class WorkerJob(BaseModel):
     """Hub 派給 worker 的工作。
 
@@ -118,6 +137,8 @@ class WorkerJob(BaseModel):
     # 要接續的 transcript（下載用），與這次跑完要把 transcript 放哪（上傳用）。
     resume_from_url: str | None = None
     transcript_put_url: str | None = None
+    # 借用者的輸入檔。worker 下載進工作目錄，Claude 才有東西可讀。
+    attachments: list[Attachment] = Field(default_factory=list)
 
 
 class EventBatch(BaseModel):

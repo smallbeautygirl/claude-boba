@@ -22,6 +22,9 @@ from ..failures import classify
 from ..models import Artifact, Job, JobEvent, User, Worker
 from ..pricing import label_for
 from ..schemas import (
+    MAX_ATTACHMENT_BYTES,
+    MAX_ATTACHMENTS_TOTAL_BYTES,
+    MAX_JOB_INPUT_BYTES,
     MAX_TRANSCRIPT_BYTES,
     TRANSCRIPT_SNIFF_BYTES,
     TRANSCRIPT_SNIFF_LINES,
@@ -145,14 +148,54 @@ def _check_transcript(key: str, user: User) -> None:
             ) from exc
 
 
+def _check_attachments(keys: list[str], user: User, transcript_bytes: int) -> None:
+    """驗上傳的附件：是你的、存在、不過大。
+
+    **第一項是存取控制。** `attachment_keys` 由客戶端指定，不檢查 prefix 的話
+    任何人都能把 key 指到 `jobs/<別人的 job>/output/…`，讓 worker 把別人的產出
+    放進自己的工作目錄讀走。與 transcript 同一條規則
+    （`.claude/rules/security.md`）。
+    """
+    if len(set(keys)) != len(keys):
+        raise HTTPException(400, "同一個檔案重複帶了兩次")
+
+    total = transcript_bytes
+    for key in keys:
+        if not storage.owns_attachment(key, user.id):
+            # 「不是你的」與「不存在」回同一個 404 —— 分開講等於給人探測
+            # 別人 job id 的工具。
+            raise HTTPException(404, "找不到這個上傳的檔案，請重新上傳")
+        size = storage.stat(key)
+        if size is None:
+            raise HTTPException(404, "找不到這個上傳的檔案，請重新上傳")
+        if size == 0:
+            raise HTTPException(400, f"{storage.attachment_name(key)} 是空的")
+        if size > MAX_ATTACHMENT_BYTES:
+            mb = MAX_ATTACHMENT_BYTES // (1024 * 1024)
+            raise HTTPException(413, f"{storage.attachment_name(key)} 超過 {mb} MB")
+        total += size
+
+    attachments_total = total - transcript_bytes
+    if attachments_total > MAX_ATTACHMENTS_TOTAL_BYTES:
+        mb = MAX_ATTACHMENTS_TOTAL_BYTES // (1024 * 1024)
+        raise HTTPException(413, f"附件合計超過 {mb} MB")
+    if total > MAX_JOB_INPUT_BYTES:
+        mb = MAX_JOB_INPUT_BYTES // (1024 * 1024)
+        raise HTTPException(413, f"這個 job 的輸入合計超過 {mb} MB")
+
+
 @router.post("", response_model=JobDetail, status_code=201)
 async def create_job(
     body: JobCreate,
     user: User = Depends(require_user),
     session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
+    transcript_bytes = 0
     if body.transcript_key:
         _check_transcript(body.transcript_key, user)
+        transcript_bytes = storage.stat(body.transcript_key) or 0
+    if body.attachment_keys:
+        _check_attachments(body.attachment_keys, user, transcript_bytes)
 
     job = Job(
         borrower_id=user.id,
@@ -161,6 +204,7 @@ async def create_job(
         # 帶了 session 檔就是真的續跑，不是把對話當文字重貼一次。
         source_type=SourceType.TRANSCRIPT if body.transcript_key else body.source_type,
         transcript_key=body.transcript_key,
+        attachment_keys=list(body.attachment_keys),
         requested_worker_id=body.requested_worker_id,
         borrower_cli_version=body.borrower_cli_version,
         status=JobStatus.QUEUED,

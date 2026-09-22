@@ -24,6 +24,7 @@ from ..pricing import LABELS, MIN_DEBT_USD, tier_for
 from ..schemas import (
     MAX_ARTIFACT_BYTES,
     ArtifactManifest,
+    Attachment,
     EventBatch,
     JobResult,
     WorkerConfig,
@@ -104,6 +105,10 @@ async def poll(
             storage.presign_get(job.transcript_key) if job.transcript_key else None
         ),
         transcript_put_url=storage.presign_put(storage.transcript_key(job.id)),
+        attachments=[
+            Attachment(name=storage.attachment_name(key), url=storage.presign_get(key))
+            for key in (job.attachment_keys or [])
+        ],
     )
 
 

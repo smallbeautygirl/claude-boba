@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import uuid
+from pathlib import PurePosixPath
 
 import boto3
 from botocore.client import Config
@@ -63,6 +64,37 @@ def upload_key(user_id: uuid.UUID) -> str:
 
 def owns_upload(key: str, user_id: uuid.UUID) -> bool:
     return key.startswith(f"uploads/{user_id}/") and key.endswith(".jsonl")
+
+
+# 附件與 transcript 分開放，因為歸屬檢查的規則不同（副檔名不限）。
+_ATTACH_PREFIX = "attachments"
+
+
+def attachment_key(user_id: uuid.UUID, filename: str) -> str:
+    """借用者上傳的附件。
+
+    保留原始檔名，因為 job 執行時 Claude 會在工作目錄看到它 ——
+    `a3f2.bin` 跟 `Q3-營收.xlsx` 對它的幫助差很多。
+
+    檔名先淨化：只取 basename、去掉路徑分隔與 `..`。key 會被直接接成
+    容器裡的檔案路徑，讓使用者控制那段等於讓他寫到工作目錄外
+    （`.claude/rules/security.md`：絕不把使用者輸入直接接進檔案路徑）。
+    """
+    return f"{_ATTACH_PREFIX}/{user_id}/{uuid.uuid4()}/{safe_filename(filename)}"
+
+
+def safe_filename(name: str) -> str:
+    cleaned = PurePosixPath(name.replace("\\", "/")).name.strip()
+    cleaned = cleaned.lstrip(".") or "attachment"
+    return cleaned[:120]
+
+
+def owns_attachment(key: str, user_id: uuid.UUID) -> bool:
+    return key.startswith(f"{_ATTACH_PREFIX}/{user_id}/")
+
+
+def attachment_name(key: str) -> str:
+    return PurePosixPath(key).name
 
 
 def stat(key: str) -> int | None:
