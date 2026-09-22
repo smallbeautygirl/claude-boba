@@ -214,6 +214,7 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 | `docs/web-spec.md` | 共用 | 小心：兩邊都會改，改前先看一次現況 |
 | `SPEC.md`、`CLAUDE.md` | 共用 | 同上 |
 | `web/src/index.css`、`App.tsx`、`index.html`、`theme.ts`、`pages/Leaderboard.tsx` | session C | 🟡 告一段落（`03782d9`）|
+| **託管模型第一階段的 C 半**：`web/src/pages/MyWorker.tsx` 整頁重寫、`App.tsx` 分頁改名、`web/src/**` 的詞彙替換、`web/src/api.ts` | session C（2026-09-22 接） | 🔴 進行中。**`hub/**` 與 `worker/**` 那半是 A 的，我不會碰**；照〈待派工〉那份契約寫，A 的端點還沒好就用 mock |
 
 ⚠️ **「session B」目前指涉兩個不同的 session**（2026-09-22）。A 把附件上傳派給 B，
 接下派工的那個在讀規格，同一時間另一個也自認是 B 的把整套實作寫完並 commit 成
