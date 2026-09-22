@@ -4,8 +4,9 @@
 // 一旦按鈕存在，沒按也會有人猜想。而它要解決的問題在 10 人團隊裡用講的比較快。
 
 import { useCallback, useEffect, useState } from "react";
-import { api, type WorkerRow } from "../api";
+import { api, type LendingSettings, type WorkerRow } from "../api";
 import { useAuth } from "../auth";
+import { Lending } from "./Lending";
 
 const QUOTA: Record<WorkerRow["quota"], string> = {
   green: "🟢 充裕",
@@ -16,6 +17,10 @@ const QUOTA: Record<WorkerRow["quota"], string> = {
 
 export function MyWorker() {
   const { me } = useAuth();
+  // 過渡期：舊 hub 回 worker 陣列，新 hub 回一份出借設定。
+  // 兩種都接得住 —— 前後端不可能同一秒上線，中間那段時間使用者還在用這頁。
+  // 而且這樣「授權」那顆按鈕只有在新後端真的在線上時才會出現。
+  const [settings, setSettings] = useState<LendingSettings | null>(null);
   const [workers, setWorkers] = useState<WorkerRow[]>([]);
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<string | null>(null);
@@ -25,7 +30,18 @@ export function MyWorker() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    api.listWorkers().then(setWorkers).catch(() => setWorkers([]));
+    api
+      .lending()
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setSettings(null);
+          setWorkers(data);
+        } else {
+          setSettings(data);
+          setWorkers([]);
+        }
+      })
+      .catch(() => setWorkers([]));
   }, []);
   useEffect(load, [load]);
 
@@ -57,9 +73,16 @@ export function MyWorker() {
           「在自己機器上代跑」那條路 —— 那條仍然支援，所以這裡還不能改寫成
           託管模型的說法，整頁重寫是另一筆。 */}
       <p className="lede">
-        借出額度給同事。這條路是在你自己的電腦上跑，Claude 憑證不會離開那台機器。
+        {settings
+          ? "借出額度給同事。授權一次就好，之後你只需要偶爾看帳本、去收飲料。"
+          : "借出額度給同事。這條路是在你自己的電腦上跑，Claude 憑證不會離開那台機器。"}
       </p>
 
+
+      {settings && <Lending settings={settings} reload={load} />}
+
+      {!settings && (
+        <>
       {mine.map((w) => (
         <div key={w.id} className="worker">
           <div>
@@ -177,6 +200,8 @@ export function MyWorker() {
             </a>
           </p>
           <p className="hint">登入憑證跟管理員拿，畫面上不會有。</p>
+        </>
+      )}
         </>
       )}
     </div>

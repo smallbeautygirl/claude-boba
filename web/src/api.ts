@@ -115,6 +115,27 @@ export interface WorkerRow {
   max_concurrency?: number;
 }
 
+/** 一位代跑者的出借條件。新的託管模型下他沒有機器，所以不是一份清單，
+    就是一份設定（CONTEXT.md：出借設定）。
+    **token 永遠不在這裡面** —— security.md 紅線 2，任何回應都不帶它。 */
+export interface LendingSettings {
+  has_token: boolean;
+  budget_usd: string;
+  available_models: string[];
+  allow_full_network: boolean;
+  accepting: boolean;
+  online: boolean;
+}
+
+/** 站台的 model 白名單。順序即偏好順序，第一個是預設 —— 預設不是 Opus，
+    因為委託者不會知道差別、會直接送出，而那等於每個 job 貴 2.5 倍（web-spec §3）。
+    放在這裡而不是某一頁裡面：提交頁與出借設定頁都要用同一份，
+    兩份會各自漂移。對應 hub 的 `schemas.SITE_MODELS`。 */
+export const SITE_MODELS = [
+  { value: "sonnet", label: "Sonnet（預設）" },
+  { value: "haiku", label: "Haiku（最省）" },
+];
+
 export interface DebtRow {
   id: string;
   job_id: string;
@@ -336,6 +357,29 @@ export const api = {
       headers: authed({ "content-type": "application/json" }),
       body: JSON.stringify({ name }),
     }).then(json<{ id: string; name: string; token: string }>),
+
+  /** 過渡期：舊 hub 回一個 worker 陣列，新 hub 回一份出借設定（單一物件）。
+      兩種都要接得住 —— 前後端不可能同一秒上線，而中間那段時間使用者還在用。
+      A 的端點落地、舊路徑不再需要之後，這個分岔連同 MyWorker 的舊畫面一起刪。 */
+  lending: () =>
+    fetch(`${HUB}/api/workers`, { headers: authed() }).then(
+      json<LendingSettings | WorkerRow[]>,
+    ),
+
+  updateLending: (patch: Partial<Omit<LendingSettings, "has_token" | "online">>) =>
+    fetch(`${HUB}/api/workers/settings`, {
+      method: "PUT",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify(patch),
+    }).then(json<LendingSettings>),
+
+  /** 開始授權。回的是要讓代跑者去點的網址 —— token 由 hub 自己取回，
+      不經過瀏覽器，也不會出現在任何回應裡。 */
+  startAuthorization: () =>
+    fetch(`${HUB}/api/workers/authorize`, {
+      method: "POST",
+      headers: authed(),
+    }).then(json<{ authorize_url?: string; url?: string }>),
 
   // 只有從來沒跑過 job 的 worker 刪得掉。擋下來時 hub 回 409，訊息會說
   // 跑過幾個 —— 直接顯示那句，不要自己另外編一句。

@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type WorkerRow } from "../api";
+import { api, SITE_MODELS, type WorkerRow } from "../api";
 import { Composer, fmtSize } from "../Composer";
 
 // 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
@@ -18,13 +18,6 @@ const QUOTA: Record<WorkerRow["quota"], string> = {
   red: "🔴",
   unknown: "⚪️",
 };
-
-// 站台白名單。順序即偏好順序，第一個就是預設 —— 預設不是 Opus，因為 BD/PM 不會知道
-// 差別、會直接送出，而那等於每個 job 貴 2.5 倍（web-spec §3）。
-const SITE_MODELS = [
-  { value: "sonnet", label: "Sonnet（預設）" },
-  { value: "haiku", label: "Haiku（最省）" },
-];
 
 // 選單顯示的是「站台白名單 ∩ 該出租者白名單」（web-spec §3）。
 // 寫死一份清單的話，挑了只有 Haiku 的 worker 仍然選得到 Sonnet，要等 job 送出去才失敗 ——

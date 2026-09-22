@@ -376,6 +376,10 @@ button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
   color: var(--accent); font-weight: 500;
 }
 
+/* 藥丸列後面直接接一塊面板時要留空隙。.chips 自己不帶下緣（它在指令選擇器
+   裡是貼著標題用的），所以寫在相鄰選擇器上，不去動另一個用法。 */
+.chips + .consent { margin-top: 16px; }
+
 .artifacts { margin-top: 20px; }
 /* 連結長成藥丸按鈕的樣子時，底線要拿掉 —— 不拿的話會變成「有底線的按鈕」，
    兩種語彙疊在一起。 */
