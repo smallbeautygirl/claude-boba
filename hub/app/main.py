@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from alembic.runtime.migration import MigrationContext
@@ -8,6 +9,7 @@ from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import authorize
 from .config import settings
 from .db import engine
 from .routers import admin, auth, commands, jobs, ledger, uploads, worker, workers
@@ -46,8 +48,21 @@ async def lifespan(app: FastAPI):
     # 走到一半，而錯誤會長得像「授權失敗」。
     check_configured()
     ensure_bucket()
-    yield
-    await engine.dispose()
+
+    # 授權 session 的清潔工。沒有它，開了授權頁又關掉的人會留下一個
+    # 永不結束的 `claude setup-token` 子行程。
+    #
+    # 這個 create_task 是它唯一的啟動點 —— 之前沒有人呼叫，那條防禦在正式
+    # 環境一次都沒跑過，而八個生命週期測試全綠，因為它們呼叫的是同步的
+    # `sweep()`，不是這個迴圈。**測試呼叫得到內層函式，不代表外層有人啟動它。**
+    sweeper = asyncio.create_task(authorize.sweeper(), name="authorize-sweeper")
+    try:
+        yield
+    finally:
+        sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper
+        await engine.dispose()
 
 
 app = FastAPI(title="claude-boba hub", lifespan=lifespan)
