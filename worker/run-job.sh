@@ -59,6 +59,12 @@ models_json=$(printf '%s' "$MODELS" | python3 -c \
 # 隔離性完全相同 —— 每個 job 一個全新目錄，worker 跑完就刪，出租者的個人
 # settings / plugins / skills 一樣不存在。差別只在 transcript 活得過容器，
 # 這是「接著問」的前提（SPEC.md §4.2）。
+# `--allowedTools` 裡有 Write 是刻意的（2026-09-22 加回）。
+#
+# 少了它擋不住任何事 —— Bash 本來就在清單裡，能跑 Bash 就能寫任何檔案。
+# 它唯一的效果是讓每個要產出檔案的 job 多繞一次路（heredoc），而那幾輪是燒
+# 代跑者的額度、記在委託者帳上。真正的邊界是容器、egress 白名單與
+# --max-budget-usd，那三個都還在。
 exec timeout --signal=TERM --kill-after=20 "$TIMEOUT" \
   docker run --rm \
     --name "boba-job-$JOB_ID" \
@@ -74,6 +80,6 @@ exec timeout --signal=TERM --kill-after=20 "$TIMEOUT" \
       --output-format stream-json --verbose \
       --max-budget-usd "$BUDGET" \
       --settings "{\"availableModels\": $models_json}" \
-      --allowedTools "Read,Edit,Bash" \
+      --allowedTools "Read,Edit,Write,Bash" \
       --permission-mode acceptEdits --permission-prompts none \
       < /dev/null

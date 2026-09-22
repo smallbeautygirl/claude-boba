@@ -7,9 +7,14 @@
 ARG NODE_VERSION=22.23.2
 FROM node:${NODE_VERSION}-bookworm-slim
 
+# `unzip`：委託者帶 codebase 進來的路徑是「壓成一個含 .git 的 zip」
+# （hub/app/data/commands.json 的工程組 hint）。python3 的 zipfile 也解得開，
+# 但 Claude 的第一個念頭一定是 `unzip repo.zip` —— 少了它，每個 code job 開頭
+# 都要多繞幾輪，而那幾輪是燒代跑者的額度。理由同下面那排 python 套件：
+# 預裝比放寬白名單便宜。
 ARG CLAUDE_CODE_VERSION=2.1.278
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git python3 python3-pip \
+ && apt-get install -y --no-install-recommends ca-certificates git python3 python3-pip unzip \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && npm cache clean --force

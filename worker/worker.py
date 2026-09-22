@@ -17,6 +17,8 @@ import shutil
 import socket
 import subprocess
 import sys
+import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +35,16 @@ FLUSH_INTERVAL_SECONDS = 0.5
 CONTROL_POLL_SECONDS = 3.0
 # long-poll 的 client timeout 要比 Hub 的 hold 時間長，否則每次都是客戶端先斷。
 POLL_TIMEOUT_SECONDS = 60.0
+
+# 帶 codebase 進來的 job 用這個，而不是 `settings.timeout_seconds`。
+#
+# timeout 在這裡**不是成本閘門** —— `--max-budget-usd` 才是，而它封在代跑者自己
+# 在出借設定裡填的上限。所以拉長不會讓他多花錢；真正被佔用的是 `max_concurrency`
+# 的兩個執行位之一，而那個代價落在其他委託者身上。
+#
+# 那 timeout 還留著做什麼：擋**不花 token 的卡死**。一個卡在 git、或卡在無限
+# 迴圈 Bash 的 job 永遠撞不到 budget，會一直佔著位子。
+LONG_TIMEOUT_SECONDS = 1800
 
 
 class Settings(BaseSettings):
@@ -213,6 +225,26 @@ async def _place_attachments(
     return placed
 
 
+# 解一個 zip、摸清 repo 結構、跑一輪測試，十分鐘很容易不夠。
+#
+# 條件是 zip 而不是「有沒有附件」：zip 是唯一一個「慢」的原因直接寫在條件裡的。
+# 一張 200 KB 的截圖也拿到 30 分鐘沒有道理，而「看指令」會漏掉帶著 repo 問一般
+# 問題的那些。
+_SLOW_INPUT_SUFFIXES = {".zip"}
+
+
+def timeout_for_inputs(inputs: dict[str, str]) -> int:
+    """這個 job 給幾秒。
+
+    長的那個是**下限不是上限** —— 主機管理者把 TIMEOUT_SECONDS 調高，不該因為
+    附件裡有 zip 就被砍回來。
+    """
+    slow = any(Path(name).suffix.lower() in _SLOW_INPUT_SUFFIXES for name in inputs)
+    if not slow:
+        return settings.timeout_seconds
+    return max(settings.timeout_seconds, LONG_TIMEOUT_SECONDS)
+
+
 async def _prepare_workdir(
     client: httpx.AsyncClient, job: dict[str, Any]
 ) -> tuple[Path, str, dict[str, str]]:
@@ -257,12 +289,54 @@ async def _prepare_workdir(
 #           上傳它等於把 Anthropic 憑證送上 S3
 #   .claude/ 是我們自己複製進去的 curated skills，不是 job 的產出
 HOME_DIR = ".home"
-_NEVER_UPLOAD = {HOME_DIR, ".claude"}
+# `.git/` 不是憑證問題，是噪音問題：Claude 跑過 `git add` 之後 objects 目錄裡會多出
+# 一堆 zip 裡沒有的檔案，而沒有人想一個一個下載 git 的內部檔案。它們還會吃掉
+# MAX_ARTIFACTS 的名額，把真正的產出擠掉。
+_NEVER_UPLOAD = {HOME_DIR, ".claude", ".git"}
 _NOT_OUTPUT = {"resume.jsonl"}
 
 
+# 解開的 zip 不是產出（docs/web-spec.md §3）。
+#
+# 委託者帶 codebase 進來的路徑是「壓成一個 zip，Claude 自己解」。解開之後那棵樹
+# 對 _collect_artifacts() 而言全是新檔案 —— 不排除的話「產出的檔案」會被 50 個
+# repo 檔塞滿，而 Claude 真正寫出來的東西被 MAX_ARTIFACTS 擠掉。
+#
+# 比對用 zip 自己的 (大小, CRC32) 而**不是路徑**：`unzip` 可能解在根層、也可能解進
+# 一個子目錄，路徑對不上規則就失效了。內容一樣就是沒動過，解在哪裡都一樣。
+# 改過的照樣傳回去 —— 與既有附件那條規則一致。
+#
+# 只讀中央目錄（`namelist` / `infolist`），不解壓縮，所以 zip bomb 在這裡不成立。
+_ZIP_SUFFIX = ".zip"
+_MAX_ZIP_MEMBERS = 50_000
+
+
+def unpacked_fingerprints(workdir: Path) -> set[tuple[int, int]]:
+    """工作目錄裡每個 zip 的成員指紋 `{(大小, CRC32)}`。沒有 zip 就是空的。"""
+    seen: set[tuple[int, int]] = set()
+    for path in workdir.rglob(f"*{_ZIP_SUFFIX}"):
+        rel = path.relative_to(workdir)
+        if rel.parts[0] in _NEVER_UPLOAD or path.is_symlink() or not path.is_file():
+            continue
+        try:
+            with zipfile.ZipFile(path) as zf:
+                for info in zf.infolist()[:_MAX_ZIP_MEMBERS]:
+                    if not info.is_dir():
+                        seen.add((info.file_size, info.CRC))
+        except (zipfile.BadZipFile, OSError) as exc:
+            # 壞掉的 zip 只代表「沒有東西可以排除」，不該讓上傳整個爆掉。
+            print(f"[worker] 讀不了 {rel} 的內容清單：{exc!r}", flush=True)
+    return seen
+
+
+def _fingerprint(path: Path) -> tuple[int, int]:
+    return (path.stat().st_size, zlib.crc32(path.read_bytes()) & 0xFFFFFFFF)
+
+
 def _collect_artifacts(
-    workdir: Path, inputs: dict[str, str] | None = None
+    workdir: Path,
+    inputs: dict[str, str] | None = None,
+    unpacked: set[tuple[int, int]] | None = None,
 ) -> list[Path]:
     """挑出這個 job 真正產出的檔案。
 
@@ -286,6 +360,13 @@ def _collect_artifacts(
         # 用內容雜湊比對而不是 mtime：有些工具會原樣重寫檔案，mtime 會誤判。
         if inputs and (before := inputs.get(str(rel))) and _digest(path) == before:
             continue
+        # 從 zip 裡原封不動解出來的，同樣是「傳進去的東西」。
+        if unpacked and path.suffix.lower() != _ZIP_SUFFIX:
+            try:
+                if _fingerprint(path) in unpacked:
+                    continue
+            except OSError:
+                pass
         try:
             resolved = path.resolve(strict=True)
             resolved.relative_to(workdir.resolve())
@@ -298,7 +379,7 @@ def _collect_artifacts(
 async def _upload_artifacts(
     client: httpx.AsyncClient, job_id: str, workdir: Path, inputs: dict[str, str]
 ) -> int:
-    files = _collect_artifacts(workdir, inputs)
+    files = _collect_artifacts(workdir, inputs, unpacked_fingerprints(workdir))
     if not files:
         return 0
 
@@ -413,7 +494,7 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     env = {
         "JOB_WORKDIR": str(workdir),
         "CLAUDE_CREDENTIALS": settings.claude_credentials,
-        "TIMEOUT_SECONDS": str(settings.timeout_seconds),
+        "TIMEOUT_SECONDS": str(timeout_for_inputs(inputs)),
         "JOB_BUDGET_USD": str(job.get("job_budget_usd", "5")),
         "AVAILABLE_MODELS": ",".join(allowed),
         # 網路模式也是那位代跑者的條件。空字串 = 走白名單 proxy（預設）。

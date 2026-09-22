@@ -16,7 +16,10 @@
 所有決策與理由在 [SPEC.md](SPEC.md)（系統）與 [docs/web-spec.md](docs/web-spec.md)（畫面）。
 Phase 0 的六項 spike 全數通過，紀錄在 SPEC.md §11 —— 其中四項推翻了原本的設計。
 
-尚未實作：認證（Observ）、人情債帳本、排行榜、Teams 通知、檔案上傳。
+尚未實作：認證（Observ）、人情債帳本、排行榜、Teams 通知。
+
+檔案上傳已完成（2026-09-22）：session 檔 `.jsonl` 走 `--resume`，其他附件平鋪進工作
+目錄；要帶整個專案就壓成一個含 `.git` 的 zip。
 
 ## 跑起來
 

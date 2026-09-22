@@ -166,9 +166,22 @@ def presign_put(key: str) -> str:
     )
 
 
-def presign_get(key: str) -> str:
+def presign_get(key: str, *, filename: str | None = None) -> str:
+    """短效期下載連結。
+
+    `filename` 會寫進 `Content-Disposition`，**不能改用前端的 `<a download>`**：
+    預簽 URL 指向 MinIO（另一個 origin），跨 origin 時瀏覽器會忽略 `download`
+    的值，檔案會照 key 的最後一段落地。而 transcript 的檔名就是 session id ——
+    Claude Code 靠它認 session，落地成 `transcript.jsonl` 就 `--resume` 不到。
+    """
+    params: dict[str, str] = {"Bucket": settings.s3_bucket, "Key": key}
+    if filename:
+        # 檔名由我們產生（job id + .jsonl），不是使用者輸入 —— 但仍然只放
+        # 進 filename= 這一個位置，不要讓它有機會插進別的 header 欄位。
+        safe = safe_filename(filename).replace('"', "")
+        params["ResponseContentDisposition"] = f'attachment; filename="{safe}"'
     return _signer().generate_presigned_url(
         "get_object",
-        Params={"Bucket": settings.s3_bucket, "Key": key},
+        Params=params,
         ExpiresIn=PRESIGN_TTL_SECONDS,
     )

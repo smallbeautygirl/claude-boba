@@ -111,7 +111,7 @@
       "id": "engineering",
       "title": "工程",
       "audience": "RD",
-      "hint": "⚠️ 這些多半要有程式碼才有意義，而借用者目前還不能上傳檔案。等檔案上傳做完才會真正好用。",
+      "hint": "這些要有程式碼才有意義：把專案壓成一個 zip，用輸入列的 + 傳上來，Claude 會自己解開。壓的時候連 .git 一起 —— 審查類的指令要靠它才知道你改了什麼。",
       "commands": [
         {
           "name": "/code-review",
@@ -132,6 +132,21 @@
           "name": "/claude-api",
           "label": "Claude API 參考",
           "desc": "model id、定價、參數、串流"
+        },
+        {
+          "name": "/diagnosing-bugs",
+          "label": "查一個 bug",
+          "desc": "從現象追到成因，不亂猜"
+        },
+        {
+          "name": "/tdd",
+          "label": "先寫測試再實作",
+          "desc": "紅燈→綠燈，測試留得住"
+        },
+        {
+          "name": "/resolving-merge-conflicts",
+          "label": "解 merge 衝突",
+          "desc": "zip 要在衝突狀態下壓"
         }
       ]
     }

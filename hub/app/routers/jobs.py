@@ -451,6 +451,51 @@ async def artifacts(
     ]
 
 
+def _transcript_key_for_download(job: Job, user: User) -> str:
+    """把這個 job 的 transcript 帶回自己機器 —— 回傳它在 MinIO 上的 key。
+
+    **存取控制比 `_get_job` 更緊，這是刻意的。** `_get_job` 讓借用者本人與執行該
+    job 的出租者都讀得到內容；下載是把整份對話搬出這個站台，而 SPEC.md §8 的
+    30 天 lifecycle 是隱私承諾的一部分。搬得走的只有那份對話的主人。
+    （對他本身不構成新的外洩：他本來就看得到這份對話。）
+
+    開放條件與 `can_follow_up` 一致 —— 兩顆按鈕在畫面上並排，條件不一致的話
+    其中一顆會是死的。
+    """
+    if user.id != job.borrower_id:
+        raise HTTPException(403, "這不是你的對話")
+    if not job.status.creates_debt or job.transcript_key is None:
+        raise HTTPException(404, "這個 job 沒有留下可以續跑的對話")
+    return job.transcript_key
+
+
+@router.get("/{job_id}/transcript")
+async def transcript(
+    job_id: uuid.UUID,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """短效期下載連結，給「帶回自己的機器續跑」用。
+
+    跟產出檔案同一條路：每次請求現開，不存下來也不寫進通知 ——
+    預簽 URL 本身就是憑證（.claude/rules/security.md）。
+    """
+    job = await _get_job(job_id, session, user)
+    key = _transcript_key_for_download(job, user)
+    # 檔名要是 session id，Claude Code 才認得出來（放進 ~/.claude/projects/
+    # 之後 `--resume` 是用檔名當 session id 找的）。
+    #
+    # 這個名字必須由**預簽 URL 自己**帶（Content-Disposition）—— 前端的
+    # `<a download>` 在跨 origin 時會被瀏覽器忽略，檔案會落地成
+    # `transcript.jsonl`，而那個名字 resume 不到。
+    filename = f"{job.id}.jsonl"
+    return {
+        "filename": filename,
+        "size_bytes": storage.stat(key),
+        "download_url": storage.presign_get(key, filename=filename),
+    }
+
+
 @router.get("/{job_id}/events")
 async def get_events(
     job_id: uuid.UUID,

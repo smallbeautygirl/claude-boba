@@ -54,7 +54,11 @@
 `web/`（React）。
 怎麼跑見 [README.md](README.md)。
 
-尚未實作：排行榜、借用者上傳**附件**（`.jsonl` 的 session 檔已可上傳，走 `claude --resume`）。
+尚未實作：排行榜。
+
+（**附件上傳已完成**，2026-09-22。`.jsonl` 的 session 檔走 `claude --resume`；
+其他檔案平鋪在工作目錄根層。帶 codebase 進來的路徑是「壓成一個含 `.git` 的 zip」——
+見 [web-spec §3](docs/web-spec.md) 與 `hub/app/data/commands.json` 工程組的 hint。）
 
 **許願板已實作，但它是試玩期的鷹架，不是長期功能。** 它有寫死的下架條件（Phase 2 驗完或連續 30 天
 無新內容，先到者為準），拆的時候要連 `emoji-picker-react` 這個相依一起檢查

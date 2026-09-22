@@ -44,6 +44,21 @@ QUEUED_STUCK_SECONDS = 600
 # budget／concurrency／CLI 版本），所以這是一個假設，不是量到的值。有代跑者把
 # 逾時調長的話，他的 job 會提早被列進來。要精確就得讓 worker 回報那個值。
 RUNNING_STUCK_SECONDS = 600 + 120
+# 帶 zip 的 job 在 worker 那邊拿到的是 1800 秒（`worker.timeout_for_inputs`）——
+# 用短的那條線會讓每個健康的 code job 從第 12 分鐘列到第 30 分鐘，而這個面板的
+# 用途是「一眼看出哪個永遠不會結束」，被例行事件塞滿之後它就不再被人看了。
+#
+# ⚠️ **1800 這個數字在 worker 與這裡各有一份，它們必須一致。** 同上面那格的理由：
+# worker 不回報自己的逾時。要消掉這份重複，就得讓 `WorkerConfig` 帶上它。
+ZIP_RUNNING_STUCK_SECONDS = 1800 + 120
+_ZIP_SUFFIX = ".zip"
+
+
+def running_stuck_seconds(attachment_keys: list[str]) -> int:
+    """這個 job 跑多久算卡住。條件與 worker 給長逾時的條件相同：附件裡有 zip。"""
+    if any(key.lower().endswith(_ZIP_SUFFIX) for key in attachment_keys):
+        return ZIP_RUNNING_STUCK_SECONDS
+    return RUNNING_STUCK_SECONDS
 
 
 # 一項檢查的兩種「位址」，刻意分開（web-spec §8 之外的維運頁，但同一條精神）：
@@ -369,6 +384,8 @@ async def stuck_jobs(
     """
     now = datetime.now(UTC)
     queued_cutoff = now - timedelta(seconds=QUEUED_STUCK_SECONDS)
+    # SQL 用短的那條線撈候選，帶 zip 的再於 Python 端剔掉 —— 門檻是每個 job
+    # 各自的，塞不進一個 WHERE 子句。
     running_cutoff = now - timedelta(seconds=RUNNING_STUCK_SECONDS)
 
     rows = await session.execute(
@@ -388,11 +405,16 @@ async def stuck_jobs(
     out = []
     for job, lender_name in rows:
         since = job.started_at or job.claimed_at or job.created_at
+        stuck_for = (now - since).total_seconds()
+        if job.status in (JobStatus.CLAIMED, JobStatus.RUNNING) and stuck_for < (
+            running_stuck_seconds(job.attachment_keys or [])
+        ):
+            continue
         out.append(
             {
                 "id": str(job.id),
                 "status": str(job.status),
-                "stuck_seconds": int((now - since).total_seconds()),
+                "stuck_seconds": int(stuck_for),
                 "lender": lender_name,
             }
         )

@@ -250,6 +250,14 @@ export interface ArtifactRow {
   download_url: string;
 }
 
+/** 把這個 job 的對話帶回自己的機器續跑（docs/web-spec.md）。 */
+export interface TranscriptRow {
+  /** 檔名要是 session id —— Claude Code 是用檔名認 session 的。 */
+  filename: string;
+  size_bytes: number | null;
+  download_url: string;
+}
+
 export interface CommandGroup {
   id: string;
   title: string;
@@ -494,6 +502,11 @@ export const api = {
   artifacts: (id: string) =>
     fetch(`${HUB}/api/jobs/${id}/artifacts`, { headers: authed() }).then(
       json<ArtifactRow[]>,
+    ),
+
+  transcript: (id: string) =>
+    fetch(`${HUB}/api/jobs/${id}/transcript`, { headers: authed() }).then(
+      json<TranscriptRow>,
     ),
 
   // 提交頁的代跑者下拉。**不是 /api/workers** —— 那一支在託管模型下改成回

@@ -103,6 +103,79 @@ async function previewOf(file: File): Promise<string> {
   return "";
 }
 
+// Claude Code 每一則 assistant row 都帶 usage，最後一則就是那一刻的 context 佔用。
+// 所以這個數字是**量到的不是估的** —— 不必 tokenize，讀檔案結尾就有。
+//
+// 分母固定 200K：run-job.sh 只帶 --model，沒有 1M context 的旗標，而站台白名單
+// 只有 sonnet / haiku。
+const CONTEXT_WINDOW = 200_000;
+
+// 超過這裡才講話。門檻不是「快爆了」而是「代跑時會爆」—— 你的 prompt、附件，
+// 以及 job 自己跑出來的那幾十輪，都疊在這份 session 之上。留 30% 給那一段。
+//
+// 不做常駐的百分比：精確數字會讓人盤算（同這個檔案開頭那條線）。八成的人送出的
+// 對話根本不到這個數，這行字對他們不該存在。
+const CONTEXT_WARN_TOKENS = CONTEXT_WINDOW * 0.7;
+
+// ⚠️ 讀出來的數字可能**大於 200K**，那不是 bug。
+// 產生這份 session 的機器可以是 1M context 的設定（實測四份真實檔案，兩份超過
+// 200K，最大 563K）。而 job 跑的是 sonnet / haiku 的 200K —— 所以那種對話不是
+// 「快滿了」，是**一定裝不下**，文案要分成兩種講法。
+
+// 只讀結尾這麼多。最後一則 assistant row 一定在裡面，而整份 50 MB 拉進瀏覽器
+// 只為了讀一個數字，代價與收益不成比例。
+const USAGE_TAIL_BYTES = 512 * 1024;
+
+interface Usage {
+  input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  output_tokens?: number;
+}
+
+/** 這一則佔了多少 context。四個欄位都要算 —— cache_read 是被讀回來的那一段，
+    它一樣在 context 裡，漏掉它算出來的數字會小一個數量級。 */
+function usageTotal(u: Usage): number {
+  return (
+    (u.input_tokens ?? 0) +
+    (u.cache_creation_input_tokens ?? 0) +
+    (u.cache_read_input_tokens ?? 0) +
+    (u.output_tokens ?? 0)
+  );
+}
+
+/** 從 session 檔尾端讀出目前的 context 佔用。讀不出來回 null —— 不要用猜的填。 */
+async function contextUsedTokens(file: File): Promise<number | null> {
+  let tail: string;
+  try {
+    tail = await file.slice(Math.max(0, file.size - USAGE_TAIL_BYTES)).text();
+  } catch {
+    return null;
+  }
+  const lines = tail.split("\n");
+  // 由後往前找第一則有 usage 的。開頭那行多半被 slice 切斷，parse 失敗就跳過。
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const usage = (row as { message?: { usage?: Usage } }).message?.usage;
+    if (usage) {
+      const total = usageTotal(usage);
+      if (total > 0) return total;
+    }
+  }
+  return null;
+}
+
+function fmtTokens(n: number): string {
+  return `${Math.round(n / 1000)}K`;
+}
+
 function fmtWhen(ms: number): string {
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -124,9 +197,13 @@ export function Submit() {
   const [busy, setBusy] = useState(false);
   // 上傳的 session 檔。一選好就上傳，不是等到按送出 ——
   // 50 MB 的檔案在按下送出之後才開始傳，使用者會盯著一顆沒反應的按鈕。
-  const [session, setSession] = useState<{ name: string; size: number; key: string } | null>(
-    null,
-  );
+  const [session, setSession] = useState<{
+    name: string;
+    size: number;
+    key: string;
+    /** 這份對話目前的 context 佔用。null = 檔案裡讀不出 usage。 */
+    tokens: number | null;
+  } | null>(null);
   const [uploading, setUploading] = useState(false);
   // 選了資料夾之後列出來的候選。null = 還沒選過資料夾。
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
@@ -199,8 +276,9 @@ export function Submit() {
     }
     setUploading(true);
     try {
+      const tokens = await contextUsedTokens(file);
       const key = await api.uploadTranscript(file);
-      setSession({ name: file.name, size: file.size, key });
+      setSession({ name: file.name, size: file.size, key, tokens });
       setCandidates(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "上傳失敗，請再試一次");
@@ -343,6 +421,7 @@ export function Submit() {
         {error && <p className="error">{error}</p>}
 
         {session ? (
+          <>
           <div className="resume-picked">
             <div>
               <strong>{session.name}</strong>
@@ -356,6 +435,30 @@ export function Submit() {
               移除
             </button>
           </div>
+          {/* 只在真的會失真的時候講話。平常這行不存在 —— 看到警告卻無事發生的
+              次數一多，這行字就死了。
+
+              也只講給有 session 檔的人聽：貼上的文字與附件沒有 token 數，
+              混一個精確值和一個爛估計在同一個提示裡，整個提示就都不可信了。 */}
+          {session.tokens !== null && session.tokens > CONTEXT_WARN_TOKENS && (
+            <p className="hint">
+              {session.tokens > CONTEXT_WINDOW ? (
+                <>
+                  這份對話（{fmtTokens(session.tokens)}）比代跑用得到的 context
+                  還大（200K）。它一定會被壓縮，而且壓掉的不只一點 ——
+                </>
+              ) : (
+                <>
+                  這份對話已經用掉{" "}
+                  {Math.round((session.tokens / CONTEXT_WINDOW) * 100)}% 的 context
+                  （{fmtTokens(session.tokens)} / 200K）。代跑時 Claude 會自動壓縮
+                  較早的內容，細節可能會掉 ——
+                </>
+              )}{" "}
+              <strong>重要的前提建議在下面重講一次</strong>。
+            </p>
+          )}
+          </>
         ) : (
           <>
             <p className="muted">

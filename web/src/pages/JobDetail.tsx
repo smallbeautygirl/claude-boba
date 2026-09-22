@@ -12,6 +12,7 @@ import {
   api,
   type ArtifactRow,
   type JobDetail as Job,
+  type TranscriptRow,
   type StreamItem,
 } from "../api";
 import { describe, toLine, type Line } from "../events";
@@ -261,6 +262,62 @@ function FollowUp({ jobId }: { jobId: string }) {
         placeholder="沿用上面的對話繼續問…"
         rows={4}
       />
+      <TakeHome jobId={jobId} />
+    </div>
+  );
+}
+
+// 帶回自己的機器續跑。
+//
+// 放在「接著問」底下而不是「產出的檔案」那一區，因為它們是同一件事的兩條路：
+// 在站上續、回自己機器上用自己的額度續。而那一區的定義是「**新**檔案與被改過的
+// 附件」（Composer.tsx），transcript 兩者都不是 —— 混進去會讓那句說明變成假的。
+//
+// 預簽 URL 按了才去要。它本身就是憑證，沒有人要下載時不該先開一張出來。
+function TakeHome({ jobId }: { jobId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function download() {
+    setBusy(true);
+    setError(null);
+    try {
+      const t: TranscriptRow = await api.transcript(jobId);
+      // 檔名由預簽 URL 的 Content-Disposition 決定，不是這裡的 download 屬性 ——
+      // MinIO 跟這個 SPA 不同 origin，跨 origin 時瀏覽器會忽略 download 的值。
+      // 留著它只是同 origin 部署時的保險。
+      const a = document.createElement("a");
+      a.href = t.download_url;
+      a.download = t.filename;
+      a.click();
+    } catch {
+      setError("拿不到這份對話，重新整理再試一次");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="takehome">
+      <button type="button" className="small" onClick={() => void download()} disabled={busy}>
+        {busy ? "準備中…" : "下載這份對話（.jsonl）"}
+      </button>
+      {error && <p className="error">{error}</p>}
+      {/* 會按這顆的是 RD，但他不想每次都看到三行 shell。 */}
+      <details className="cmds">
+        <summary>下載回去之後怎麼接上</summary>
+        <p className="muted">
+          放進你自己的 <code>~/.claude/projects/</code> 底下<strong>對應那個專案</strong>的目錄，
+          再 <code>claude --resume</code>。檔名不要改 —— Claude Code 是用檔名認
+          session 的。
+        </p>
+        <pre>{`ls -d ~/.claude/projects/*/          # 找出你那個專案的目錄
+mv ~/Downloads/<下載的檔名>.jsonl ~/.claude/projects/<那個目錄>/
+claude --resume`}</pre>
+        <p className="muted">
+          接下來燒的是<strong>你自己的額度</strong>，不再記人情債。
+        </p>
+      </details>
     </div>
   );
 }
