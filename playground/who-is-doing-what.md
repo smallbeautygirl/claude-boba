@@ -39,18 +39,47 @@ git add -A                                                            # ❌ 永�
 真的要先 `git add` 的話，**`git commit` 前一定要看 `git diff --cached --name-only`**，
 出現不是你的檔案就停下來。
 
+**`0e2f900` 現在就卡在這個狀態**：它的訊息只講 spike #7，實際還夾帶了另一個
+session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀不出通知頁那些改動
+是為什麼做的。要不要拆成兩筆**還沒決定** —— 拆要改寫歷史，所以得等兩邊都停手、
+由使用者決定。在那之前不要有人去動它。
+
 ---
 
 ## 目前認領
 
 | 區域 | 誰 | 狀態 |
 |---|---|---|
-| `web/src/**`（UI 改版） | session A | 進行中 —— 其他人不要碰 |
-| `hub/**`、`worker/**` | session B | 進行中 |
-| `docs/web-spec.md` | 共用 | 小心：兩邊都會改，改前先 `git pull` 心態看一次現況 |
+| `web/src/pages/Submit.tsx`、`index.css` 的 `.sources` | session A | 進行中 —— 未 commit |
+| `web/src/pages/Login.tsx`、`Notifications.tsx`、`api.ts` | session B | 2026-09-22 告一段落 |
+| `web/src/index.css` 的 `.hint` | session B | 同上（見下方契約）|
+| `hub/app/config.py`、`hub/app/routers/auth.py` | session B | 同上 |
+| `CONTEXT.md` | session B 起的頭 | 之後共用 |
+| `docs/web-spec.md` | 共用 | 小心：兩邊都會改，改前先看一次現況 |
 | `SPEC.md`、`CLAUDE.md` | 共用 | 同上 |
 
+⚠️ **原本的切法（`web/src/**` 全歸 A、`hub/**` 全歸 B）已經不成立**：B 這輪
+從通知頁一路改到 `/me`，兩邊都踩進 `web/src/`。按目錄認領擋不住，所以改成按檔案。
+`index.css` 是現在唯一兩邊都碰的檔案，動它之前先看這張表。
+
 改完一個區域就把狀態改掉。
+
+---
+
+## 已經改掉的共用前提（動之前先看這裡）
+
+不是改動紀錄 —— 是**會讓你寫錯的前提變更**。
+
+- **`.hint` 不再有負 margin**（2026-09-22）。它以前預設 `margin-top: -8px`，
+  前提是前面接的是 `<label>`；十處用例只有兩處成立，接 `div.actions` 那處直接
+  疊在按鈕上。現在預設安全，**要緊貼欄位得自己掛 `class="hint under-field"`**。
+- **`/me` 多了兩個欄位**：`channel_notifications`（共用頻道的 webhook 在 hub 上
+  有沒有設）與 `channel_name`。`web/src/api.ts` 的 `Me` 已同步。hub 對應新的
+  `TEAMS_CHANNEL_NAME`，`.env.example` 已更新 —— **`.env` 要自己補，不補的話
+  通知頁會顯示「共用頻道」四個字而不是真正的頻道名**。
+- **通知的詞彙定在 [`../CONTEXT.md`](../CONTEXT.md)**：目的地有三種 ——
+  私訊、頻道、**沒有**。**不要再寫「開啟通知」「關閉通知」**，那是假的：
+  沒設個人 webhook 的人一樣會被通知，只是通知在頻道裡。
 
 ---
 
