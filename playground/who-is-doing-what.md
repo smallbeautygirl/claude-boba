@@ -209,6 +209,7 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 | `hub/app/config.py`、`hub/app/routers/auth.py` | session B | 同上 |
 | `CONTEXT.md` | session B 起的頭 | 之後共用 |
 | **⚠️ 身分** | **有兩個 session 自稱 B** | 見下 |
+| `hub/app/schemas.py`、`hub/app/routers/jobs.py`、`worker/worker.py` | 拿著 Submit.tsx 的 session | 🔴 進行中 —— model 白名單完全沒人在擋（spike #8 撞出來的既有漏洞）|
 | `docs/web-spec.md` | 共用 | 小心：兩邊都會改，改前先看一次現況 |
 | `SPEC.md`、`CLAUDE.md` | 共用 | 同上 |
 | `web/src/index.css`、`App.tsx`、`index.html`、`theme.ts`、`pages/Leaderboard.tsx` | session C | 🟡 告一段落（`03782d9`）|
