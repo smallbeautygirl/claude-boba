@@ -399,7 +399,34 @@ debts        id, job_id, borrower_id, lender_id,
              amount_usd, tier (none|drink|coffee|bento|feast),
              status (open | nudged | settled),
              created_at, nudged_at, settled_at, settled_by
+
+wishes       id, author_id, category (broken | want_command | rough_edge | other),
+             body, created_at, updated_at,
+             fulfilled_at, fulfilled_by, fulfilled_link
+
+wish_comments    id, wish_id, author_id, body, created_at, updated_at
+
+wish_reactions   id, target_type (wish | comment), target_id, user_id, emoji,
+                 created_at
+                 UNIQUE (target_type, target_id, user_id, emoji)
+
+wish_images      id, target_type (wish | comment), target_id,
+                 key, content_type, created_at
 ```
+
+**許願板那四張表是試玩期的鷹架**，會整組被刪掉（web-spec §12 的下架條件）。
+所以它們刻意不跟 `jobs` 有任何外鍵 —— 一則願望不指向任何 job，連 job id 都不存
+（web-spec §12：不自動帶入任何 job 資訊）。刪表的時候不會扯到別的東西。
+
+三個實作上的地雷，前面已經踩過的：
+
+- `category` 用 `_enum()`，不要 `String` 配 `Mapped[SomeEnum]`（§11 的舊坑）
+- `target_type` 的 enum 叫 **`WishTarget` 不是 `ReactionTarget`** —— `wish_images`
+  也用它，而圖不是反應
+- `wish_images` **不存 size_bytes**：沒有任何地方讀它，而上限是在收單時擋的
+- `fulfilled_*` 三個欄位**同生同滅**：要嘛全 NULL，要嘛全有值。
+  `fulfilled_link` 不可為空是產品決定不是資料潔癖，理由見 web-spec §12
+- 加這幾張表要跑 **Alembic**，不要 `create_all`。Hub 啟動會檢查版本
 
 ---
 
@@ -527,11 +554,40 @@ claude-rental/
   jobs/{job_id}/input/      借用者上傳的附件、貼上的對話、.jsonl
   jobs/{job_id}/output/     產出檔案
   jobs/{job_id}/transcript.jsonl
+  wishes/{user_id}/            許願板的貼圖（願望與留言共用）
 ```
 
 - 下載用 **presigned URL**（本身就是有時效的授權），不用替每個人開 MinIO 帳號或寫 bucket policy
 - 輸入輸出同 bucket，worker 拿 job id 就能取齊所有東西
 - **lifecycle rule 30 天自動刪**，同時解決儲存無限成長與「別人的資料躺在我硬碟上多久」
+
+> 🚨 **這條 lifecycle rule 目前沒有任何程式在設定它**（2026-09-22 查證：
+> `hub/app/storage.py` 的 `ensure_bucket()` 只建 bucket，整個 repo 找不到
+> `put_bucket_lifecycle_configuration`）。也就是說「30 天自動刪」現在**只是一句
+> 文件上的承諾**，而 security.md 說它是隱私承諾的一部分 —— 那句話目前不成立。
+>
+> 補上它的時候**一定要帶 prefix `jobs/`**，見下一段。要注意那會開始刪目前永久
+> 留著的資料，不是一個純粹的加法。
+
+### ⚠️ `wishes/` 必須排除在 30 天 lifecycle 之外
+
+lifecycle rule 是對 `jobs/` 訂的 —— job 的資料本來就該過期。**許願板不是**：
+一則願望活到牆被拆掉為止，已實現的還要留在牆上（web-spec §12）。
+兩者放同一條規則下，**圖會在第 31 天消失而願望還在**，牆上留下一排破圖，
+而且沒有人會知道為什麼。
+
+> **prefix 帶的是 user id 不是 wish id**，這一條初稿寫錯過。圖是在願望被建立
+> **之前**就上傳完的（人是先貼圖再按送出），那時候還沒有 wish id 可用。
+> 而 user id 同時是存取控制的一部分 —— 跟附件同一條理由：不驗 prefix 的話，
+> 任何人都能把貼圖的 key 指到別人 job 的產出，讓它出現在一面公開的牆上。
+
+所以 lifecycle rule 要**指定 prefix `jobs/`**，不能掛在整個 bucket 上。
+`wishes/` 的清理方式是「許願板下架時整個 prefix 刪掉」，不是自動過期 ——
+這也讓拆牆變成一個真的做得到的動作。
+
+讀取也不一樣：`jobs/` 用 presigned URL，**`wishes/` 不給** ——
+走 hub 一個要登入的端點代理。一張帶著 prompt 的截圖若有不用登入就打得開的位址，
+外洩得比這面牆本身更遠。圖片的可見範圍必須等於牆的可見範圍（ADR-0005）。
 
 ---
 

@@ -9,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy import Enum as SAEnum
@@ -24,7 +26,14 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
-from .enums import DebtStatus, DebtTier, JobStatus, SourceType
+from .enums import (
+    DebtStatus,
+    DebtTier,
+    JobStatus,
+    SourceType,
+    WishCategory,
+    WishTarget,
+)
 
 
 def _uuid() -> uuid.UUID:
@@ -381,3 +390,145 @@ class Artifact(Base):
     )
 
     job: Mapped[Job] = relationship()
+
+
+# ── 許願板（docs/web-spec.md §12）──────────────────────────────────
+#
+# 這四張表是**試玩期的鷹架**，會整組被刪掉。所以它們刻意不跟 jobs 有任何外鍵 ——
+# 一則願望不指向任何 job，連 job id 都不存（web-spec §12：不自動帶入任何 job 資訊）。
+# 拆牆時 drop 這四張表不會扯到別的東西。
+
+
+class Wish(Base):
+    """牆上的一則。
+
+    **沒有「處理中」這個狀態。** 願望只有兩種：還沒實現的，和實現了的。
+    系統不記錄任何人打算做什麼 —— 在一個沒有人被指派任何事的 side project 裡，
+    「認領中」記錄的多半是謊言（web-spec §12）。有人在留言裡說「我來做」是
+    人講的話，不會變成這裡的一個欄位。
+    """
+
+    __tablename__ = "wishes"
+    # 三個 fulfilled_* 同生同滅。約束寫在 DB 裡，因為「實現了但沒有連結」正是這個
+    # 功能要避免的那個狀態（空頭宣告）—— 應用層擋得住一般路徑，擋不住手動 UPDATE。
+    __table_args__ = (
+        CheckConstraint(
+            "(fulfilled_at IS NULL AND fulfilled_by IS NULL AND fulfilled_link IS NULL)"
+            " OR (fulfilled_at IS NOT NULL AND fulfilled_by IS NOT NULL"
+            " AND fulfilled_link IS NOT NULL)",
+            name="ck_wish_fulfilled_all_or_nothing",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    # 署名是強制的，沒有匿名。五到十個人的團隊裡匿名是假的，而假匿名比署名更糟。
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), index=True
+    )
+    category: Mapped[WishCategory] = mapped_column(_enum(WishCategory))
+    body: Mapped[str] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 三個欄位同生同滅：要嘛全 NULL，要嘛全有值。
+    # fulfilled_link 不可為空是產品決定 —— 沒有連結，「實現了」就退化成空頭宣告，
+    # 跟被砍掉的「認領中」變回同一種東西。
+    fulfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fulfilled_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    fulfilled_link: Mapped[str | None] = mapped_column(String(1024))
+
+    author: Mapped[User] = relationship(foreign_keys=[author_id])
+    fulfiller: Mapped[User | None] = relationship(foreign_keys=[fulfilled_by])
+    comments: Mapped[list[WishComment]] = relationship(
+        back_populates="wish", cascade="all, delete-orphan"
+    )
+
+
+class WishComment(Base):
+    """願望底下的一則留言。單層，沒有回覆的回覆。
+
+    巢狀在五到十人的牆上永遠用不到，但會讓版面、資料模型、通知三處都變複雜。
+    """
+
+    __tablename__ = "wish_comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    wish_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("wishes.id", ondelete="CASCADE"), index=True
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    author: Mapped[User] = relationship()
+    wish: Mapped[Wish] = relationship(back_populates="comments")
+
+
+class WishReaction(Base):
+    """按在願望或留言上的 emoji。
+
+    **只顯示數字，不顯示是誰按的**（web-spec §12），但這裡仍然要存 user_id ——
+    沒有它就做不到「同一顆再按一次是取消」，也擋不住同一個人灌一百次。
+    回應給前端時只回聚合數字與「我按過了沒有」。
+    """
+
+    __tablename__ = "wish_reactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_type", "target_id", "user_id", "emoji", name="uq_wish_reaction"
+        ),
+        Index("ix_wish_reactions_target", "target_type", "target_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    target_type: Mapped[WishTarget] = mapped_column(_enum(WishTarget))
+    # 刻意不設外鍵：它指向兩張表之一。願望刪掉時由 router 一併清掉。
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    # 任何 emoji 都能按（ADR-0004），所以這裡不是 enum。長度由 check_emoji() 擋。
+    emoji: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class WishImage(Base):
+    """願望或留言的貼圖。檔案在 MinIO 的 `wishes/` prefix。
+
+    這一條弱化了 SPEC §4.3，是知情的取捨 —— 完整論述在 ADR-0005。
+    **不給預簽 URL**：讀取走 hub 一個要登入的端點，圖片的可見範圍必須等於牆的
+    可見範圍。
+    """
+
+    __tablename__ = "wish_images"
+    __table_args__ = (Index("ix_wish_images_target", "target_type", "target_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    target_type: Mapped[WishTarget] = mapped_column(_enum(WishTarget))
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    key: Mapped[str] = mapped_column(String(768))
+    # 伺服器**看檔案開頭**決定的，不是客戶端宣告的 —— 那一行是攻擊者自己填的。
+    content_type: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

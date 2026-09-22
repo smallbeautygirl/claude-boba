@@ -21,11 +21,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+import uuid
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from .config import settings
+
+if TYPE_CHECKING:
+    from .models import User
 
 logger = logging.getLogger(__name__)
 
@@ -230,3 +234,73 @@ def debt_created(
                 _GOOD,
             ),
         )
+
+
+def wishes_link(wish_id: uuid.UUID) -> str:
+    return f"{settings.web_base_url.rstrip('/')}/wishes#{wish_id}"
+
+
+def wish_created(author: User, wish_id: uuid.UUID, category_label: str) -> None:
+    """有人貼了新願望 → 共用頻道廣播一行。
+
+    **這則不是通知目的地。** 通知目的地的定義是「一個人的通知會送到哪裡，
+    每人恰好一個」（CONTEXT.md），而這則廣播沒有特定當事人 —— 所以它直接用
+    `TEAMS_CHANNEL_WEBHOOK`，而且**不因為貼文的人有私訊 webhook 就改送私訊**，
+    那會讓別人看不到新願望。
+
+    **這三支通知一律不收願望或留言的內文**，連參數都沒有 —— 那比「收了但不用」
+    強：它不是一句承諾，是呼叫端根本傳不進來。貼文的人若在共用頻道看到自己剛打的
+    字被原樣廣播出去，會學到「這裡講話要小心」，而許願板要的正好相反。
+    """
+    if not settings.teams_channel_webhook or author is None:
+        return
+    _fire(
+        settings.teams_channel_webhook,
+        _card(
+            f"🧋 {author.display_name} 許了一個願",
+            f"分類：{category_label}\n\n[去看看]({wishes_link(wish_id)})",
+            _GOOD,
+        ),
+    )
+
+
+def wish_commented(author: User, wish_id: uuid.UUID, who: str) -> None:
+    """有人回了你的願望 → 送給貼文者。
+
+    這是整個許願板價值最高的一則：回饋不足的死法是「貼了沒動靜」，這則在堵那個。
+    **不上頻道廣播** —— 一則熱門願望的十條留言會把共用頻道洗掉，
+    然後下次真的有新願望時沒有人會看。
+    """
+    _to_author(author, "你的願望有人回了", f"{who} 回了你的願望", wish_id)
+
+
+def wish_fulfilled(author: User, wish_id: uuid.UUID, who: str) -> None:
+    """你的願望實現了 → 送給貼文者。
+
+    這則是刻意補上的。docs/web-spec.md §11 已經記下一個同構的缺口 ——
+    「結清沒有通知，債主按了之後借用者不會收到任何訊息」，成因一模一樣
+    （單方面宣告、對方不看就不知道）。在一份已經寫下這個缺陷的文件裡，
+    新做的東西不該再犯一次。
+    """
+    _to_author(author, "🎉 你的願望實現了", f"{who} 把它做掉了", wish_id)
+
+
+def _to_author(author: User, title: str, text: str, wish_id: uuid.UUID) -> None:
+    """走通知目的地：有私訊 webhook 就私訊，否則頻道 + @，都沒有就不送。
+
+    **一律不含內容。** 頻道定義上是公開的，而留言裡遲早會出現有人手打進去的
+    job 細節；CONTEXT.md 已經立過「頻道通知不含金額」的先例，這裡照同一條走：
+    公開目的地一律降級內容，不開特例。
+    """
+    body = f"{text}\n\n[去看看]({wishes_link(wish_id)})"
+    if author is None:
+        return
+    if author.teams_webhook_url:
+        _fire(author.teams_webhook_url, _card(title, body, _GOOD))
+        return
+    if not settings.teams_channel_webhook:
+        return
+    _fire(
+        settings.teams_channel_webhook,
+        _mention_card(author.email, author.display_name, f"{{@}} {body}"),
+    )

@@ -310,6 +310,69 @@ export const tokenStore = {
   },
 };
 
+
+// ── 許願板（docs/web-spec.md §12）──────────────────────────────────
+// 試玩期的鷹架，有下架條件。拆的時候這一段整塊刪掉。
+
+export type WishCategory = "broken" | "want_command" | "rough_edge" | "other";
+
+export interface WishImageRef {
+  id: string;
+  /** hub 的端點，**要帶 Authorization** —— 不是預簽 URL。
+      圖片的可見範圍必須等於牆的可見範圍（ADR-0005）。 */
+  url: string;
+}
+
+export interface WishReaction {
+  emoji: string;
+  count: number;
+  /** 我按過了沒有。**後端不回是誰按的**，只回這個（web-spec §12）。 */
+  mine: boolean;
+}
+
+export interface WishComment {
+  id: string;
+  author: string;
+  mine: boolean;
+  body: string;
+  created_at: string;
+  images: WishImageRef[];
+  reactions: WishReaction[];
+}
+
+export interface Wish {
+  id: string;
+  category: WishCategory;
+  category_label: string;
+  author: string;
+  mine: boolean;
+  body: string;
+  created_at: string;
+  /** null = 還沒實現。**沒有「處理中」這個狀態。** */
+  fulfilled: { at: string; by: string; link: string } | null;
+  images: WishImageRef[];
+  reactions: WishReaction[];
+  comments: WishComment[];
+}
+
+export interface Board {
+  items: Wish[];
+  categories: { value: WishCategory; label: string }[];
+}
+
+export interface WishInput {
+  category: WishCategory;
+  body: string;
+  image_keys: string[];
+}
+
+/** 編輯不收 image_keys：初版收了卻只寫回文字，結果改一個錯字就把截圖弄丟。
+    要換圖就刪掉重貼（web-spec §12）。 */
+export interface WishEdit {
+  category: WishCategory;
+  body: string;
+}
+
 export class Unauthorized extends Error {}
 
 async function json<T>(res: Response): Promise<T> {
@@ -519,4 +582,104 @@ export const api = {
     fetch(`${HUB}/api/ledger/${id}/nudge`, { method: "POST", headers: authed() }).then(
       json<{ status: string }>,
     ),
+
+  // ── 許願板 ──────────────────────────────────────────────────────
+
+  board: (category?: WishCategory) =>
+    fetch(`${HUB}/api/wishes${category ? `?category=${category}` : ""}`, {
+      headers: authed(),
+    }).then(json<Board>),
+
+  /** 貼圖。上限 5 MB、只收 png/jpeg/webp —— 前端先擋（web-spec §3 的原則）。
+      後端會**看檔案開頭**再驗一次，因為 content-type 是客戶端自己填的。 */
+  uploadWishImage: async (file: File): Promise<string> => {
+    const ticket = await fetch(`${HUB}/api/wishes/uploads/image`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ filename: file.name }),
+    }).then(json<UploadTicket>);
+
+    const res = await fetch(ticket.put_url, { method: "PUT", body: file });
+    if (!res.ok) throw new Error(`${file.name} 上傳失敗，請再試一次`);
+    return ticket.key;
+  },
+
+  /** 貼圖要帶 Authorization，所以 <img src> 直接指過去是拿不到的 ——
+      抓成 blob 再給 object URL。用完要 revoke。 */
+  fetchWishImage: async (url: string): Promise<string> => {
+    const res = await fetch(`${HUB}${url}`, { headers: authed() });
+    if (res.status === 401) throw new Unauthorized("請重新登入");
+    if (!res.ok) throw new Error("圖片載入失敗");
+    return URL.createObjectURL(await res.blob());
+  },
+
+  createWish: (body: WishInput) =>
+    fetch(`${HUB}/api/wishes`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify(body),
+    }).then(json<{ id: string }>),
+
+  editWish: (id: string, body: WishEdit) =>
+    fetch(`${HUB}/api/wishes/${id}`, {
+      method: "PATCH",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify(body),
+    }).then(json<{ id: string }>),
+
+  deleteWish: async (id: string) => {
+    const res = await fetch(`${HUB}/api/wishes/${id}`, {
+      method: "DELETE",
+      headers: authed(),
+    });
+    if (!res.ok) throw new Error(await friendly(res));
+  },
+
+  /** 連結必填。沒有它，「實現了」就退化成空頭宣告（web-spec §12）。 */
+  fulfilWish: (id: string, link: string) =>
+    fetch(`${HUB}/api/wishes/${id}/fulfil`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ link }),
+    }).then(json<{ id: string }>),
+
+  unfulfilWish: (id: string) =>
+    fetch(`${HUB}/api/wishes/${id}/fulfil`, {
+      method: "DELETE",
+      headers: authed(),
+    }).then(json<{ id: string }>),
+
+  addWishComment: (id: string, body: string, image_keys: string[]) =>
+    fetch(`${HUB}/api/wishes/${id}/comments`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ body, image_keys }),
+    }).then(json<{ id: string }>),
+
+  deleteWishComment: async (id: string) => {
+    const res = await fetch(`${HUB}/api/wishes/comments/${id}`, {
+      method: "DELETE",
+      headers: authed(),
+    });
+    if (!res.ok) throw new Error(await friendly(res));
+  },
+
+  editWishComment: (id: string, body: string) =>
+    fetch(`${HUB}/api/wishes/comments/${id}`, {
+      method: "PATCH",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ body }),
+    }).then(json<{ id: string }>),
+
+  /** 同一顆再按一次是取消。回傳按完之後「我按過了沒有」。 */
+  reactToWish: (
+    target_type: "wish" | "comment",
+    target_id: string,
+    emoji: string,
+  ) =>
+    fetch(`${HUB}/api/wishes/reactions`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ target_type, target_id, emoji }),
+    }).then(json<{ emoji: string; mine: boolean }>),
 };

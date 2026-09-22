@@ -59,3 +59,31 @@ class DebtStatus(StrEnum):
     OPEN = "open"
     NUDGED = "nudged"
     SETTLED = "settled"
+
+
+class WishCategory(StrEnum):
+    """許願板的四類（docs/web-spec.md §12）。
+
+    分類的作用只有兩個：牆上的篩選，以及新願望廣播的文案 ——
+    **不分流給不同的人**，因為讀的人只有一個。
+    `WANT_COMMAND` 值得獨立，因為它是唯一接得到既有機制的一類（SPEC.md §4.13）。
+
+    `BROKEN` 與 `ROUGH_EDGE` 的界線是模糊的，我們知道 —— 那是選四類的已知代價，
+    補償是願望可以編輯（含分類）。
+    """
+
+    BROKEN = "broken"
+    WANT_COMMAND = "want_command"
+    ROUGH_EDGE = "rough_edge"
+    OTHER = "other"
+
+
+class WishTarget(StrEnum):
+    """一個反應或一張貼圖掛在願望上，還是掛在留言上。
+
+    名字不叫 `ReactionTarget`：`WishImage` 也用它當判別欄位，而**圖不是反應** ——
+    那個名字在一半的呼叫點上是假的。
+    """
+
+    WISH = "wish"
+    COMMENT = "comment"

@@ -1,0 +1,135 @@
+/* 許願板。docs/web-spec.md §12。
+   鷹架 —— 拆牆的時候這個檔案整份刪掉。 */
+
+.wishes textarea,
+.wishes input[type="text"],
+.wish-comment-new input,
+.wish-fulfil input {
+  width: 100%;
+}
+
+.wish-composer {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem;
+  margin-bottom: 1.2rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.wish-filters {
+  margin: 0.6rem 0 1rem;
+}
+
+.wish-empty {
+  padding: 1.4rem 0;
+}
+
+.wish {
+  border-top: 1px solid var(--line);
+  padding: 1rem 0;
+}
+
+/* 實現了的沉到底部，但不消失 —— 它是這面牆唯一的活著證據。
+   淡掉是為了讓還沒實現的先被看到，不是為了把它藏起來，所以不要再調低。 */
+.wish.done {
+  opacity: 0.72;
+}
+
+.wish-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.wish-body {
+  white-space: pre-wrap;
+  margin: 0.3rem 0 0.6rem;
+}
+
+.wish-done-note {
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  margin: 0.4rem 0;
+}
+
+.wish-reactions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  position: relative;
+  margin: 0.4rem 0;
+}
+
+/* picker 蓋在內容上而不是把版面撐開 —— 它是暫時的東西，
+   收起來之後下面那些願望不該跳位置。 */
+.wish-picker {
+  position: absolute;
+  top: 2.2rem;
+  left: 0;
+  z-index: 20;
+}
+
+.wish-actions {
+  margin: 0.4rem 0;
+}
+
+.wish-fulfil {
+  display: grid;
+  gap: 0.4rem;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 0.7rem;
+  margin: 0.5rem 0;
+}
+
+.wish-comments {
+  margin-left: 1rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--line);
+}
+
+.wish-comment {
+  padding: 0.45rem 0;
+}
+
+.wish-comment-new {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.wish-images {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.wish-image-add {
+  display: grid;
+  gap: 0.3rem;
+}
+
+/* web-spec §9 的正經清單第 4 項。這句話**不要**跟著牆的玩笑語氣走，
+   也不要縮小或淡化 —— 它擋的是「貼一張帶著 prompt 的截圖」那件事。 */
+.wish-image-warning {
+  margin: 0;
+}
+
+.wish-shots {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0;
+}
+
+.wish-shot {
+  max-width: 320px;
+  max-height: 240px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}

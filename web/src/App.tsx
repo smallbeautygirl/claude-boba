@@ -17,6 +17,7 @@ import { MyJobs } from "./pages/MyJobs";
 import { Lending } from "./pages/Lending";
 import { Notifications } from "./pages/Notifications";
 import { Submit } from "./pages/Submit";
+import { Wishes } from "./pages/Wishes";
 import { THEMES, useTheme } from "./theme";
 
 export default function App() {
@@ -37,6 +38,7 @@ const TITLES: Record<string, string> = {
   "/worker": "我來代跑",
   "/notifications": "通知",
   "/leaderboard": "排行榜",
+  "/wishes": "許願板",
   "/admin": "管理",
 };
 
@@ -115,6 +117,10 @@ function Shell() {
         <Tab to="/worker">我來代跑</Tab>
         <Tab to="/notifications">通知</Tab>
         <Tab to="/leaderboard">排行榜</Tab>
+        {/* 導覽列這一項不能省：job 詳情頁那個入口只服務剛跑完 job 的人，
+            而代跑者可能好幾天不跑 job，新願望的頻道廣播點進來也要有落點。
+            鷹架 —— 許願板下架時這一行跟著刪（web-spec §12）。 */}
+        <Tab to="/wishes">許願板</Tab>
         {/* 只對管理者渲染。後端每一支也都自己擋 403 —— 不渲染不等於不能呼叫。 */}
         {me.is_admin && <Tab to="/admin">管理</Tab>}
         {/* 名字、主題、登出是同一組「我」。包成一個元素才不會在換行時被拆散
@@ -136,6 +142,7 @@ function Shell() {
         <Route path="/worker" element={<Lending />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/wishes" element={<Wishes />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

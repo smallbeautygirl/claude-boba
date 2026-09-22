@@ -12,7 +12,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import authorize, expiry
 from .config import settings
 from .db import engine
-from .routers import admin, auth, commands, jobs, ledger, uploads, worker, workers
+from .routers import (
+    admin,
+    auth,
+    commands,
+    jobs,
+    ledger,
+    uploads,
+    wishes,
+    worker,
+    workers,
+)
 from .secrets_box import check_configured
 from .storage import ensure_bucket
 
@@ -88,6 +98,7 @@ app.include_router(commands.router)
 app.include_router(jobs.router)
 app.include_router(ledger.router)
 app.include_router(uploads.router)
+app.include_router(wishes.router)
 app.include_router(worker.router)
 app.include_router(workers.router)
 

@@ -143,7 +143,26 @@ export function JobDetail() {
       <JobOutcome job={job} onChange={setJob} />
       {done && <Artifacts jobId={job.id} />}
       {job.can_follow_up && <FollowUp jobId={job.id} />}
+      {done && <WishNudge />}
     </div>
+  );
+}
+
+/* 許願板的入口（web-spec §12）。**放在這裡是刻意的** —— 痛感發生的那一秒，
+   人還在現場。§10 拒絕「獨立的新手說明頁」的理由（沒人會主動點進去）直接適用
+   於那面牆，這個入口是它不變成死牆的關鍵。
+
+   ⚠️ **不要幫使用者帶上 job id 或錯誤訊息。** 這個位置會非常自然地誘導出那個
+   設計，而那一步就是 SPEC §4.3 的破口：一則帶著 prompt 片段、署名、永久的
+   貼文。要知道是哪個 job，去問他 —— 那正是許願板強制署名的理由。
+
+   鷹架，跟著許願板一起拆。 */
+function WishNudge() {
+  return (
+    <p className="hint">
+      剛剛哪裡卡卡的？<Link to="/wishes">寫去許願板</Link> —— 這東西還在試玩，
+      你的抱怨比讚美有用。
+    </p>
   );
 }
 

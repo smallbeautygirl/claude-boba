@@ -97,6 +97,42 @@ def attachment_name(key: str) -> str:
     return PurePosixPath(key).name
 
 
+# 許願板的貼圖（docs/web-spec.md §12、ADR-0005）。
+#
+# ⚠️ **這個 prefix 不適用 30 天 lifecycle**。SPEC.md §8：lifecycle rule 只能掛在
+# `jobs/` 上，掛整個 bucket 的話圖會在第 31 天消失而願望還在 —— 牆上一排破圖，
+# 沒有人知道為什麼。`wishes/` 的清理方式是「許願板下架時整個 prefix 刪掉」。
+#
+# prefix 帶的是 **user id 不是 wish id**，跟附件同一條理由：圖在願望被建立**之前**
+# 就上傳完了（人是先貼圖再按送出的），那時還沒有 wish id 可用。而 prefix 帶 user id
+# 是存取控制的一部分 —— 不驗的話，任何人都能把貼圖的 key 指到別人 job 的產出，
+# 讓它出現在一面公開的牆上。
+_WISH_PREFIX = "wishes"
+
+
+def wish_image_key(user_id: uuid.UUID, filename: str) -> str:
+    return f"{_WISH_PREFIX}/{user_id}/{uuid.uuid4()}/{safe_filename(filename)}"
+
+
+def owns_wish_image(key: str, user_id: uuid.UUID) -> bool:
+    return key.startswith(f"{_WISH_PREFIX}/{user_id}/")
+
+
+def get_object(key: str) -> bytes | None:
+    """整份讀進記憶體。
+
+    只給許願板的貼圖用，而它上限 5 MB —— job 的產出仍然走預簽 URL，
+    50 MB 的檔案沒有理由在 Hub 的記憶體裡轉一手。
+    這裡不給預簽是刻意的：一張帶著 prompt 的截圖若有不用登入就打得開的位址，
+    外洩得比這面牆本身更遠（ADR-0005）。
+    """
+    try:
+        obj = _client().get_object(Bucket=settings.s3_bucket, Key=key)
+    except ClientError:
+        return None
+    return obj["Body"].read()
+
+
 def stat(key: str) -> int | None:
     """回傳物件大小；不存在回 None。"""
     try:

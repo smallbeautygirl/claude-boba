@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .enums import JobStatus, SourceType
+from .enums import JobStatus, SourceType, WishCategory, WishTarget
 
 # 上傳限制。SPEC.md §11：一句 "pong" 的 transcript 就 224 KB，真實 RD session
 # 估 10–50 MB。超過 50 MB 的 session，--resume 本身也會慢到不實用。
@@ -207,3 +207,62 @@ class JobResult(BaseModel):
     error_detail: str | None = None
     lender_cli_version: str | None = None
     transcript_uploaded: bool = False
+
+
+# ── 許願板（docs/web-spec.md §12）──────────────────────────────────
+#
+# **上限不要沿用 §3 那組。** 50 MB / 100 MB 是為 `.jsonl` transcript 訂的，
+# 對截圖完全沒有意義。
+MAX_WISH_BODY_CHARS = 4000
+MAX_WISH_IMAGES = 3
+MAX_WISH_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+class WishInput(BaseModel):
+    category: WishCategory
+    body: str = Field(min_length=1, max_length=MAX_WISH_BODY_CHARS)
+    # 先 PUT 進 MinIO，再把 key 帶過來。歸屬、大小、格式在 check_images() 驗。
+    image_keys: list[str] = Field(default_factory=list, max_length=MAX_WISH_IMAGES)
+
+
+class WishCommentInput(BaseModel):
+    body: str = Field(min_length=1, max_length=MAX_WISH_BODY_CHARS)
+    image_keys: list[str] = Field(default_factory=list, max_length=MAX_WISH_IMAGES)
+
+
+class WishEdit(BaseModel):
+    """編輯願望只能改分類與字。
+
+    刻意不收 `image_keys`：初版收了卻只寫回 category 與 body，結果是改一個錯字
+    就把截圖弄丟 —— 而那正好廢掉「可以編輯」存在的理由（web-spec §12）。
+    """
+
+    category: WishCategory
+    body: str = Field(min_length=1, max_length=MAX_WISH_BODY_CHARS)
+
+
+class WishCommentEdit(BaseModel):
+    """編輯留言只能改字。
+
+    刻意不收 `image_keys`：收了卻默默丟掉比不支援更糟 —— 使用者會以為換掉了。
+    要換圖就刪掉重貼（留言沒有反應以外的東西會被丟掉）。
+    """
+
+    body: str = Field(min_length=1, max_length=MAX_WISH_BODY_CHARS)
+
+
+class WishFulfilInput(BaseModel):
+    # 必填。沒有連結，「實現了」就退化成空頭宣告（web-spec §12）。
+    # 內容由 check_link() 驗 —— 這裡不用 AnyHttpUrl，因為錯誤訊息要講人話。
+    link: str = Field(min_length=1, max_length=1024)
+
+
+class WishReactionInput(BaseModel):
+    target_type: WishTarget
+    target_id: uuid.UUID
+    # 任何 emoji 都能按（ADR-0004）。是不是一顆 emoji 由 check_emoji() 判。
+    emoji: str = Field(min_length=1, max_length=32)
+
+
+class WishImageUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
