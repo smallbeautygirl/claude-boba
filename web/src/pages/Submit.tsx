@@ -191,12 +191,14 @@ export function Submit() {
       {!session && (
         <div className="sources">
           <p>
-            <strong>claude.ai 或桌面 app 的對話</strong>：全選複製、貼上就好。
-            那種對話本來就沒有本機環境，貼上幾乎不會少東西 —— 但附件目前帶不過來。
+            <strong>在自己電腦上用 Claude Code 跑的</strong>
+            （終端機、VS Code / JetBrains 擴充、Claude Code 桌面 app）：
+            上傳 <code>.jsonl</code> 才是真的續跑。
           </p>
           <p>
-            <strong>Claude Code 的 session</strong>：上傳 <code>.jsonl</code> 才是
-            真的續跑（下面那顆按鈕）。
+            <strong>在 Claude 聊天上跑的</strong>（claude.ai、Claude 手機或桌面 app）：
+            全選複製、貼上就好。那種對話沒有本機 session 檔，<em>也不需要</em> ——
+            它本來就沒有本機環境，貼上幾乎不會少東西。附件目前還帶不過來。
           </p>
           <p>不論哪一種，這個 job 跑完之後用「接著問」，之後每一輪都是真的續跑。</p>
         </div>
@@ -227,10 +229,20 @@ export function Submit() {
                 }}
               />
             </label>
-            <span className="muted">
-              在自己電腦上跑到一半、額度用完了？那份 session 檔在{" "}
-              <code>~/.claude/projects/</code> 底下。
-            </span>
+            <span className="muted">在自己電腦上跑到一半、額度用完了？</span>
+            {/* 「去 ~/.claude/projects/ 找」不是可執行的指示 —— 那底下一個專案
+                一個資料夾，隨便一台機器就上百個 session 檔，而檔名是 session id，
+                看不出內容。要給就要給到能貼進終端機的程度。 */}
+            <details className="cmds findfile">
+              <summary>怎麼找到那個檔案？</summary>
+              <p className="muted">在終端機跑這行，列出最近改動的三個 session：</p>
+              <pre>ls -t ~/.claude/projects/*/*.jsonl | head -3</pre>
+              <p className="muted">
+                一個專案一個資料夾，資料夾名稱是專案路徑把 <code>/</code> 換成{" "}
+                <code>-</code>。檔名是 session id，看不出內容 ——
+                挑剛剛那個專案底下時間最近的通常就對。
+              </p>
+            </details>
           </>
         )}
       </div>

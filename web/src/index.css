@@ -117,6 +117,15 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .sources p { margin: 0 0 6px; }
 .sources p:last-child { margin-bottom: 0; }
 .sources strong { color: var(--ink); font-weight: 600; }
+.sources em { font-style: normal; color: var(--ink); }
+
+.findfile { flex-basis: 100%; margin: 4px 0 0; }
+.findfile p { margin: 8px 0 6px; }
+.findfile pre {
+  margin: 0; padding: 10px 12px; overflow-x: auto;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  font-size: 13px;
+}
 
 /* 隱私警告刻意不用玩笑語氣。整個介面很鬆，嚴肅的地方才顯得嚴肅（web-spec §9）。
    靠左邊那條 3px 的保留色跳出奶茶底，不需要整塊染色。 */
