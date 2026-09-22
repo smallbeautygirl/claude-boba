@@ -379,7 +379,18 @@ export const api = {
     fetch(`${HUB}/api/workers/authorize`, {
       method: "POST",
       headers: authed(),
-    }).then(json<{ authorize_url?: string; url?: string }>),
+    }).then(json<{ authorize_url: string }>),
+
+  /** 把代跑者貼回來的**一次性授權碼**送給 hub。
+      spike #9：`redirect_uri` 指向 platform.claude.com 而不是 localhost，
+      所以那串碼沒辦法自動回到我們手上，一定要有人貼。
+      貼的是用完即失效的碼，**不是一年期的 token** —— 兩者外洩的後果差很遠。 */
+  submitAuthorizationCode: (code: string) =>
+    fetch(`${HUB}/api/workers/authorize/code`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ code }),
+    }).then(json<LendingSettings>),
 
   // 只有從來沒跑過 job 的 worker 刪得掉。擋下來時 hub 回 409，訊息會說
   // 跑過幾個 —— 直接顯示那句，不要自己另外編一句。

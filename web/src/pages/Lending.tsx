@@ -29,6 +29,7 @@ export function Lending({
    是讓這個站台用他的額度跑別人的 job，而且上限由他自己定。 */
 function StartLending({ reload }: { reload: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -36,10 +37,22 @@ function StartLending({ reload }: { reload: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.startAuthorization();
-      setUrl(r.authorize_url ?? r.url ?? null);
+      setUrl((await api.startAuthorization()).authorize_url);
     } catch (e) {
       setError(e instanceof Error ? e.message : "開始授權失敗，請再試一次");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finish() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.submitAuthorizationCode(code.trim());
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "這串碼沒有被接受，請再授權一次");
     } finally {
       setBusy(false);
     }
@@ -67,12 +80,27 @@ function StartLending({ reload }: { reload: () => void }) {
               到 Claude 完成授權 ↗
             </a>
           </p>
-          {/* 授權在另一個分頁完成，這頁不會自己知道 —— 給一顆明確的按鈕，
-              不要讓他猜「是不是要重新整理」。 */}
-          <p className="hint">
-            在那一頁按同意之後回到這裡，按{" "}
-            <button className="small" onClick={reload}>
-              我授權好了
+          {/* 授權完成之後 Claude 會把碼交給 platform.claude.com，不是交回這裡
+              （spike #9），所以那串碼一定要有人貼回來。**貼回這個網頁，不是
+              終端機** —— 代跑者的情境就是「登入網頁、授權一次、結束」，
+              要他開終端機等於把整條路退回舊模型。 */}
+          <label>
+            按同意之後，把那一頁給你的授權碼貼回來
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="貼上授權碼"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+          <p className="hint under-field">
+            這串是<strong>用完即失效的一次性碼</strong>，不是你的 token ——
+            它換到的 token 由這個站台自己收下，不會回到這個畫面上。
+          </p>
+          <p className="actions">
+            <button type="button" onClick={finish} disabled={busy || !code.trim()}>
+              {busy ? "確認中…" : "完成授權"}
             </button>
           </p>
         </>
