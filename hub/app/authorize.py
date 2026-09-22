@@ -44,10 +44,27 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+import httpx
+
 # 授權網址長怎樣不預設，抓 https:// 開頭的第一個。
 _URL_RE = re.compile(rb"https://[^\s\x1b\"'<>]+")
 # token 的格式（`claude setup-token` 產生的長期 OAuth token）。
-_TOKEN_RE = re.compile(rb"sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,}")
+#
+# 🚨 **後面那個 lookahead 不能拿掉。** token 是分好幾次寫進 pty 的，而
+# `_read_until` 一比對到就回傳、`submit_code` 接著立刻 SIGKILL 整個行程群組 ——
+# 少了邊界，比對會發生在它還沒傳完的那一刻，我們就存下一個**截斷的前綴**：
+# 形狀完全正確（開頭對、字元集合法），拿去用是 401。
+#
+# 2026-09-22 真的發生過，而且沉默了一整天：兩個帳號存下來的 token 都剛好是
+# 79 字元，那不是巧合，是截斷點。發現它的是一個「超出預算」的 job。
+_TOKEN_RE = re.compile(rb"sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])")
+
+# 比對到 token 之後，再等這麼久確認沒有更多字元跟上來。
+#
+# lookahead 擋得住「後面還有字」，擋不住「後面還沒傳到」—— 緩衝區剛好在
+# token 中間結束時，下一個字元還在路上，而那時 lookahead 是成立的。
+# 所以比對到之後要再讀一小段時間；沒有新東西進來才算數。
+_TOKEN_SETTLE_SECONDS = 1.5
 
 # 人要開瀏覽器、登入、授權、複製碼、切回來貼上。五分鐘不算寬鬆。
 SESSION_TTL_SECONDS = 300
@@ -123,12 +140,27 @@ _sessions: dict[uuid.UUID, Session] = {}
 
 
 def _read_until(
-    sess: Session, pattern: re.Pattern[bytes], timeout: float
+    sess: Session,
+    pattern: re.Pattern[bytes],
+    timeout: float,
+    *,
+    settle: float = 0.0,
 ) -> bytes | None:
-    """一直讀 pty 直到吐出符合的東西，或逾時。"""
+    """一直讀 pty 直到吐出符合的東西，或逾時。
+
+    `settle` > 0 時，比對到之後**不立刻回傳** —— 再讀那麼久，確認沒有更多
+    字元跟上來，而且期間比對結果沒有變長。token 要用這個；授權網址不用
+    （它後面一定接著別的輸出）。
+
+    這是 2026-09-22 那個「存下截斷 token」的修法。詳見 `_TOKEN_RE` 上面那段。
+    """
     deadline = time.monotonic() + timeout
+    best: bytes | None = None
+    settle_until = 0.0
     while time.monotonic() < deadline:
-        r, _, _ = select.select([sess.master_fd], [], [], 0.5)
+        if best is not None and time.monotonic() >= settle_until:
+            return best
+        r, _, _ = select.select([sess.master_fd], [], [], 0.2)
         if r:
             try:
                 chunk = os.read(sess.master_fd, 4096)
@@ -137,20 +169,39 @@ def _read_until(
             if not chunk:
                 break
             sess.buf += chunk
-            found = pattern.search(sess.buf)
-            if found:
-                return found.group(0)
+            if found := pattern.search(sess.buf):
+                got = found.group(0)
+                if got != best:
+                    # 變長了（或第一次比對到）—— 重新等一輪，不要急著收。
+                    best = got
+                    settle_until = time.monotonic() + settle
+                if settle <= 0:
+                    return best
         if sess.proc.poll() is not None:
-            break
-    return None
+            # 行程結束代表不會再有輸出了，緩衝區裡的就是完整的。
+            return (
+                pattern.search(sess.buf).group(0) if pattern.search(sess.buf) else best
+            )
+    return best
 
 
 # 換掉這個就能在測試裡驗生命週期，不用真的去要一組憑證。
 COMMAND: list[str] = ["claude", "setup-token"]
 
 
-def _spawn_and_read_url(worker_id: uuid.UUID) -> Session:
-    """整段放進一個 thread：fork/exec 與 select 都是阻塞的。"""
+def _spawn(worker_id: uuid.UUID) -> Session:
+    """起子行程。
+
+    🚨 **這個函式必須在主執行緒（event loop 那條）上呼叫，不可以丟進 to_thread。**
+
+    `PR_SET_PDEATHSIG` 綁的是**呼叫 fork 的那條 thread**，不是整個 process。
+    從 `asyncio.to_thread` 的 worker thread spawn 的話，那條 thread 一結束，
+    核心就把 `claude setup-token` SIGKILL 掉 —— 使用者還在瀏覽器上授權，
+    而他要貼回來的那個行程已經死了，症狀是「授權沒有完成」。
+
+    2026-09-22 發現：原本整段（spawn + 讀網址）都在 to_thread 裡。
+    現在只有**讀**在 thread 裡，因為只有讀是會阻塞很久的那一段。
+    """
     home = tempfile.mkdtemp(prefix="boba-auth-")
     master, slave = pty.openpty()
     env = os.environ | {"HOME": home, "TERM": "xterm-256color"}
@@ -168,14 +219,7 @@ def _spawn_and_read_url(worker_id: uuid.UUID) -> Session:
         preexec_fn=_die_with_parent,  # noqa: PLW1509
     )
     os.close(slave)
-    sess = Session(worker_id=worker_id, proc=proc, master_fd=master, home=home)
-
-    url = _read_until(sess, _URL_RE, URL_TIMEOUT_SECONDS)
-    if not url:
-        sess.close()
-        raise AuthorizeError("拿不到授權網址，請再試一次")
-    sess.authorize_url = url.decode()
-    return sess
+    return Session(worker_id=worker_id, proc=proc, master_fd=master, home=home)
 
 
 async def start(worker_id: uuid.UUID) -> str:
@@ -184,9 +228,52 @@ async def start(worker_id: uuid.UUID) -> str:
     if old := _sessions.pop(worker_id, None):
         old.close()
 
-    sess = await asyncio.to_thread(_spawn_and_read_url, worker_id)
+    # spawn 在這條 thread 上（見 _spawn 的 docstring），只有讀丟進 to_thread。
+    sess = _spawn(worker_id)
+    url = await asyncio.to_thread(_read_until, sess, _URL_RE, URL_TIMEOUT_SECONDS)
+    if not url:
+        sess.close()
+        raise AuthorizeError("拿不到授權網址，請再試一次")
+    sess.authorize_url = url.decode()
     _sessions[worker_id] = sess
     return sess.authorize_url
+
+
+# 驗證用的最小請求。Haiku、max_tokens=1 —— 這是為了確認憑證，不是為了產出。
+_VERIFY_URL = "https://api.anthropic.com/v1/messages"
+_VERIFY_MODEL = "claude-haiku-4-5-20251001"
+
+
+async def verify(token: str) -> bool:
+    """這串 token 真的用得動嗎。
+
+    **只看「不是認證錯誤」，不看「請求成功」。** 額度滿了（429）、model 不給用
+    （404）都代表憑證是好的 —— 把它們判成失敗的話，代跑者會在自己額度剛好用完
+    的那一刻被擋住授權，而那跟 token 對不對無關。
+
+    網路不通也一律放行（回 True）：這一關是在擋截斷的 token，不是在當守門員。
+    因為連不到 api.anthropic.com 就拒絕存一組可能完全正確的憑證，代價比它擋到的
+    問題大。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                _VERIFY_URL,
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "anthropic-version": "2023-06-01",
+                    "anthropic-beta": "oauth-2025-04-20",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": _VERIFY_MODEL,
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+    except Exception:  # noqa: BLE001 —— 連不到不該擋下授權，理由見 docstring
+        return True
+    return resp.status_code != 401
 
 
 async def submit_code(worker_id: uuid.UUID, code: str) -> str:
@@ -202,14 +289,30 @@ async def submit_code(worker_id: uuid.UUID, code: str) -> str:
     sess.buf = b""  # 只看貼碼之後的輸出，不要撈到前面那段
     os.write(sess.master_fd, code.strip().encode() + b"\r")
 
-    token = await asyncio.to_thread(_read_until, sess, _TOKEN_RE, TOKEN_TIMEOUT_SECONDS)
+    token = await asyncio.to_thread(
+        _read_until,
+        sess,
+        _TOKEN_RE,
+        TOKEN_TIMEOUT_SECONDS,
+        settle=_TOKEN_SETTLE_SECONDS,
+    )
     _sessions.pop(worker_id, None)
     sess.close()
 
     if not token:
         # 不要把 pty 的輸出放進錯誤訊息 —— 那裡面可能有 token 的片段。
         raise AuthorizeError("授權沒有完成。可能是碼貼錯或過期了，請重新開始")
-    return token.decode()
+
+    value = token.decode()
+    # **存進去之前先驗一次。** 沒有這一步，壞掉的 token 會安靜地待在資料庫裡，
+    # 直到某個同事的 job 用它去跑才爆 —— 而那時的症狀是「別人的 job 失敗」，
+    # 離成因隔了好幾層（2026-09-22 就是這樣沉默了一整天）。
+    if not await verify(value):
+        raise AuthorizeError(
+            "拿到的 token 沒有通過驗證，沒有存起來。請再授權一次；"
+            "連續失敗的話把這件事告訴維護者。"
+        )
+    return value
 
 
 def cancel(worker_id: uuid.UUID) -> None:

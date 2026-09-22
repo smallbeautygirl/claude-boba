@@ -131,3 +131,69 @@ def test_a_wrong_code_does_not_leak_pty_output() -> None:
         authorize.TOKEN_TIMEOUT_SECONDS = authorize.TOKEN_TIMEOUT_SECONDS_BACKUP
     msg = str(e.value)
     assert "claude.com" not in msg and "https://" not in msg
+
+
+# --- token 不能被截斷（2026-09-22 沉默了一整天的 bug） ---------------------
+
+
+_REAL_TOKEN = "sk-ant-oat01-" + "Aa1_-" * 18  # 103 字元，比一行寬
+
+
+def _dribbling_command(token: str, chunk: int = 17, gap: float = 0.05) -> list[str]:
+    """把 token 拆成好幾次寫出去 —— 真指令就是這樣吐字的。
+
+    這是整個 bug 的成因：`_read_until` 一比對到就回傳，而 `submit_code`
+    接著立刻 SIGKILL 行程，所以還沒傳到的那一半永遠不會到。
+    """
+    script = (
+        "import sys, time;"
+        "print('open https://claude.com/x', flush=True);"
+        "sys.stdin.readline();"
+        f"t={token!r};"
+        f"[ (sys.stdout.write(t[i:i+{chunk}]), sys.stdout.flush(), time.sleep({gap}))"
+        f"  for i in range(0, len(t), {chunk}) ];"
+        "print(flush=True);"
+        "time.sleep(30)"
+    )
+    return ["python3", "-c", script]
+
+
+def test_a_token_written_in_pieces_is_not_truncated(monkeypatch) -> None:
+    """🚨 這一條就是那個 bug 本身。
+
+    存下來的是一個**形狀完全正確**的前綴：開頭對、字元集合法、看不出任何問題 ——
+    拿去跑才 401。當時兩個帳號的 token 都剛好是 79 字元，那不是巧合。
+    """
+    monkeypatch.setattr(authorize, "COMMAND", _dribbling_command(_REAL_TOKEN))
+
+    # 驗證那一關要繞過：這裡測的是讀取，不是 Anthropic。
+    async def _ok(_token: str) -> bool:
+        return True
+
+    monkeypatch.setattr(authorize, "verify", _ok)
+
+    wid = uuid.uuid4()
+    asyncio.run(authorize.start(wid))
+    got = asyncio.run(authorize.submit_code(wid, "code-123"))
+
+    assert got == _REAL_TOKEN, f"讀到 {len(got)} 字元，應該是 {len(_REAL_TOKEN)}"
+
+
+def test_a_token_that_fails_verification_is_not_returned(monkeypatch) -> None:
+    """壞掉的 token 不能安靜地存進資料庫。
+
+    沒有這一關，它會待到某個同事的 job 拿它去跑才爆，而那時的症狀是
+    「別人的 job 失敗」—— 離成因隔了好幾層。
+    """
+    monkeypatch.setattr(authorize, "COMMAND", _dribbling_command(_REAL_TOKEN))
+
+    async def _bad(_token: str) -> bool:
+        return False
+
+    monkeypatch.setattr(authorize, "verify", _bad)
+
+    wid = uuid.uuid4()
+    asyncio.run(authorize.start(wid))
+    with pytest.raises(authorize.AuthorizeError) as exc:
+        asyncio.run(authorize.submit_code(wid, "code-123"))
+    assert "驗證" in str(exc.value)
