@@ -416,3 +416,14 @@ button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
 /* 百分比等寬，否則 9% 跳到 34% 時整行會抖。 */
 .quota-pct { flex-shrink: 0; width: 3em; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
 .account .actions { margin-top: 10px; }
+
+/* ── 系統狀態的位址欄 ─────────────────────────────────────────────────
+   位址自成一行而不是接在 detail 後面：那兩者講的是不同的事（量到什麼 vs
+   去問了誰），同一行時紅燈的訊息會被一長串網址稀釋。 */
+.check-target {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px;
+  margin-top: 4px; font-size: 12px;
+}
+/* 網址會很長，窄螢幕上一定要能折 —— 不折的話它會把整張卡片撐寬，
+   旁邊的燈號跟著被推出畫面。 */
+.check-target code { word-break: break-all; color: var(--muted); }

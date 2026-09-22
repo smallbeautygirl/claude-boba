@@ -69,6 +69,23 @@ export function Admin() {
               {c.ok ? "🟢" : "🔴"} {c.label}
             </strong>{" "}
             <span className="muted">{c.detail}</span>
+            {/* 位址自成一行。它跟 detail 講的是兩件事 —— 一個是「量到什麼」，
+                一個是「去問了誰」—— 擠在同一行時，紅燈的訊息會被位址稀釋。 */}
+            <div className="check-target">
+              {c.target ? (
+                /* 純文字，不是連結（見 api.ts 的 target）。用 <code> 是因為它
+                   要能被反白複製 —— 管理者拿到紅燈之後第一件事就是把它貼進
+                   終端機。 */
+                <code>{c.target}</code>
+              ) : (
+                <span className="muted">{c.target_note}</span>
+              )}
+              {c.open_url && (
+                <a href={c.open_url} target="_blank" rel="noreferrer noopener">
+                  開啟 ↗
+                </a>
+              )}
+            </div>
           </div>
         </div>
       ))}
@@ -89,6 +106,38 @@ export function Admin() {
           <strong>{u.label}：無法從這裡確認。</strong> {u.why}
         </p>
       ))}
+
+      {/* MinIO console 的連結已經在上面那排的「檔案儲存」那一列（open_url），
+          但這段說明要留著，而且要留在看得到那顆連結的同一頁 ——
+          它講的不是怎麼用 console，是**點進去會看到誰的東西**。
+          連結搬走、說明留下會變成孤兒；說明不搬，那顆連結就變成一個沒有
+          上下文的按鈕，而它有隱私後果。
+
+          那個 console 沒有「只看自己」的權限，登進去看得到所有人的對話與檔案。
+          舊模型下它放在代跑者那頁還說得過去（代跑者是 RD、手上已經有更敏感的
+          東西），託管模型下代跑者只是授權過的人，那個理由就沒了。 */}
+      {me?.s3_console_url && (
+        <>
+          <p className="privacy">
+            <strong>
+              上面「檔案儲存」那顆〔開啟 ↗〕進去的是整個站台共用的 bucket，
+              沒有「只看自己」的權限。
+            </strong>
+            你在裡面看得到的不只是自己的 job，也包含其他人的對話與檔案。
+            這頁之外的地方不會出現那個連結，原因就是這個。
+          </p>
+          <p className="hint">
+            一個 job 一個資料夾：<code>jobs/&lt;job id&gt;/</code>，
+            job id 就在該 job 詳情頁的網址列上。
+          </p>
+          {/* 點名字，不要寫「跟管理員拿」—— 那句話的收件人是「某個人」，
+              而讀到它的人正是在找那個人是誰。憑證本身當然不在畫面上
+              （security.md），但「去問誰」不是憑證。 */}
+          <p className="hint">
+            <strong>登入帳密跟 vvn 拿</strong> —— 畫面上不會有，這裡也不會有。
+          </p>
+        </>
+      )}
 
       <h2>整站數字</h2>
       {stats && (
@@ -143,35 +192,6 @@ export function Admin() {
         </>
       )}
 
-      {/* MinIO console 從「我來代跑」搬過來：那個 console 沒有「只看自己」的
-          權限，登進去看得到所有人的對話與檔案。舊模型下它放在代跑者那頁還說得過去
-          （代跑者是 RD、手上已經有更敏感的東西），託管模型下代跑者只是授權過的人，
-          那個理由就沒了。 */}
-      {me?.s3_console_url && (
-        <>
-          <h2>檔案儲存</h2>
-          <p className="hint">
-            對話紀錄、附件與產出都存在 MinIO 裡，一個 job 一個資料夾：
-            <code>jobs/&lt;job id&gt;/</code>，job id 就在該 job 詳情頁的網址列上。
-          </p>
-          <p className="privacy">
-            <strong>這個 bucket 是整個站台共用的，沒有「只看自己」的權限。</strong>
-            你在 console 裡看得到的不只是自己的 job，也包含其他人的對話與檔案。
-            這頁之外的地方不會出現這個連結，原因就是這個。
-          </p>
-          <p className="console-open">
-            <a
-              className="chip-btn"
-              href={me.s3_console_url}
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              開啟 MinIO console ↗
-            </a>
-          </p>
-          <p className="hint">登入憑證跟管理員拿，畫面上不會有。</p>
-        </>
-      )}
     </div>
   );
 }

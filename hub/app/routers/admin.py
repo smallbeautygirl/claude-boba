@@ -20,6 +20,7 @@ from decimal import Decimal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import is_admin, require_user
@@ -43,6 +44,34 @@ QUEUED_STUCK_SECONDS = 600
 # budget／concurrency／CLI 版本），所以這是一個假設，不是量到的值。有代跑者把
 # 逾時調長的話，他的 job 會提早被列進來。要精確就得讓 worker 回報那個值。
 RUNNING_STUCK_SECONDS = 600 + 120
+
+
+# 一項檢查的兩種「位址」，刻意分開（web-spec §8 之外的維運頁，但同一條精神）：
+#
+#   target    hub **這次真的去打的**那個位址。純文字，不做成連結 ——
+#             它常常是 localhost:9000，而管理者的瀏覽器點下去是他自己的機器。
+#   open_url  人點得開的介面。只有真的存在時才有（MinIO console、Observ）。
+#
+# 兩者指向不同機器是常態，不是設定錯誤。合成一欄的話，`localhost:9000` 會被
+# 當成 console 的網址點下去，然後得到一個「連不上」的結論 —— 而那個結論是錯的。
+
+
+def _db_target() -> str:
+    """資料庫位址，**去掉帳號與密碼**。
+
+    這一頁只有管理者看得到，但它仍然是一個 API 回應 —— security.md 那條
+    「絕不把憑證放進錯誤訊息與 API 回應」沒有例外。
+
+    也不做遮罩版（`boba:***@…`）：遮罩要自己寫，而寫錯一次就是把密碼吐出去。
+    那條規則不該靠一段字串處理來守，而「用哪個帳號連的」在這頁沒有人會拿它
+    做決定 —— 帳號錯的話燈本來就是紅的，錯誤訊息會在 detail 裡。
+    """
+    try:
+        u = make_url(settings.database_url)
+    except Exception:  # noqa: BLE001 —— 位址壞掉不該讓整頁 500
+        return "（讀不出來）"
+    host = u.host or "?"
+    return f"{host}:{u.port}/{u.database}" if u.port else f"{host}/{u.database}"
 
 
 async def require_admin(user: User = Depends(require_user)) -> User:
@@ -80,11 +109,18 @@ async def health(
                 "label": "資料庫",
                 "ok": True,
                 "detail": f"查詢往返 {'< 0.1' if ms < 0.1 else f'{ms:.1f}'} ms",
+                "target": _db_target(),
             }
         )
     except Exception as exc:  # noqa: BLE001 —— 這裡就是要把任何失敗變成紅燈
         checks.append(
-            {"key": "db", "label": "資料庫", "ok": False, "detail": str(exc)[:200]}
+            {
+                "key": "db",
+                "label": "資料庫",
+                "ok": False,
+                "detail": str(exc)[:200],
+                "target": _db_target(),
+            }
         )
 
     # 2. MinIO：打它自己的健康端點。不要用「我們存得進去嗎」當檢查 ——
@@ -98,9 +134,11 @@ async def health(
                 "key": "storage",
                 "label": "檔案儲存（MinIO）",
                 "ok": r.status_code == 200,
-                # 位址要標明是「hub 這邊看到的」—— 它常常是 localhost，
-                # 管理者會以為 console 開在自己的機器上。
-                "detail": f"健康端點回 {r.status_code}（hub 這邊連的是 {url}）",
+                # 位址以前是寫在這句話裡的。拆出來成獨立欄位之後，前端不用
+                # 解析後端的散文 —— 那是最脆的那種耦合。
+                "detail": f"健康端點回 {r.status_code}",
+                "target": url,
+                "open_url": settings.s3_console_url,
             }
         )
     except Exception as exc:  # noqa: BLE001
@@ -109,7 +147,9 @@ async def health(
                 "key": "storage",
                 "label": "檔案儲存（MinIO）",
                 "ok": False,
-                "detail": f"hub 連不到 {url}：{str(exc)[:120]}",
+                "detail": f"連不上：{str(exc)[:120]}",
+                "target": url,
+                "open_url": settings.s3_console_url,
             }
         )
 
@@ -122,6 +162,9 @@ async def health(
             "key": "worker_host",
             "label": "領單主機",
             "ok": up,
+            # 沒有位址，而且**不可能有**：worker 一律主動連出（可能在 NAT 後），
+            # hub 從不主動連它（SPEC §9）。留一格空白會被讀成「這裡壞了」。
+            "target_note": "它主動連 hub，hub 不連它 —— 沒有可以檢查的位址",
             "detail": (
                 f"最後回報於 {int((datetime.now(UTC) - seen).total_seconds())} 秒前"
                 if seen
@@ -141,12 +184,64 @@ async def health(
             "key": "lending_accounts",
             "label": "出借帳號",
             "ok": bool(usable),
+            "target_note": "量的是站台自己的資料，不是遠端服務",
             "detail": (
                 f"{len(usable)} 個可用"
                 + (f"，{len(stale)} 個等待重新授權" if stale else "")
             ),
         }
     )
+
+    # 5. 認證（Observ）：站台唯一的登入路徑。它掛了就沒有人進得來，
+    #    而在這之前這一頁會整排全綠 —— 那是最糟的一種沉默。
+    #
+    # 🚨 **不要用 `/observ/health`。** 它回 200，但那是前端 SPA 的 catch-all，
+    #    不是健康端點 —— `/observ/隨便打什麼` 也回 200。拿它當檢查會做出一顆
+    #    永遠綠的假燈，而這一頁的第一條規則就是在禁止那個。
+    #
+    # `/api/healthz/` 才是真的：OpenAPI 上它的 security 是 `[jwtAuth, {}]`，
+    # 那個空物件代表允許匿名，回的是 JSON 版本資訊（2026-09-22 在 production
+    # 實測）。**所以綠燈的條件是「200 而且 JSON 解得開」** —— 只看狀態碼的話，
+    # 路由哪天掉進 SPA 兜底，這顆燈會在對方掛掉時繼續是綠的。
+    observ_url = settings.observ_base_url.rstrip("/") + "/api/healthz/"
+    check = {
+        "key": "auth",
+        "label": "認證（Observ）",
+        "target": observ_url,
+        "open_url": settings.observ_base_url,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(observ_url)
+        body = r.json() if r.status_code == 200 else None
+    except ValueError:
+        # 200 但不是 JSON = 打到 SPA 了。這是紅燈，而且原因要講得出來，
+        # 否則下一個人會以為 Observ 掛了，然後去查一個沒壞的東西。
+        checks.append(
+            check
+            | {
+                "ok": False,
+                "detail": "回了 200 但不是 JSON —— 打到前端頁面，健康端點的路徑可能變了",
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        checks.append(check | {"ok": False, "detail": f"連不上：{str(exc)[:120]}"})
+    else:
+        if body is None:
+            checks.append(check | {"ok": False, "detail": f"回 {r.status_code}"})
+        else:
+            # 版本帶出來：它回答「我在跟哪一版的 Observ 講話」，那是對方改 API
+            # 時第一個要問的事。順帶讓這顆燈看得出來有在動 —— 寫死的綠燈不會
+            # 帶著一個會變的 commit。
+            ver = " ".join(str(body[k]) for k in ("branch", "commit") if body.get(k))
+            checks.append(
+                check
+                | {
+                    "ok": True,
+                    "detail": f"認證 API 有回應{f'（{ver}）' if ver else ''}"
+                    " —— 這顆燈只證明它回得了話，不代表登入一定成功",
+                }
+            )
 
     facts = [
         {

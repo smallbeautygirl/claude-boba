@@ -182,7 +182,22 @@ export const SITE_MODELS = [
     `checks` 是這次真的量到的、`facts` 是讀得出來但不是健康檢查、
     `unknown` 是從 hub 檢查不到的東西（連同原因一起顯示，不放假燈）。 */
 export interface AdminHealth {
-  checks: { key: string; label: string; ok: boolean; detail: string }[];
+  checks: {
+    key: string;
+    label: string;
+    ok: boolean;
+    /** 量到什麼（「查詢往返 0.5 ms」、「最後回報於 12 秒前」）。
+        **不含位址** —— 位址是 target，混在一起前端就得解析散文。 */
+    detail: string;
+    /** hub 這次真的去打的位址。純文字，**不要做成連結** ——
+        它常常是 localhost:9000，管理者點下去是他自己的機器。 */
+    target?: string;
+    /** 人點得開的介面。只有真的存在的才有（MinIO console、Observ）。
+        跟 target 常常是不同機器，那是常態不是設定錯誤。 */
+    open_url?: string;
+    /** 沒有 target 時，為什麼沒有。留白會被讀成「這裡壞了」。 */
+    target_note?: string;
+  }[];
   facts: { label: string; value: string; note: string }[];
   unknown: { label: string; why: string }[];
 }

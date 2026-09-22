@@ -166,3 +166,92 @@ async def test_a_long_queued_job_shows_up(db) -> None:
     # 紅線 1：內容一個字都不能跟著出來。
     assert "prompt" not in mine[0]
     assert all("這句不可以出現在回應裡" not in str(v) for v in mine[0].values())
+
+
+# --- 位址欄位與 Observ 那顆燈 ----------------------------------------------
+#
+# 這一段釘的是 2026-09-22 的決定：狀態列每一項要說得出「hub 剛剛去打的是誰」。
+
+
+def test_db_target_never_carries_the_password() -> None:
+    """資料庫位址只有 host:port/dbname。
+
+    這頁只有管理者看得到，但它仍然是一個 API 回應 —— security.md 那條
+    「絕不把憑證放進 API 回應」沒有例外。斷言寫成「整串裡不能有密碼」而不是
+    「不要有 @」：後者擋不住換一種格式寫出來的同一個外洩。
+    """
+    from app.routers.admin import _db_target
+
+    old = settings.database_url
+    settings.database_url = "postgresql+asyncpg://boba:hunter2@db.example:5432/boba"
+    try:
+        target = _db_target()
+    finally:
+        settings.database_url = old
+
+    assert "hunter2" not in target
+    assert "boba:" not in target
+    assert target == "db.example:5432/boba"
+
+
+def test_a_broken_database_url_does_not_500_the_page() -> None:
+    """位址壞掉不該讓整頁掛掉 —— 那會讓管理者在最需要這頁的時候看不到它。"""
+    from app.routers.admin import _db_target
+
+    old = settings.database_url
+    settings.database_url = "這不是一個網址"
+    try:
+        assert _db_target() == "（讀不出來）"
+    finally:
+        settings.database_url = old
+
+
+def test_observ_200_that_is_not_json_is_a_red_light(monkeypatch) -> None:
+    """🚨 **200 不等於活著。**
+
+    `/observ/health` 與 `/observ/隨便打什麼` 都回 200，因為那是前端 SPA 的
+    catch-all。只看狀態碼的檢查會在 API 掛掉、SPA 還活著時繼續是綠的 ——
+    而那正是最需要它變紅的時刻。
+
+    這個測試存在的理由就是那顆假燈：判準改回「只看 2xx」時它要炸。
+    """
+    import httpx
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            raise ValueError("not json")
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def get(self, _url):
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _Client())
+    with _client(ADMIN) as c:
+        body = c.get("/api/admin/health").json()
+
+    auth = next(x for x in body["checks"] if x["key"] == "auth")
+    assert auth["ok"] is False
+    assert "不是 JSON" in auth["detail"]
+    # 紅了也要說得出打的是誰 —— 否則下一個人會去查一個沒壞的東西。
+    assert auth["target"].endswith("/api/healthz/")
+
+
+def test_checks_without_an_address_say_why(monkeypatch) -> None:
+    """留一格空白會被讀成「這裡本來該有東西，是不是壞了」。
+
+    這頁已經有一個 `unknown` 區塊，理由一模一樣：量不到的東西要寫出原因，
+    不要留白，也不要放一個看起來像位址的替代品（主機名不是位址）。
+    """
+    with _client(ADMIN) as c:
+        body = c.get("/api/admin/health").json()
+
+    for check in body["checks"]:
+        assert check.get("target") or check.get("target_note"), check["key"]
