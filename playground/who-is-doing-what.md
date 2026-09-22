@@ -1218,7 +1218,7 @@ MinIO 那段目前還留在舊畫面（回陣列那個分支）。A 的端點落
 
 ---
 
-### ~~→ session C：管理頁~~ ✅ 已完成（`4254d63` hub、`b1cfd1f` web）
+### ~~→ session C：管理頁~~ ✅ 已完成（`4254d63` hub、`0936314` web）
 
 使用者要一個 admin page，看得到 hub、MinIO 等維運介面與系統狀態。
 **這一格取代前一格「MinIO console 改成只給 admin」的第 3 項**（那格說「不加新分頁、
