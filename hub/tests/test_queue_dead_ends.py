@@ -28,6 +28,7 @@ from app.models import (
 )
 from app.routers.jobs import _check_model
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -155,13 +156,24 @@ async def test_claimed_jobs_are_not_swept(session) -> None:
 # --- 提交時的死路 ---------------------------------------------------------
 
 
+async def _kill_every_other_account(session) -> None:
+    """把**開發資料庫裡既有的**帳號也標成失效。
+
+    `_anyone_can_run()` 問的是全站，而 fixture 只控制得了自己建的那個 ——
+    不處理既有資料的話，這個測試會在「開發機上剛好有一個活著的帳號」時變紅，
+    而那跟它要驗的規則無關。整個測試包在交易裡，結束就 rollback。
+    """
+    for row in await session.scalars(select(LendingAccount)):
+        row.needs_reauth = True
+    await session.flush()
+
+
 async def test_submitting_is_refused_when_every_account_is_dead(session) -> None:
     """所有 token 都失效時排隊只是把失敗延後 15 分鐘，
     而使用者會以為自己在等一個會來的人。"""
-    _user, setting, (account,) = await _fixtures(session)
+    _user, setting, _accounts = await _fixtures(session)
     setting.accepting = False
-    account.needs_reauth = True
-    await session.flush()
+    await _kill_every_other_account(session)
 
     with pytest.raises(HTTPException) as exc:
         await _check_model("sonnet", None, session)
@@ -180,3 +192,4 @@ async def test_submitting_is_allowed_when_someone_is_merely_offline(session) -> 
     await session.flush()
 
     await _check_model("sonnet", None, session)  # 不拋就是過
+    assert account.usable
