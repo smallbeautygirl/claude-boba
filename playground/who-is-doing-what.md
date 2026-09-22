@@ -604,6 +604,69 @@ harness。登入牆有解，方法寫在上面那條規則裡（Playwright 攔 `
 
 ---
 
+### → session A：接著問改用同一套輸入列，並支援附件（2026-09-22 指派）
+
+使用者的原話：「再繼續做 job 時，輸入框也需改為與現在丟 job 一樣」。
+
+`JobDetail.tsx` 的 `FollowUp` 還是舊版：裸 `<label>` + `<textarea rows={3}>` +
+獨立的 `<CommandPicker>`（自帶 `<details>`）+ 底下一顆送出。跟提交頁完全兩種樣子。
+
+#### 範圍含後端 —— 「一樣」要真的一樣
+
+查過了：`FollowUp` schema **只有 `prompt` 一個欄位**，接著問不支援附件。所以只改
+外觀的話，那條輸入列會少一顆 `+`，使用者會找不到。使用者選了連附件一起做。
+
+**情境很具體**：跟完一輪，想再給它一份新的參考檔案。
+
+| 層 | 要做的 |
+|---|---|
+| hub `schemas.py` | `FollowUp` 加 `attachment_keys`，跟 `JobCreate` 同一組上限 |
+| hub `routers/jobs.py` | `follow_up()` 呼叫既有的 `_check_attachments()`，並把 keys 存進新 job |
+| web `JobDetail.tsx` | `FollowUp` 改用 composer（`+` `/` 送出） |
+| web `api.ts` | `followUp()` 多帶 `attachment_keys` |
+| worker | **不用動** —— `routers/worker.py` 已經從 `job.attachment_keys` 組 `Attachment`，`_place_attachments()` 照跑 |
+
+#### 🔑 `_check_attachments` 的第三個參數要傳什麼
+
+簽名是 `(keys, user, transcript_bytes)`，而 100 MB 的上限是「這個 job 的輸入合計」。
+
+接著問的 transcript **不是使用者上傳的**，是上一個 job 留在 MinIO 的那份
+（`parent.transcript_key`）。但 worker 一樣要把它連同附件整包下載下來 ——
+**所以要傳 `storage.stat(parent.transcript_key)`，不是 0。** 傳 0 的話，一條長的
+續問鏈每輪都能再塞 50 MB 附件，而 transcript 本身還在長。
+
+#### 🔑 不要加第二個隱私勾選
+
+提交頁有那個勾選，接著問沒有。**維持沒有。**
+
+理由：同意是針對**這條 job 鏈**給的，每一輪都再問一次，只會把同意變成反射性點擊 ——
+那正好摧毀 `web-spec §9` 想保住的東西。但附件是**新的內容類別**（檔案，不只是
+貼上的文字），所以輸入列旁邊要有一行**可見的提醒**（不是勾選）：內容與檔案會送到
+出租者的電腦上。
+
+這是我的判斷，不是使用者定的 —— 覺得不對就提出來，不要默默照做。
+
+#### 不需要 session 檔面板
+
+接著問本來就從上一個 job 的 transcript 續跑，再給它一個「上傳 session 檔」是矛盾的。
+輸入列只要 `+` 與 `/`。
+
+#### ⚠️ `api.ts` 這一輪借給你
+
+平常那是別人的檔案，但這次整條垂直切片（hub → api → UI）同一個人做比較省 ——
+今天已經證明過分工的接縫比工作量貴。做完把它還回去。
+
+`index.css` / `App.tsx` / `theme.ts` / `Leaderboard.tsx` 是 C 的，**不要碰**，
+它正在同一個工作目錄裡改 header。
+
+#### 驗證
+
+`JobDetail` 在登入牆後面，方法見上面那條規則（Playwright 攔 API）。
+接著問那塊還需要一個有 `can_follow_up: true` 的 job 才會出現 —— 攔
+`**/api/jobs/*` 回一個假的 JobDetail 就好，渲染的仍然是真正的元件。
+
+---
+
 ## 待接的契約（後端做好了，UI 還沒接）
 
 這些後端都可用、有測試，UI 改版時照著接即可。詳細欄位見
