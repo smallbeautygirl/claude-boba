@@ -71,12 +71,15 @@ async def health(
     t0 = time.monotonic()
     try:
         await session.scalar(select(1))
+        # 本機的 SELECT 1 常常不到 1 毫秒，取整數會印出「0 ms」——
+        # 那是真的，但在健康面板上讀起來像「沒量到」，而可信是這頁唯一的資產。
+        ms = (time.monotonic() - t0) * 1000
         checks.append(
             {
                 "key": "db",
                 "label": "資料庫",
                 "ok": True,
-                "detail": f"查詢往返 {int((time.monotonic() - t0) * 1000)} ms",
+                "detail": f"查詢往返 {'< 0.1' if ms < 0.1 else f'{ms:.1f}'} ms",
             }
         )
     except Exception as exc:  # noqa: BLE001 —— 這裡就是要把任何失敗變成紅燈
@@ -95,7 +98,9 @@ async def health(
                 "key": "storage",
                 "label": "檔案儲存（MinIO）",
                 "ok": r.status_code == 200,
-                "detail": f"{url} 回 {r.status_code}",
+                # 位址要標明是「hub 這邊看到的」—— 它常常是 localhost，
+                # 管理者會以為 console 開在自己的機器上。
+                "detail": f"健康端點回 {r.status_code}（hub 這邊連的是 {url}）",
             }
         )
     except Exception as exc:  # noqa: BLE001
@@ -104,7 +109,7 @@ async def health(
                 "key": "storage",
                 "label": "檔案儲存（MinIO）",
                 "ok": False,
-                "detail": f"連不到 {url}：{str(exc)[:120]}",
+                "detail": f"hub 連不到 {url}：{str(exc)[:120]}",
             }
         )
 
