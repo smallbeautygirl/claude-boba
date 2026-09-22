@@ -71,6 +71,8 @@ export interface CreateJobInput {
   // 上傳的 Claude Code session 檔。有帶的話這個 job 走 `claude --resume`，
   // 是真的續跑，不是把對話當文字重貼一次。
   transcript_key?: string | null;
+  // 要它處理的檔案。worker 放進工作目錄根層，Claude 一進去就看得到。
+  attachment_keys?: string[];
 }
 
 export interface UploadTicket {
@@ -220,6 +222,21 @@ export const api = {
 
     const res = await fetch(ticket.put_url, { method: "PUT", body: file });
     if (!res.ok) throw new Error("上傳失敗，請再試一次");
+    return ticket.key;
+  },
+
+  // 一次一個檔（契約：要傳多個就呼叫多次）。filename 由我們送 ——
+  // 撞名的去重是**客戶端的責任**，worker 的序號只是防呆：它的改名是隱形的，
+  // 使用者不會知道產出裡的 report-2.pdf 是怎麼來的。
+  uploadAttachment: async (file: File, filename: string): Promise<string> => {
+    const ticket = await fetch(`${HUB}/api/uploads/attachment`, {
+      method: "POST",
+      headers: authed({ "content-type": "application/json" }),
+      body: JSON.stringify({ filename }),
+    }).then(json<UploadTicket>);
+
+    const res = await fetch(ticket.put_url, { method: "PUT", body: file });
+    if (!res.ok) throw new Error(`${filename} 上傳失敗，請再試一次`);
     return ticket.key;
   },
 

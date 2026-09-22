@@ -106,6 +106,22 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, monospac
 .session-pick:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .session-pick:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
 .session-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+/* 附件。跟 .session 同一組視覺語彙（同一顆藥丸按鈕），但它可以有很多個，
+   所以列表獨立出來。 */
+.attach { margin: -8px 0 20px; font-size: 13px; }
+.attach .session-pick { margin-right: 10px; }
+.attach-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.attach-list li {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: 8px 12px; margin-bottom: 6px;
+  background: var(--accent-soft); border-radius: 8px;
+}
+.attach-main { min-width: 0; }
+/* 說明長的時候別把按鈕擠成兩行。 */
+.attach-list button { flex-shrink: 0; }
+.attach-list code { background: var(--card); padding: 1px 5px; border-radius: 4px; }
+.attach > p { margin: 12px 0 0; }
+
 .session-file {
   flex-grow: 1; padding: 8px 12px; border-radius: 8px;
   background: var(--accent-soft); font-size: 13px;
