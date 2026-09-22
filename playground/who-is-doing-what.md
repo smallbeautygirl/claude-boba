@@ -96,12 +96,20 @@ session 的通知頁與 hub 設定。東西沒丟、能跑，但 `git log` 讀�
 
   ```js
   await p.addInitScript(() => { try { localStorage.setItem('boba.token','x'); } catch {} });
+  // ⚠️ catch-all 要註冊在**最前面**：Playwright 是後註冊的 route 先比對，
+  //    反過來寫的話 '**/api/**' 會蓋掉 '**/api/auth/me'，display_name 變
+  //    undefined、導覽列的名字渲染成空的 —— 而你多半不會發現，只會量到
+  //    一個偏小的寬度。（2026-09-22 實際踩過，害一次 header 的寬度量錯。）
+  await p.route('**/api/**', r => r.fulfill({ json: [] }));
   await p.route('**/api/auth/me', r => r.fulfill({ json: {
     id:'1', email:'v@x.com', display_name:'vivianfan',
     has_teams_webhook:false, channel_notifications:true, channel_name:'X' }}));
-  await p.route('**/api/**', r => r.fulfill({ json: [] }));
   await p.goto('http://localhost:5173/');
   ```
+
+  **驗收自己的攔截**：先確認畫面上真的出現了你餵進去的值（例如導覽列的
+  `vivianfan`）。攔截被遮蔽時頁面照樣渲染、照樣沒有錯誤，只是少了資料 ——
+  它不會告訴你。
 
   假的是**資料**，不是版面 —— 渲染的仍然是真正的 `Submit.tsx`。這跟手寫 harness
   的差別就在這裡：harness 假的是結構，而結構正是你要驗的東西。
@@ -600,7 +608,9 @@ harness。登入牆有解，方法寫在上面那條規則裡（Playwright 攔 `
 派工那個「省一百、剩 75px 餘裕」的算式**是在名字沒有渲染出來的畫面上算的**。
 Playwright **後註冊的 route 先比對**，所以規則裡那段片段的 `**/api/**`
 蓋掉了它前面的 `**/api/auth/me`，`.who` 變成空的 —— 那 172px 不含名字。
-把 catch-all 註冊在前面就好（規則那條已經改過來）。
+把 catch-all 註冊在前面就好。**注意：當時只加了這段說明、片段本身沒有改**，
+所以照抄的人照樣會踩 —— 片段已於同日修正。註記說修好了而產物還是壞的，
+正是上面那條規則要抓的東西。
 
 實際數字（容器 728px，1280 寬、真實元件樹）：
 
