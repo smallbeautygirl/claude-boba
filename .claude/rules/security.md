@@ -15,11 +15,40 @@ These rules are always active. Violations must be fixed before merging.
 
 違反這條的後果不是資料外洩，是這個工具會被同事集體棄用。
 
-### 2. Claude Code 憑證只以唯讀 volume 掛入，永遠不進 image
+### 2. Claude Code 憑證永遠不進 image，而且只走它那一種通道
 
 出租者的 Anthropic 憑證是這整個系統裡最敏感的東西 —— 它被盜等於帳號被停權。
 
-- 唯讀掛載，不 `COPY` 進 image，不寫進環境變數
+**憑證有兩種，通道不同，不可互換：**
+
+| 憑證 | 怎麼進 job 容器 | 為什麼 |
+|---|---|---|
+| `.credentials.json`（`claude /login` 的 OAuth session） | **只以唯讀 volume 掛入** | 它是檔案，Claude Code 會就地讀它 |
+| 長期 OAuth token（`claude setup-token`，`sk-ant-oat01-…`，一年期） | **只以環境變數 `CLAUDE_CODE_OAUTH_TOKEN` 注入該 job 的容器** | 那是 Anthropic 官方為非互動場景設計的唯一通道 |
+
+> **2026-09-22 修訂。** 這條原本寫「不寫進環境變數」，而長期 token 官方的用法
+> 就是環境變數 —— 規則與唯一可行的機制打架。`apiKeyHelper` 那條路已經驗過不通
+> （SPEC.md §11：OAuth token 走 `Authorization: Bearer` + oauth beta header，
+> 而 `apiKeyHelper` 的輸出被當成 `x-api-key`，伺服器回 401）。
+>
+> 這條的**用意**一直是「憑證不要散落到會被意外讀到的地方」，不是「環境變數這個
+> 機制有罪」。所以用意用下面的約束保住，機制放行。
+
+**長期 token 的額外約束，每一條都不可省：**
+
+- **絕不進 log。** 包含 worker 的 stdout、hub 的 access log、docker 的事件。
+  紅線 1 說 job 內容不進 log，token 比那更嚴格
+- **絕不寫進檔案系統**，包含 job 的工作目錄與 `.home/`
+- **絕不回傳給前端。** 存進去之後就是單向的 —— UI 只能顯示「已設定 / 未設定」，
+  不能顯示遮罩後的值，也不能提供「查看」
+- **在資料庫裡加密存放，金鑰放在資料庫外**（`hub/.env`）。這擋不住拿到整台主機
+  的人，但擋得住最可能發生的那種外洩：備份外流、SQL injection、有人拿到 psql。
+  **金鑰沒設就拒絕啟動**，不要默默用明文存
+- **一年期意味著外洩沒有損失上限。** 8 小時的 session token 洩漏還有天然的止血點，
+  這個沒有 —— 所以凡是需要人類複製貼上的介面都要假設它終究會被貼到不該貼的地方
+  （2026-09-22 實際發生過一次）
+
+- 不 `COPY` 進 image
 - 容器的 `HOME` 必須是**每個 job 全新的目錄**（目前是工作目錄底下的 `.home/`）
 - HOME 裡**只允許**這三樣，其餘一概不得出現：
 
