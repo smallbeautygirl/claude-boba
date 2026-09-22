@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import events, notify, storage
+from .. import events, notify, secrets_box, storage
 from ..config import settings
 from ..db import get_session
 from ..enums import DebtStatus, DebtTier, JobStatus
@@ -94,7 +94,13 @@ async def poll(
     if job is None:
         return Response(status_code=204)
 
+    # 託管模型：job 跑在這台主機上，用代跑者的長期 token。舊模型（worker 跑在
+    # 他自己機器、掛 .credentials.json）沒有這個欄位，兩條路都要能跑。
+    oauth_token = (
+        secrets_box.open_(worker.oauth_token_enc) if worker.oauth_token_enc else None
+    )
     return WorkerJob(
+        oauth_token=oauth_token,
         job_id=job.id,
         prompt=job.prompt,
         model=job.model,

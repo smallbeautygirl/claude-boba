@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -12,9 +13,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import authorize, secrets_box
 from ..auth import require_user
 from ..db import get_session
 from ..models import Job, User, Worker
+from ..schemas import SITE_MODELS
 
 router = APIRouter(prefix="/api/workers", tags=["workers"])
 
@@ -71,11 +74,149 @@ def _view(w: Worker, *, owner: bool, jobs: int = 0) -> dict:
     return data
 
 
+class LendingPatch(BaseModel):
+    """出借條件。全部選填 —— 前端只送改動的那幾個。"""
+
+    budget_usd: Decimal | None = Field(default=None, gt=0, le=100)
+    available_models: list[str] | None = None
+    allow_full_network: bool | None = None
+    accepting: bool | None = None
+
+
+class AuthorizeCode(BaseModel):
+    code: str = Field(min_length=1, max_length=512)
+
+
+async def _my_lending(user: User, session: AsyncSession) -> Worker:
+    """取得（必要時建立）這個人的出借設定。
+
+    託管模型下他沒有機器，所以沒有「新增一台」這個動作 —— 一個人就是一筆。
+    第一次打開那一頁就該看到預設條件，不是一個空清單加一顆「新增」。
+    """
+    row = await session.scalar(
+        select(Worker).where(Worker.owner_user_id == user.id).order_by(Worker.name)
+    )
+    if row is None:
+        row = Worker(
+            owner_user_id=user.id,
+            name=user.display_name,
+            token=secrets.token_urlsafe(32),
+            available_models=["sonnet", "haiku"],
+            # 還沒授權之前先不要接單 —— 接了也跑不動，只會讓委託者等。
+            accepting=False,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+def _lending_view(w: Worker) -> dict:
+    """出借設定。**絕不包含 token**，連遮罩後的值都不行 ——
+    只回 has_token 布林（security.md 紅線 2）。"""
+    stale = (
+        w.last_seen_at is None
+        or (datetime.now(UTC) - w.last_seen_at).total_seconds() > OFFLINE_AFTER_SECONDS
+    )
+    return {
+        "has_token": w.oauth_token_enc is not None,
+        "budget_usd": str(w.job_budget_usd),
+        "available_models": w.available_models or [],
+        "allow_full_network": w.allow_full_network,
+        "accepting": w.accepting,
+        "online": not stale,
+    }
+
+
 @router.get("")
-async def list_workers(
+async def my_lending(
+    user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """我的出借設定（單一物件）。
+
+    託管模型下他沒有機器，他有的是一組條件 —— 所以這裡不是清單。
+    """
+    return _lending_view(await _my_lending(user, session))
+
+
+@router.put("/settings")
+async def update_lending(
+    body: LendingPatch,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """改出借條件。
+
+    **這三個控制項是「把額度借出去」讓人敢做的原因。** 舊模型下它們在代跑者
+    自己機器的 worker/.env；託管模型下他沒有機器，不搬進來就直接消失了。
+    JOB_BUDGET_USD 的註解自己寫著「一個 Opus job 八分鐘能燒掉 US$25」——
+    那是代跑者的錢。
+    """
+    row = await _my_lending(user, session)
+    if body.budget_usd is not None:
+        row.job_budget_usd = body.budget_usd
+    if body.available_models is not None:
+        bad = [m for m in body.available_models if m not in SITE_MODELS]
+        if bad:
+            raise HTTPException(400, f"這個站台不跑 {'、'.join(bad)}")
+        if not body.available_models:
+            raise HTTPException(400, "至少要開放一個 model，不然沒有人派得動你")
+        row.available_models = body.available_models
+    if body.allow_full_network is not None:
+        row.allow_full_network = body.allow_full_network
+    if body.accepting is not None:
+        if body.accepting and row.oauth_token_enc is None:
+            raise HTTPException(400, "還沒授權，接單了也跑不動")
+        row.accepting = body.accepting
+    await session.commit()
+    return _lending_view(row)
+
+
+@router.post("/authorize")
+async def start_authorize(
+    user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """開始授權，回授權網址。
+
+    代跑者去那個網址授權，拿到一個**一次性授權碼**貼回來（見 /authorize/code）。
+    走這條而不是請他自己貼 token：一年期 token 從頭到尾不經過人的手。
+    """
+    row = await _my_lending(user, session)
+    try:
+        url = await authorize.start(row.id)
+    except authorize.AuthorizeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"authorize_url": url}
+
+
+@router.post("/authorize/code")
+async def submit_authorize_code(
+    body: AuthorizeCode,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """把授權碼送回去，換到 token 並加密存起來。
+
+    **token 不會出現在回應裡**，只回 has_token（security.md 紅線 2）。
+    """
+    row = await _my_lending(user, session)
+    try:
+        token = await authorize.submit_code(row.id, body.code)
+    except authorize.AuthorizeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    # 拿到就馬上加密，明文不要在任何地方多待一行。
+    row.oauth_token_enc = secrets_box.seal(token)
+    del token
+    await session.commit()
+    return _lending_view(row)
+
+
+@router.get("/lenders")
+async def list_lenders(
     user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
 ) -> list[dict]:
-    """提交頁的出租者下拉用。所有人都看得到，但只看得到紅綠燈。"""
+    """提交頁的代跑者下拉用。所有人都看得到，但只看得到紅綠燈。"""
     rows = list(await session.scalars(select(Worker).order_by(Worker.name)))
     # 只算自己的 worker 的 job 數 —— 別人的 job 數不該出現在別人的畫面上，
     # 那是「誰幫誰跑過幾次」的資訊，不是紅綠燈那種粗略分寸。

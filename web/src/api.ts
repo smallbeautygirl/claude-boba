@@ -349,7 +349,10 @@ export const api = {
       json<ArtifactRow[]>,
     ),
 
-  listWorkers: () => fetch(`${HUB}/api/workers`, { headers: authed() }).then(json<WorkerRow[]>),
+  // 提交頁的代跑者下拉。**不是 /api/workers** —— 那一支在託管模型下改成回
+  // 「我的出借設定」單一物件了，清單搬到 /lenders。
+  listWorkers: () =>
+    fetch(`${HUB}/api/workers/lenders`, { headers: authed() }).then(json<WorkerRow[]>),
 
   createWorker: (name: string) =>
     fetch(`${HUB}/api/workers`, {

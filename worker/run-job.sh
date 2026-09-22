@@ -12,7 +12,19 @@ MODEL="${3:-sonnet}"
 TRANSCRIPT="${4:-}"            # 選填：借用者上傳的 .jsonl，相對於 workdir
 
 WORKDIR="${JOB_WORKDIR:?job 工作目錄}"
-CREDS="${CLAUDE_CREDENTIALS:?出租者憑證檔絕對路徑}"
+# 憑證有兩種通道，不可互換（.claude/rules/security.md 紅線 2）：
+#
+#   CLAUDE_CODE_OAUTH_TOKEN  託管模型。一年期 token，只以環境變數注入。
+#   CLAUDE_CREDENTIALS       舊模型。代跑者機器上的 .credentials.json，唯讀掛入。
+#
+# 有 token 就走 token（它是本機沒有憑證檔時唯一可行的通道），
+# 沒有才退回掛載。兩條都要能跑 —— 舊模型還在線上。
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  CRED_ARGS=(-e CLAUDE_CODE_OAUTH_TOKEN)
+else
+  CREDS="${CLAUDE_CREDENTIALS:?沒有 CLAUDE_CODE_OAUTH_TOKEN，就要有憑證檔絕對路徑}"
+  CRED_ARGS=(-v "$CREDS:/job/.home/.claude/.credentials.json:ro")
+fi
 TIMEOUT="${TIMEOUT_SECONDS:-600}"
 BUDGET="${JOB_BUDGET_USD:-5}"
 MODELS="${AVAILABLE_MODELS:-sonnet,haiku}"
@@ -41,7 +53,7 @@ exec timeout --signal=TERM --kill-after=20 "$TIMEOUT" \
     -e HTTPS_PROXY="$PROXY" -e HTTP_PROXY="$PROXY" \
     --user "$(id -u):$(id -g)" \
     -e HOME=/job/.home \
-    -v "$CREDS:/job/.home/.claude/.credentials.json:ro" \
+    "${CRED_ARGS[@]}" \
     -v "$WORKDIR:/job" \
     -w /job \
     "$IMAGE" \

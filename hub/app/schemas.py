@@ -148,6 +148,13 @@ class WorkerJob(BaseModel):
     檔案都走預簽 URL，worker 因此不需要 MinIO 憑證，job 容器更是完全碰不到。
     """
 
+    # 代跑者的長期 OAuth token（解密後）。託管模型下這是 job 唯一的憑證來源。
+    #
+    # 🚨 **這個欄位讓整個派單 payload 變成機密。** worker 收到之後要立刻把它
+    # 從 dict 裡取出來（見 worker.py 的 run_job），不要讓它跟著 job 到處流動 ——
+    # 任何一個 print(job) 都會變成外洩（security.md 紅線 2）。
+    oauth_token: str | None = None
+
     job_id: uuid.UUID
     prompt: str
     model: str

@@ -378,6 +378,12 @@ async def _refuse(client: httpx.AsyncClient, job_id: str, why: str) -> None:
 async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     job_id = job["job_id"]
 
+    # 🚨 **立刻把 token 從 dict 裡拿走。** 派單 payload 現在可能含一組一年期
+    # 憑證，而 job 這個 dict 會被傳來傳去。留在裡面的話，任何一個 print(job)、
+    # 任何一個把 job 放進例外訊息的地方，都會變成外洩（security.md 紅線 2）。
+    # pop 之後 dict 就是安全的，只有下面這個區域變數需要小心。
+    oauth_token = job.pop("oauth_token", None)
+
     # 出租者自己的最後一道防線。Hub 已經擋過一次，但燒的是**這台機器的**額度，
     # 所以不能只靠上游。
     #
@@ -402,6 +408,11 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         "WORKER_IMAGE": settings.worker_image,
         "PATH": "/usr/bin:/bin:/usr/local/bin",
     }
+
+    # 只在有的時候放進去。run-job.sh 看到它就改走環境變數那條路，
+    # 沒有就沿用掛載 .credentials.json 的舊路。
+    if oauth_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
 
     proc = await asyncio.create_subprocess_exec(
         str(HERE / "run-job.sh"),
@@ -589,8 +600,17 @@ async def _drain(stream: asyncio.StreamReader | None, state: _JobState) -> None:
 
 
 async def main() -> None:
+    # 託管模型下憑證由 Hub 隨每個 job 派下來（一年期 token，走環境變數），
+    # 所以這台主機上不需要憑證檔。舊模型（跑在代跑者自己機器）才需要。
+    #
+    # 兩個都沒有也讓它起來 —— 站台上這支是常駐的，它該能在還沒有任何人授權
+    # 的時候就跑著等。真的派了一個沒帶 token 的 job，run-job.sh 會明確報錯，
+    # 那比開機時拒絕啟動好：後者會讓「還沒有人授權」看起來像部署壞掉。
     if not settings.claude_credentials:
-        sys.exit("CLAUDE_CREDENTIALS 未設定。見 worker/.env.example")
+        print(
+            "[worker] 沒有 CLAUDE_CREDENTIALS —— 只接 Hub 帶憑證下來的 job",
+            flush=True,
+        )
     if not settings.worker_token:
         sys.exit("WORKER_TOKEN 未設定。到網頁的「我的 worker」產生一組，貼進 .env。")
 
