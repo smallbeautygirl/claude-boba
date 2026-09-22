@@ -30,6 +30,7 @@ def _fake_job(**overrides):
         "model": "sonnet",
         "source_type": SourceType.PASTE,
         "created_at": datetime.now(UTC),
+        "started_at": datetime.now(UTC),
         "finished_at": datetime.now(UTC),
         "total_cost_usd": Decimal("2.30"),
         "transcript_key": "jobs/x/transcript.jsonl",

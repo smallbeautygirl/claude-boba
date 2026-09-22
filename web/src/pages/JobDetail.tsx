@@ -23,18 +23,18 @@ export function JobDetail() {
   const [job, setJob] = useState<Job | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
-  const [elapsed, setElapsed] = useState(0);
+  const [, tick] = useState(0);
   const [live, setLive] = useState(true);
   const seqRef = useRef(0);
-  const startRef = useRef(Date.now());
 
   const done = job ? TERMINAL.includes(job.status) : false;
 
-  // 「已執行 N 秒」由瀏覽器自己算，不需要伺服器推 ——
-  // 執行中唯一會變的就是時間，為此推送事件是浪費（SPEC §7）。
+  // 時間由瀏覽器自己算，不需要伺服器推 —— 執行中唯一會變的就是時間，
+  // 為此推送事件是浪費（SPEC §7）。這裡只負責每秒重畫一次，起點與標籤
+  // 由 phaseOf() 依狀態決定。
   useEffect(() => {
     if (done) return;
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000);
+    const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [done]);
 
@@ -55,7 +55,6 @@ export function JobDetail() {
       .then((j) => {
         if (cancelled) return;
         setJob(j);
-        startRef.current = new Date(j.created_at).getTime();
       })
       // 沒有這個 catch，任何載入失敗都會永遠停在「載入中…」——
       // 使用者看不出是壞了還是慢。
@@ -132,14 +131,7 @@ export function JobDetail() {
         {job.lender && ` · 由 ${job.lender} 代跑`} · <StatusChip status={job.status} />
       </p>
 
-      {!done && (
-        <p className="hint">
-          ⏱ 已執行 {fmt(elapsed)}
-          {!live && " · 即時連線中斷，改用輪詢"}
-          <br />
-          可以關掉這頁，跑完會用 Teams 通知你。
-        </p>
-      )}
+      <Phase job={job} live={live} done={done} />
 
       <div className="stream">
         {lines.map((line, i) => (
@@ -152,6 +144,24 @@ export function JobDetail() {
       {done && <Artifacts jobId={job.id} />}
       {job.can_follow_up && <FollowUp jobId={job.id} />}
     </div>
+  );
+}
+
+function Phase({ job, live, done }: { job: Job; live: boolean; done: boolean }) {
+  const phase = phaseOf(job);
+  if (!phase) return null;
+  return (
+    <p className="hint">
+      ⏱ {phase.label}
+      {phase.since && ` ${fmt(secondsSince(phase.since))}`}
+      {!done && !live && " · 即時連線中斷，改用輪詢"}
+      {!done && (
+        <>
+          <br />
+          可以關掉這頁，跑完會用 Teams 通知你。
+        </>
+      )}
+    </p>
   );
 }
 
@@ -272,6 +282,36 @@ const MARK: Partial<Record<Job["status"], string>> = {
 
 function StatusChip({ status }: { status: Job["status"] }) {
   return <span className={`chip ${status}`}>{STATUS_LABEL[status]}</span>;
+}
+
+// 一個標籤講不了三件事。
+//
+// 以前不論哪個階段都寫「⏱ 已執行 N」，而且從 created_at 起算 —— 排隊 10 分鐘、
+// 實跑 30 秒的 job 會說「已執行 10 分 30 秒」。債務是照實際花費算的，所以畫面
+// 上的時間跟使用者欠的錢對不起來。
+//
+// 排隊那段刻意不藏：等了十分鐘還沒人接，跟跑了十分鐘，是兩種完全不同的處境
+// —— 前者該去敲人，後者該去泡茶。
+//
+// claimed 只寫「準備中」不帶秒數：那段容器在 docker run、在複製 org skill
+// 模板，出租者的機器確實在工作，但 started_at 還沒設。與其算一個語意不明的
+// 數字，不如說清楚它在做什麼。
+function phaseOf(job: Job): { label: string; since: string | null } | null {
+  if (job.status === "queued") return { label: "排隊中", since: job.created_at };
+  if (job.status === "claimed") return { label: "準備中 · 出租者的容器正在啟動", since: null };
+  if (job.status === "running") return { label: "已執行", since: job.started_at };
+  // 終態：有 started_at 才講得出「實際跑了多久」。
+  if (job.started_at && job.finished_at) {
+    const sec = Math.floor(
+      (new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()) / 1000,
+    );
+    return { label: `總共執行 ${fmt(Math.max(0, sec))}`, since: null };
+  }
+  return null;
+}
+
+function secondsSince(iso: string): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
 }
 
 function fmt(sec: number): string {

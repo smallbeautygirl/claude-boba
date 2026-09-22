@@ -82,6 +82,7 @@ def _detail(job: Job, user: User | None = None) -> JobDetail:
         can_follow_up=job.status.creates_debt and job.transcript_key is not None,
         model=job.model,
         created_at=job.created_at,
+        started_at=job.started_at,
         finished_at=job.finished_at,
         total_cost_usd=job.total_cost_usd,
         prompt=job.prompt,
@@ -240,6 +241,7 @@ async def list_jobs(
             is_follow_up=j.parent_job_id is not None,
             model=j.model,
             created_at=j.created_at,
+            started_at=j.started_at,
             finished_at=j.finished_at,
             total_cost_usd=j.total_cost_usd,
         )

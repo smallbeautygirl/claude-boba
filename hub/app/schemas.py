@@ -67,6 +67,10 @@ class JobSummary(BaseModel):
     is_follow_up: bool
     model: str
     created_at: datetime
+    # 第一個事件抵達時才設（CLAIMED → RUNNING）。畫面要靠它把「排隊」與
+    # 「執行」分開講 —— 從 created_at 算的話，排隊 10 分鐘、實跑 30 秒的 job
+    # 會顯示「已執行 10 分 30 秒」，而債務是照實際花費算的，對不起來。
+    started_at: datetime | None
     finished_at: datetime | None
     total_cost_usd: Decimal | None
 

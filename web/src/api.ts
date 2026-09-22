@@ -43,6 +43,8 @@ export interface JobDetail {
   can_follow_up: boolean;
   model: string;
   created_at: string;
+  // 第一個事件抵達時才設。null = 還在排隊或還在開容器。
+  started_at: string | null;
   finished_at: string | null;
   total_cost_usd: string | null;
   prompt: string;
@@ -127,6 +129,8 @@ export interface JobSummary {
   is_follow_up: boolean;
   model: string;
   created_at: string;
+  // 第一個事件抵達時才設。null = 還在排隊或還在開容器。
+  started_at: string | null;
   finished_at: string | null;
   total_cost_usd: string | null;
 }
