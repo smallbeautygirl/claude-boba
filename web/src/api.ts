@@ -163,10 +163,40 @@ export interface Ledger {
 // 所以這裡不需要自己處理過期 —— 過期就會拿到 401，前端導回登入頁。
 const TOKEN_KEY = "boba.token";
 
+// localStorage 在無痕視窗與「封鎖網站資料」時是**存取就丟例外**，不是回 null。
+// 沒有這幾個 try/catch 的話，AuthProvider 的 effect 會在第一次讀 token 時炸掉，
+// 結果是整頁空白 —— 連登入頁都沒有，使用者看不出發生什麼事（實測 2026-09-22：
+// body.innerText 是空字串、兩個未捕捉例外）。
+//
+// 失敗時退回記憶體，不是直接放棄：只包 try/catch 的話畫面救回來了，但 token
+// 存不住，使用者每次重整都要重登。退回記憶體至少讓這個分頁能正常用完 ——
+// 那正是「我額度爆了，很急」那一刻需要的。
+let memoryToken: string | null = null;
+
 export const tokenStore = {
-  get: () => localStorage.getItem(TOKEN_KEY),
-  set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
+  get: () => {
+    try {
+      return localStorage.getItem(TOKEN_KEY) ?? memoryToken;
+    } catch {
+      return memoryToken;
+    }
+  },
+  set: (t: string) => {
+    memoryToken = t;
+    try {
+      localStorage.setItem(TOKEN_KEY, t);
+    } catch {
+      // 記憶體那份已經寫好了，這個分頁照常運作。
+    }
+  },
+  clear: () => {
+    memoryToken = null;
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // 本來就沒存進去，沒有東西要清。
+    }
+  },
 };
 
 export class Unauthorized extends Error {}
