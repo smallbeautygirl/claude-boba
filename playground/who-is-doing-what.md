@@ -1087,7 +1087,12 @@ A 在 spike #8 抓到的：**新模型下 job 跑在共用主機，代跑者反�
 - `GET /api/workers` → 單一物件（不是陣列），欄位含 `has_token: bool`、
   `budget_usd`、`available_models`、`allow_full_network`、`accepting`、`online`
 - `PUT /api/workers/settings` → 改條件
-- `POST /api/workers/authorize` → 開始授權，回授權網址
+- `POST /api/workers/authorize` → 開始授權，回 **`{ "authorize_url": "…" }`**
+  （欄位名定案 2026-09-22：`authorize_url` 不是 `url` —— 這個回應之後很可能還會
+  長出別的網址欄位，光叫 `url` 到時就得改名，而改名要動兩邊）
+- `POST /api/workers/authorize/code` → 把代跑者貼回來的**一次性授權碼**送進 pty，
+  完成後取回 token。spike #9 證實 `redirect_uri` 是 `platform.claude.com` 不是
+  localhost，所以授權碼一定要有人送回來 —— 但貼的是用完即失效的碼，不是一年期 token
 - **token 永遠不出現在任何回應裡**（`security.md` 紅線 2）
 
 C 可以先照契約做 UI，A 那邊還沒好就用 mock；**但不要上線一個後端還不存在的按鈕**。
