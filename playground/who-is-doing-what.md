@@ -945,6 +945,70 @@ worker 就是從那裡跑起來的；寫 GitHub 網址等於在前端寫死一�
 
 ---
 
+### → session A：代跑者用長期 token 出借額度（2026-09-22 指派）
+
+**方向大改，先讀這段再看細節。** 原本的模型是「每位代跑者在自己的機器上跑 worker，
+憑證不離開他的機器」。使用者決定改成：**沒有人安裝任何東西，所有 job 都跑在這台
+主機上，代跑者交出一組長期 token。**
+
+關鍵發現（使用者實測）：`claude setup-token` 會產生 **一年期**的 OAuth token
+（`sk-ant-oat01-…`），用法是環境變數 `CLAUDE_CODE_OAUTH_TOKEN`。這一口氣解掉了
+原本擋路的三件事：8 小時過期、唯讀掛載寫不回刷新後的 token、共用主機上沒有人
+會刷新它。**而且那是 Anthropic 官方為非互動場景設計的通道，不是我們在繞路。**
+
+`.claude/rules/security.md` **紅線 2 已為此修訂**（`7199b0e`）—— 動手前讀它，
+五條約束每一條都不可省。
+
+#### 🚦 第一步是 spike，沒過就不要往下做
+
+使用者的決定是「**先證明它會動，再重構**」。到目前為止**還沒有任何一個 job 是用
+`CLAUDE_CODE_OAUTH_TOKEN` 跑起來的**，那條路上還有未知。
+
+拿一組 token，照 `run-job.sh` 現在的形狀跑一次，但**拿掉 `.credentials.json` 的
+掛載、改成環境變數**，確認四件事：
+
+1. 乾淨 HOME + 只有那個環境變數，`claude -p` 認證得過
+2. `--settings '{"availableModels": …}'` 的 model 白名單還有效
+3. `--max-budget-usd` 還有效
+4. 回傳的 `total_cost_usd` 還在 —— **人情債整個帳靠它**，沒有它這條路就不能走
+
+四件有任何一件不成立就停下來回報，不要自己想辦法繞。
+
+#### 實作（spike 過了才做）
+
+| 層 | 內容 |
+|---|---|
+| hub `config.py` | `TOKEN_ENCRYPTION_KEY`，**沒設就拒絕啟動**（比照 Alembic 版本檢查） |
+| hub `models.py` + migration | `Worker` 加加密後的 token 欄位 |
+| hub `routers/workers.py` | 設定 token 的端點。**單向** —— 寫得進去，讀不出來 |
+| hub `routers/worker.py` | 派單 payload 夾帶解密後的 token |
+| worker `worker.py` / `run-job.sh` | 改用 `-e CLAUDE_CODE_OAUTH_TOKEN`，不再掛 `.credentials.json` |
+| web `MyWorker.tsx` | 貼 token 的欄位 + 「已設定 / 未設定」 |
+
+#### 🚨 五件不可省的（全在紅線 2 裡）
+
+- **絕不回傳給前端。** 連遮罩後的值都不行，不提供「查看」。UI 只有布林
+- **絕不進 log。** 派單 payload 現在含 token —— worker 那邊有 `print` 在印 job
+  相關的東西，逐一檢查
+- **絕不寫進檔案系統**，包含工作目錄與 `.home/`
+- **金鑰放 `hub/.env`**，不是資料庫、不是程式碼
+- 沿用舊路的代跑者（掛 `.credentials.json`）**要繼續能跑** —— 兩種憑證並存，
+  紅線 2 的表格就是這個意思
+
+#### ⚠️ 架構這次不動
+
+一個 worker 服務所有代跑者是對的方向（token 變成環境變數之後，「一人一個 worker
+process」的理由就消失了），但**不是這次**。它會動到派單、`Worker` 模型、
+`run-job.sh` 與「我的 worker」整頁，而那條路上的未知在重構後更難查。
+先把 token 這條路打通、真的跑起一個用別人 token 的 job，再回頭簡化。
+
+#### 給使用者的提醒（交付時一起寫）
+
+一年期 token 外洩**沒有損失上限**。2026-09-22 使用者把一組貼進了對話紀錄裡 ——
+那不是假設，是已經發生過的事。UI 上要讓人知道他交出去的是什麼。
+
+---
+
 ## 待接的契約（後端做好了，UI 還沒接）
 
 這些後端都可用、有測試，UI 改版時照著接即可。詳細欄位見
