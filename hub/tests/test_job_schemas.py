@@ -25,6 +25,8 @@ def _fake_job(**overrides):
         "borrower_id": uuid.uuid4(),
         "lending": None,
         "lending_id": None,
+        # 用了哪個出借帳號。只有代跑者本人拿得到值（ADR-0001）。
+        "account": None,
         "parent_job_id": None,
         "prompt": "幫我看一下這份需求\n第二行",
         "model": "sonnet",
@@ -60,10 +62,41 @@ def test_detail_marks_follow_ups() -> None:
     assert detail.parent_job_id == parent
 
 
+def _claimed_by(owner_id: uuid.UUID) -> SimpleNamespace:
+    """被某個人接走的 job 才可能掛債。
+
+    預設的替身是 `lending=None`，那在現實中不會跟 SUCCEEDED 同時出現 ——
+    跑成功的 job 一定被誰接過。掛債的測試要用真的組合，否則 2026-09-23 加的
+    「自己跑自己不掛債」在這一層完全測不到。
+    """
+    return SimpleNamespace(
+        owner_user_id=owner_id, owner=SimpleNamespace(display_name="vivian")
+    )
+
+
 def test_debt_label_only_on_success() -> None:
-    assert _detail(_fake_job()).debt_label is not None
-    assert _detail(_fake_job(status=JobStatus.FAILED)).debt_label is None
-    assert _detail(_fake_job(total_cost_usd=None)).debt_label is None
+    other = _claimed_by(uuid.uuid4())
+    assert _detail(_fake_job(lending=other)).debt_label is not None
+    assert _detail(_fake_job(lending=other, status=JobStatus.FAILED)).debt_label is None
+    assert _detail(_fake_job(lending=other, total_cost_usd=None)).debt_label is None
+
+
+def test_running_your_own_job_shows_no_debt_label() -> None:
+    """自己跑自己不掛債（SPEC §4.5），畫面上也不該出現級距。
+
+    畫面與帳本必須講同一個故事 —— 兩邊各判斷一次就會有一邊先漂掉，
+    所以 `_detail` 跟掛債走的是同一個入口（pricing.job_creates_debt）。
+    """
+    me = uuid.uuid4()
+    job = _fake_job(borrower_id=me, lending=_claimed_by(me))
+    detail = _detail(job)
+    assert detail.debt_label is None
+    assert detail.self_run is True
+
+
+def test_someone_elses_job_is_not_a_self_run() -> None:
+    job = _fake_job(borrower_id=uuid.uuid4(), lending=_claimed_by(uuid.uuid4()))
+    assert _detail(job).self_run is False
 
 
 def test_preview_takes_the_first_non_empty_line() -> None:

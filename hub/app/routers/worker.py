@@ -25,6 +25,7 @@ from sqlalchemy.orm import selectinload
 from .. import events, notify, secrets_box, storage
 from ..config import settings
 from ..db import get_session
+from ..dispatch import auto_candidates
 from ..enums import DebtStatus, DebtTier, JobStatus
 from ..models import (
     Artifact,
@@ -37,7 +38,7 @@ from ..models import (
     User,
     WorkerHost,
 )
-from ..pricing import LABELS, MIN_DEBT_USD, tier_for
+from ..pricing import LABELS, MIN_DEBT_USD, job_creates_debt, tier_for
 from ..schemas import (
     MAX_ARTIFACT_BYTES,
     ArtifactManifest,
@@ -247,11 +248,14 @@ async def _claim(
         if job.requested_lending_id is not None:
             candidates = [settings_by_id.get(job.requested_lending_id)]
         else:
-            # 自動派單只考慮跑得動這個 model 的人。舊版是「有人跑不動就整批擋在
-            # 提交時」—— 那是因為當時 Hub 挑不了，只能事先保證每個人都行。
-            candidates = [
-                s for s in settings_by_id.values() if job.model in s.runnable_models()
-            ]
+            # 自動派單只考慮跑得動這個 model、而且**不是委託者本人**的人。
+            # 規則在 app/dispatch.py —— 提交頁的下拉與提交前的檢查用同一份，
+            # 三處各寫一次就會各自漂移。
+            candidates = auto_candidates(
+                list(settings_by_id.values()),
+                model=job.model,
+                borrower_id=job.borrower_id,
+            )
         for setting in candidates:
             if setting is None:
                 continue
@@ -461,15 +465,19 @@ async def _maybe_create_debt(job: Job, session: AsyncSession) -> Debt | None:
     債主是**人**，不是帳號：他借出去的是自己的額度使用權與帳號的風險敞口，
     而公司帳號跑的 job 照樣計債（ADR-0001）。
     """
-    if not job.status.creates_debt or job.total_cost_usd is None:
+    if job.total_cost_usd is None:
         return None
     setting = (
         await session.get(LendingSetting, job.lending_id) if job.lending_id else None
     )
     if setting is None:
         return None
-    if job.borrower_id == setting.owner_user_id:
-        # 自己跑自己的不算欠自己。
+    # 掛不掛債只有這一個入口（pricing.job_creates_debt）：只有成功才掛，
+    # 而且自己跑自己不掛。以前這兩條寫在這裡，而 job 詳情頁自己又判斷了一次 ——
+    # 結果是畫面對自己跑的 job 說「你欠自己一杯手搖」，帳本上卻沒有那筆。
+    if not job_creates_debt(
+        job.status, borrower_id=job.borrower_id, lender_id=setting.owner_user_id
+    ):
         return None
     tier = tier_for(job.total_cost_usd)
     if tier is DebtTier.NONE:

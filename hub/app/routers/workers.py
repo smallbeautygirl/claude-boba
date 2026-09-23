@@ -91,6 +91,15 @@ class LendingPatch(BaseModel):
 
 class AuthorizeCode(BaseModel):
     code: str = Field(min_length=1, max_length=512)
+    # 這個出借帳號叫什麼。**新增帳號時由前端把關為必填。**
+    #
+    # 站台認不出這是哪個 Claude 帳號 —— 三個端點對不同帳號回的東西逐字相同
+    # （SPEC §4.13 的 2026-09-23 spike），所以這個名字是代跑者**唯一**分得出
+    # 「我的個人 Max」與「公司配的那個」的線索。以前沒有這個欄位，名字是後端
+    # 自動給的「帳號 2」「帳號 3」，結果是三個月後沒有人知道那是什麼。
+    #
+    # 換 token 時（`account_id` 有值）留空表示不改名。
+    name: str | None = Field(default=None, max_length=80)
     # 「這是誰的額度／誰批准的」。公司帳號**必填**由前端把關與提示，
     # 後端不驗證內容 —— 站台沒有辦法知道一個帳號是不是公司的（SPEC §4.12）。
     approver_note: str | None = Field(default=None, max_length=200)
@@ -174,6 +183,11 @@ def _account_view(a: LendingAccount) -> dict:
         "credits_required_models": a.credits_required_models or [],
         "windows": a.rate_limit_windows or {},
         "quota_updated_at": a.quota_updated_at,
+        # 上次被派到 job 是什麼時候。**只有本人看得到。**
+        # 代跑者有好幾個帳號時，這是他唯一看得出「哪一個在輪、哪一個從來沒動過」
+        # 的地方 —— 而那正是他會問的第一個問題。
+        # None 是「還沒被派到過」，不是「不知道」（同 utilization 那條）。
+        "last_assigned_at": a.last_assigned_at,
         "quota_fresh": _fresh_utilization(a) is not None,
     }
 
@@ -292,9 +306,12 @@ async def submit_authorize_code(
         if account is None:
             raise HTTPException(404, "找不到這個出借帳號")
     else:
+        # 沒給名字仍然給一個，不擋下整個授權 —— 他手上已經有一組剛產生的 token，
+        # 為了一個欄位把他退回去，那組 token 就白拿了（`claude setup-token` 產一次
+        # 就作廢上一組）。必填由前端把關，後端只保底。
         account = LendingAccount(
             lending_id=row.id,
-            name=f"帳號 {len(row.accounts) + 1}",
+            name=(body.name or "").strip() or f"帳號 {len(row.accounts) + 1}",
         )
         session.add(account)
         row.accounts.append(account)
@@ -305,6 +322,9 @@ async def submit_authorize_code(
     account.needs_reauth = False
     if body.approver_note is not None:
         account.approver_note = body.approver_note.strip() or None
+    # 換 token 時順便改名。空字串當成「不改」—— 帳號不能沒有名字。
+    if body.name is not None and body.name.strip():
+        account.name = body.name.strip()
 
     # 最後一個帳號失效時，系統會自動把接單關掉（routers/worker.py）。那不是他按的，
     # 所以他重新授權好之後也不該要他自己再去按一次開回來 —— 授權成功了卻還是
@@ -450,6 +470,12 @@ async def list_lenders(
             "id": str(s.id),
             "name": s.owner.display_name if s.owner else "?",
             "owner": s.owner.display_name if s.owner else "?",
+            # 「這一列就是你」。前端需要它才講得出人話 —— 2026-09-23 之前，
+            # 站台上唯一開著 Fable 的人是你自己的時候，提示會叫你帶杯手搖去
+            # 拜託你自己（web-spec §3 的「這是你自己」通則）。
+            #
+            # 不用「有沒有 accounts 欄位」去反推：那是個巧合，不是契約。
+            "mine": s.owner_user_id == user.id,
             "online": online and s.accepting and bool(usable),
             "accepting": s.accepting,
             "allow_full_network": s.allow_full_network,

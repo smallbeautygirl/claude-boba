@@ -9,9 +9,10 @@
 
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 
-from .enums import DebtTier
+from .enums import DebtTier, JobStatus
 
 # (下限含, 級距)。由高到低比對。
 _TIERS: list[tuple[Decimal, DebtTier]] = [
@@ -29,6 +30,30 @@ LABELS: dict[DebtTier, str] = {
     DebtTier.BENTO: "🍱 一個便當",
     DebtTier.FEAST: "🍖 一頓好料，而且你要挑餐廳",
 }
+
+
+def job_creates_debt(
+    status: JobStatus, *, borrower_id: uuid.UUID, lender_id: uuid.UUID
+) -> bool:
+    """這一趟要不要掛債。**掛債的判斷只有這一個入口。**
+
+    跟 `JobStatus.creates_debt` 的差別：那個回答「這個**狀態**會不會掛債」，
+    這個回答「這**一筆 job** 會不會掛債」—— 後者還要看是誰欠誰。
+
+    兩條規則：
+
+    1. 只有成功才掛（SPEC §5）。失敗、逾時、取消、超出預算一律不計。
+    2. **自己跑自己不掛**（SPEC §4.5，2026-09-23）。「自動」派單排除本人，
+       但「指定自己」留著 —— 個人帳號爆了、公司帳號還有，那正是 ADR-0001 的
+       場景。那一趟燒的是自己的額度，掛一筆「你欠你自己一杯手搖」在帳本與
+       排行榜上是純雜訊。
+
+    第 2 條選擇**一開始就不記**，而不是記了再過濾：過濾一筆已經存在的債，
+    得在帳本、排行榜、掛債通知三個地方各記得一次；不記只要記得一次。
+    """
+    if not status.creates_debt:
+        return False
+    return borrower_id != lender_id
 
 
 # 會產生債務的最低金額。出租者的單次預算上限若低於這個數字，

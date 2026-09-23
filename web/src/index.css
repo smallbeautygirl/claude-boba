@@ -290,6 +290,17 @@ button.small:hover:not(:disabled) { background: var(--accent-soft); border-color
    不是第九個分頁，而導覽列的寬度是這整條列最稀缺的東西（見 .nav 那段）。
    用 --warn 而不是 --accent：accent 是「你在這一頁」的語彙（.tab.active），
    借去講別的事會稀釋掉那個意思。 */
+/* 帳號名字點下去就能改。做成 button 而不是可點的 <strong>：可及性上這**是**
+   一個動作，鍵盤要走得到、讀螢幕要念得出來。外觀刻意維持純文字，那支筆才是
+   「這裡可以點」的提示。 */
+.rename-open {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--ink); font: inherit;
+}
+.rename-open:hover { color: var(--accent); }
+.rename { display: inline-flex; gap: 6px; align-items: center; }
+.rename input { width: 12rem; }
+
 .nav .stage {
   font-size: 11px; line-height: 1; letter-spacing: 0.5px;
   padding: 4px 7px; border-radius: 999px;

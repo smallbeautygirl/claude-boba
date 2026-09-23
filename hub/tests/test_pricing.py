@@ -6,11 +6,12 @@
 
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 
 import pytest
 from app.enums import DebtTier, JobStatus
-from app.pricing import LABELS, MIN_DEBT_USD, tier_for
+from app.pricing import LABELS, MIN_DEBT_USD, job_creates_debt, tier_for
 
 
 @pytest.mark.parametrize(
@@ -57,3 +58,28 @@ def test_only_success_creates_debt() -> None:
     for status in JobStatus:
         if status is not JobStatus.SUCCEEDED:
             assert not status.creates_debt, status
+
+
+def test_running_your_own_job_creates_no_debt() -> None:
+    """自己跑自己不掛債（SPEC §4.5）。
+
+    「自動」派單排除本人，但**指定自己**是留著的 —— 個人帳號爆了、公司帳號還有，
+    那正是 ADR-0001 的場景。那一趟燒的是自己的額度，掛一筆「你欠你自己一杯手搖」
+    在帳本與排行榜上是純雜訊。
+
+    **一開始就不記，不是記了再過濾。** 過濾一筆已經存在的債，得在帳本、排行榜、
+    掛債通知三個地方各記得一次；不記只要記得一次。
+    """
+    me, other = uuid.uuid4(), uuid.uuid4()
+    assert job_creates_debt(JobStatus.SUCCEEDED, borrower_id=me, lender_id=other)
+    assert not job_creates_debt(JobStatus.SUCCEEDED, borrower_id=me, lender_id=me)
+
+
+def test_self_run_still_respects_the_status_rule() -> None:
+    """兩條規則是 AND，不是其中一條說了算。"""
+    me, other = uuid.uuid4(), uuid.uuid4()
+    for status in JobStatus:
+        if status is JobStatus.SUCCEEDED:
+            continue
+        assert not job_creates_debt(status, borrower_id=me, lender_id=other), status
+        assert not job_creates_debt(status, borrower_id=me, lender_id=me), status

@@ -30,6 +30,7 @@ def _lender(
     *models: str,
     lid: uuid.UUID | None = None,
     blocked: tuple[str, ...] = (),
+    owner: uuid.UUID | None = None,
 ) -> SimpleNamespace:
     """一位可接單的代跑者（出借設定）。
 
@@ -39,9 +40,13 @@ def _lender(
     否則這組測試會對「勾了但跑不動」完全沒有感覺。
 
     `blocked` = 他每一個帳號都被回過「要買 usage credits」的 model。
+
+    `owner` 預設是一個新的 uuid，也就是**別人** —— 多數測試問的是 model，
+    而「自動不派給自己」（2026-09-23）不該悄悄改變它們的題意。
     """
     return SimpleNamespace(
         id=lid or uuid.uuid4(),
+        owner_user_id=owner or uuid.uuid4(),
         available_models=list(models),
         accepting=True,
         runnable_models=lambda: [m for m in models if m not in blocked],
@@ -69,10 +74,19 @@ class _FakeSession:
         return uuid.uuid4() if self.alive else None
 
 
-def check(model: str, lending_id=None, lenders=None, alive: bool = True):
-    """`alive` 預設為真 —— 多數測試在意的是 model，不是憑證死活。"""
+def check(model: str, lending_id=None, lenders=None, alive: bool = True, me=None):
+    """`alive` 預設為真 —— 多數測試在意的是 model，不是憑證死活。
+
+    `me` 預設是一個新的 uuid，也就是「委託者不是任何一位代跑者」。
+    要測「自動不派給自己」就把它設成某位 lender 的 owner。
+    """
     return asyncio.run(
-        _check_model(model, lending_id, _FakeSession(lenders or [], alive=alive))
+        _check_model(
+            model,
+            lending_id,
+            me or uuid.uuid4(),
+            _FakeSession(lenders or [], alive=alive),
+        )
     )
 
 
@@ -200,3 +214,45 @@ def test_every_credential_dead_is_a_dead_end_not_a_queue() -> None:
         check("sonnet", lenders=[], alive=False)
     assert e.value.status_code == 400
     assert "授權" in e.value.detail
+
+
+# --- 自動不派給自己（2026-09-23，SPEC §4.5）--------------------------------
+
+
+def test_auto_refuses_when_the_only_runner_is_me() -> None:
+    """站台上跑得動的只有我自己。
+
+    這一句必須跟「線上沒有人開放 sonnet」分開 —— 後者會讓人看著下拉裡那個
+    開著 sonnet 的自己發呆，不知道下一步是什麼。
+    """
+    me = uuid.uuid4()
+    with pytest.raises(HTTPException) as e:
+        check("sonnet", lenders=[_lender("sonnet", owner=me)], me=me)
+    assert e.value.status_code == 400
+    assert "只有你自己" in e.value.detail
+    assert "不計債" in e.value.detail
+
+
+def test_naming_yourself_is_allowed() -> None:
+    """指定自己照跑 —— 個人帳號爆了、公司帳號還有（ADR-0001）。"""
+    me, lid = uuid.uuid4(), uuid.uuid4()
+    check(
+        "sonnet", lending_id=lid, lenders=[_lender("sonnet", lid=lid, owner=me)], me=me
+    )
+
+
+def test_someone_else_online_makes_it_a_normal_auto_job() -> None:
+    """我在線上這件事不該讓「還有別人」變成「只有你」。"""
+    me = uuid.uuid4()
+    check("sonnet", lenders=[_lender("sonnet", owner=me), _lender("sonnet")], me=me)
+
+
+def test_only_me_but_i_cannot_run_it_is_not_the_only_me_message() -> None:
+    """我在線上但我沒開 sonnet —— 那是「沒有人」，不是「只有你」。
+
+    講成「去指定自己」會把人導到一個一樣跑不動的選項。
+    """
+    me = uuid.uuid4()
+    with pytest.raises(HTTPException) as e:
+        check("sonnet", lenders=[_lender("haiku", owner=me)], me=me)
+    assert "只有你自己" not in e.value.detail

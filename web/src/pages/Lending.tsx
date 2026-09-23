@@ -123,6 +123,16 @@ function ago(at: string | null): string {
   return `資料為 ${Math.round(mins / 60)} 小時前`;
 }
 
+/* 純粹的「多久以前」。`ago()` 吐的是「資料為 3 小時前」—— 那個「資料為」
+   是給額度回報用的，接在別的句子後面會變成「上次被派到 job：資料為 3 小時前」。 */
+function since(at: string): string {
+  const mins = (Date.now() - Date.parse(at)) / 60_000;
+  if (mins < 1) return "剛剛";
+  if (mins < 60) return `${Math.round(mins)} 分鐘前`;
+  if (mins < 60 * 24) return `${Math.round(mins / 60)} 小時前`;
+  return `${Math.round(mins / 60 / 24)} 天前`;
+}
+
 function AccountRow({
   account,
   reload,
@@ -133,6 +143,8 @@ function AccountRow({
   onReplace: (a: LendingAccount) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(account.name);
   const windows = Object.entries(account.windows);
 
   async function remove() {
@@ -142,6 +154,18 @@ function AccountRow({
       reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "移除不了，請重新整理再試");
+    }
+  }
+
+  // 改名的暫存。開著編輯時才有值。
+  async function rename() {
+    setError(null);
+    try {
+      await api.updateAccount(account.id, { name: draft.trim() });
+      setRenaming(false);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "改不了，請重新整理再試");
     }
   }
 
@@ -158,7 +182,47 @@ function AccountRow({
   return (
     <li className="account">
       <div className="account-head">
-        <strong>{account.name}</strong>
+        {/* 名字點下去就能改。**這是他唯一分得出哪個帳號是哪個的東西** ——
+            而在這之前，既有的帳號叫「帳號 2」「帳號 3」且完全改不了
+            （PUT /accounts/{id} 早就支援改名，只是沒有人接上 UI）。 */}
+        {renaming ? (
+          <span className="rename">
+            <input
+              type="text"
+              maxLength={80}
+              value={draft}
+              autoFocus
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && draft.trim()) rename();
+                if (e.key === "Escape") setRenaming(false);
+              }}
+            />
+            <button
+              type="button"
+              className="small"
+              onClick={rename}
+              disabled={!draft.trim()}
+            >
+              改名
+            </button>
+            <button type="button" className="small" onClick={() => setRenaming(false)}>
+              取消
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="rename-open"
+            title="改名"
+            onClick={() => {
+              setDraft(account.name);
+              setRenaming(true);
+            }}
+          >
+            <strong>{account.name}</strong> ✎
+          </button>
+        )}
         {account.approver_note && (
           <span className="muted">（批准者：{account.approver_note}）</span>
         )}
@@ -213,6 +277,16 @@ function AccountRow({
         </p>
       )}
 
+      {/* 有好幾個帳號的人，這是他唯一看得出「哪一個在輪、哪一個從來沒動過」
+          的地方 —— 而那是他看到三張卡片時會問的第一個問題。
+          **null 是「還沒被派到過」，不是「不知道」**：那兩件事分開講
+          （同 LendingAccount.utilization 的那條註解）。 */}
+      <p className="hint">
+        {account.last_assigned_at
+          ? `上次被派到 job：${since(account.last_assigned_at)}`
+          : "還沒被派到過 job"}
+      </p>
+
       <p className="actions">
         <button type="button" className="small" onClick={() => onReplace(account)}>
           重新授權
@@ -255,6 +329,7 @@ function Authorize({
   const [url, setUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [note, setNote] = useState(account?.approver_note ?? "");
+  const [name, setName] = useState(account?.name ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -277,6 +352,7 @@ function Authorize({
       await api.submitAuthorizationCode(code.trim(), {
         accountId: account?.id,
         approverNote: note.trim() || undefined,
+        name: name.trim() || undefined,
       });
       onDone();
     } catch (e) {
@@ -316,6 +392,27 @@ function Authorize({
         )}{" "}
         <strong>中途放棄的話，這個帳號會變成不能用</strong>，要重新走完一次才會恢復。
         所以開始之前先確認你等一下拿得到那串授權碼。
+      </p>
+
+      {/* 帳號的名字。**新增時必填**（送出鈕會擋）。
+          站台認不出這是哪個 Claude 帳號 —— 三個 API 端點對不同帳號回的東西
+          逐字相同（SPEC §9 spike #11），所以這個名字是他**唯一**分得出
+          「個人 Max」與「公司配的」的線索。
+          這個欄位以前不存在，名字由後端給「帳號 2」「帳號 3」，結果是三個月後
+          沒有人知道那是什麼 —— 2026-09-23 真的被問了。 */}
+      <label>
+        這個帳號叫什麼
+        <input
+          type="text"
+          maxLength={80}
+          value={name}
+          placeholder="例如：我的個人 Max、公司配的那個"
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
+      <p className="hint under-field">
+        只有你看得到。<strong>站台認不出這是哪個 Claude 帳號</strong> ——
+        你有好幾個的時候，這個名字是唯一分得出來的東西。
       </p>
 
       {/* 公司帳號的具名批准者（SPEC §4.12）。站台不驗證內容 —— 它沒有辦法知道
@@ -366,7 +463,15 @@ function Authorize({
             站台這邊只保留五分鐘，超過就回來重按一次「開始出借」。
           </p>
           <p className="actions">
-            <button type="button" onClick={finish} disabled={busy || !code.trim()}>
+            {/* 新增帳號時名字必填 —— 那是他唯一認得出這個帳號的線索。
+                換 token 時不必填：那個帳號已經有名字了，留白就是不改。
+                後端仍會給一個退路名稱，不會因為少一個欄位就把剛產生的 token
+                丟掉（`claude setup-token` 產一次就作廢上一組）。 */}
+            <button
+              type="button"
+              onClick={finish}
+              disabled={busy || !code.trim() || (!account && !name.trim())}
+            >
               {busy ? "確認中…" : "完成授權"}
             </button>
             {/* 這一步會等 hub 跟 Anthropic 來回，最久要一分鐘。沒有這句話，

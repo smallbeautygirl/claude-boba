@@ -32,10 +32,16 @@ const QUOTA: Record<LenderRow["quota"], string> = {
 //
 // 退路是 DEFAULT_MODELS 而不是整份白名單：Fable 只在有人開的時候才該出現在下拉，
 // 半夜沒人接單的時候讓它出現，送出去的 job 會排隊等一個可能永遠不會來的人。
+// **「自動」不派給你自己**（SPEC §4.5，2026-09-23）。這一頁自己的文案是
+// 「找還有額度的**同事**幫你跑」，派給自己不是互助 —— 而且那一趟不計債，
+// 掛一筆「你欠你自己一杯手搖」在帳本與排行榜上是純雜訊。
+//
+// **只排除在自動這條路上。** 指定自己完全照跑：個人帳號爆了、公司帳號還有，
+// 那正是 ADR-0001 的場景。同一條規則後端在 `app/dispatch.py`，三處共用。
 function poolFor(lenders: LenderRow[], lendingId: string) {
   return lendingId
     ? lenders.filter((l) => l.id === lendingId)
-    : lenders.filter((l) => l.online && l.accepting);
+    : lenders.filter((l) => l.online && l.accepting && !l.mine);
 }
 
 function offeredModels(lenders: LenderRow[], lendingId: string) {
@@ -57,20 +63,49 @@ function offeredModels(lenders: LenderRow[], lendingId: string) {
 function fableHint(lenders: LenderRow[], lendingId: string): string | null {
   const pool = poolFor(lenders, lendingId);
   if (pool.some((l) => l.available_models.includes("fable"))) return null;
+
+  // 「這是你自己」通則（web-spec §3）：點名代跑者的文案遇到本人時，要改成
+  // 自助的講法。沒有這一段的話，站台上唯一沒開 Fable 的人是你自己的時候，
+  // 這裡會叫你「帶杯手搖去拜託 vivianfan」—— 而 vivianfan 就是你。
+  const me = lenders.find((l) => l.mine);
   if (lendingId) {
-    const who = lenders.find((l) => l.id === lendingId)?.owner ?? "他";
-    return `${who} 沒開 Fable。帶杯手搖去拜託他，或換回自動。`;
+    const picked = lenders.find((l) => l.id === lendingId);
+    if (picked?.mine) return "你自己沒開 Fable。到「我來代跑」勾起來就好。";
+    return `${picked?.owner ?? "他"} 沒開 Fable。帶杯手搖去拜託他，或換回自動。`;
   }
   const opened = lenders.filter((l) => l.available_models.includes("fable"));
   if (opened.length) {
     // 離線或暫停接單都算 —— 對委託者來說一樣是「現在派不到他」。
-    return `${opened.map((l) => l.owner).join("、")} 有開 Fable，但現在沒在接單。`;
+    if (opened.every((l) => l.mine)) {
+      return "只有你自己開了 Fable，而自動不會派給你 —— 在上面改選你自己就能跑。";
+    }
+    const others = opened.filter((l) => !l.mine);
+    return `${others.map((l) => l.owner).join("、")} 有開 Fable，但現在沒在接單。`;
   }
-  if (pool.length === 0) return "全站還沒有人開 Fable。";
+  if (pool.length === 0) {
+    // 自動的池子空了，但那可能只是因為把你自己排掉了 —— 那兩件事的下一步
+    // 完全不同：一個是去勾 Fable，一個是等別人上線。
+    if (me?.online && me.accepting) {
+      return "站台上現在只有你自己。到「我來代跑」勾起 Fable，再改選你自己就能跑。";
+    }
+    return "全站還沒有人開 Fable。";
+  }
   const names = pool.map((l) => l.owner);
-  const target =
-    names.length > 3 ? "一位線上的代跑者" : names.join("、");
+  const target = names.length > 3 ? "一位線上的代跑者" : names.join("、");
   return `線上沒人開 Fable。想跑的話，帶杯手搖去拜託 ${target}。`;
+}
+
+// 「自動」現在派不出任何東西，因為站台上跑得動的只有你自己。
+//
+// 這個狀態是 2026-09-23 才存在的，而它跟「沒有人在線」長得一模一樣、下一步卻
+// 完全不同：這裡的下一步是改選自己，那裡是等人。不講的話，使用者會盯著下拉裡
+// 那個明明亮著綠燈的自己，不知道為什麼送不出去。
+function onlyMeHint(lenders: LenderRow[], lendingId: string): string | null {
+  if (lendingId) return null;
+  if (poolFor(lenders, lendingId).length > 0) return null;
+  const me = lenders.find((l) => l.mine);
+  if (!me?.online || !me.accepting) return null;
+  return "站台上現在只有你自己在接單，而「自動」不會派給你本人。要跑的話在上面改選你自己 —— 那一趟不計債。";
 }
 
 // 前端先擋，不要讓人上傳三分鐘才說太大（web-spec §3）。
@@ -258,6 +293,10 @@ export function Submit() {
     () => fableHint(lenders, lendingId),
     [lenders, lendingId],
   );
+  const onlyMe = useMemo(
+    () => onlyMeHint(lenders, lendingId),
+    [lenders, lendingId],
+  );
   const lender = lenders.find((l) => l.id === lendingId)?.owner ?? null;
 
   // 選中的 model 對方跑不動就退回第一個他跑得動的。在 render 期間收斂而不是用 effect ——
@@ -395,7 +434,10 @@ export function Submit() {
             <option value="">自動（推薦）</option>
             {lenders.map((l) => (
               <option key={l.id} value={l.id} disabled={!l.online}>
-                {l.owner} · {l.online ? "🟢" : "⚫️"} ·{" "}
+                {l.owner}
+                {/* 自己那一列要講清楚兩件事：這是你，而且選了不計債。
+                    「自動」不會派給你，所以這是你唯一跑得到自己的入口。 */}
+                {l.mine && "（你自己 · 不計債）"} · {l.online ? "🟢" : "⚫️"} ·{" "}
                 {l.allow_full_network ? "🌐 開放網路" : "🔒 白名單"} · 額度 {QUOTA[l.quota]}
               </option>
             ))}
@@ -415,6 +457,10 @@ export function Submit() {
       {/* Fable 不在下拉裡的原因。放下拉外面而不是 disabled option：原生 <select>
           的 disabled option 掛不了說明，而「為什麼沒有」才是這行字的重點。 */}
       {fableNote && <p className="hint under-field">🍖 {fableNote}</p>}
+      {/* 「自動」派不出去，因為站台上只有你。**這條要在送出之前講** ——
+          SPEC §4.13：失敗要盡量往前挪，挪到還沒有人付出代價的那一刻。
+          後端也擋一道（routers/jobs._check_model），但那時人已經寫完 prompt 了。 */}
+      {onlyMe && <p className="warn under-field">{onlyMe}</p>}
       {/* 選到 Fable 才講，而且用級距表的詞、不出數字 —— 精確數字會讓人計較
           （SPEC §4.7）。帳本照舊只顯示級距；要算錢的人 job 詳情頁本來就看得到金額。 */}
       {chosen === "fable" && (

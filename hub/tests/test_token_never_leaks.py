@@ -43,6 +43,7 @@ def _account(*, has_token: bool) -> SimpleNamespace:
         usable=has_token,
         rate_limit_windows={"five_hour": {"utilization": 0.34}},
         quota_updated_at=datetime.now(UTC),
+        last_assigned_at=None,
         utilization=lambda window="five_hour": 0.34,
     )
 

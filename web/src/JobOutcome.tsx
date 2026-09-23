@@ -26,8 +26,18 @@ function Success({ job }: { job: Job }) {
     <div className="outcome ok">
       <pre>{job.result_text}</pre>
       <p className="cost">
-        花費 {usd(job.total_cost_usd)} — {job.debt_label}
+        花費 {usd(job.total_cost_usd)}
+        {/* 自己跑自己不掛債（SPEC §4.5）。**一定要講** —— 失敗不計債現在就有
+            文案，這裡沉默的話會被讀成記帳壞掉，而那正是使用者會跑來問的事。
+            金額照顯示：燒掉的額度是真的，只是沒有人欠誰。 */}
+        {job.self_run ? " — 你跑你自己的，這次不計債" : ` — ${job.debt_label}`}
       </p>
+      {/* 用了哪個出借帳號。**只有代跑者本人拿得到這個值**，委託者一律是 null
+          （ADR-0001：帳號對委託者不可見）。有好幾個帳號的人才回答得出
+          「剛才那趟燒的是誰」—— 而在這行字出現之前，他無從知道。 */}
+      {job.account_name && (
+        <p className="hint">用了你的出借帳號「{job.account_name}」</p>
+      )}
     </div>
   );
 }

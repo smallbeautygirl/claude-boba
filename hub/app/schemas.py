@@ -113,6 +113,12 @@ class JobDetail(JobSummary):
     lender_cli_version: str | None
     borrower_cli_version: str | None
     debt_label: str | None
+    # 這一趟是不是自己跑自己（「自動」不派給本人，但「指定自己」留著）。
+    # 畫面要講「這次不計債」—— 沉默的例外會被當成記帳壞掉（web-spec §4）。
+    self_run: bool
+    # 用了哪個出借帳號。**只有代跑者本人拿得到值**，其他人一律 None
+    # （ADR-0001：帳號對委託者不可見）。
+    account_name: str | None
     # 失敗時的分類。成功是 None。欄位見 app/failures.py。
     failure: dict | None
     # 目前這個人能不能中止它（執行中，而且他是跑這個 job 的出租者）。

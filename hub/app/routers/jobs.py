@@ -17,10 +17,11 @@ from sqlalchemy.orm import selectinload
 from .. import events, notify, storage
 from ..auth import require_user
 from ..db import get_session
+from ..dispatch import auto_candidates, only_me
 from ..enums import JobStatus, SourceType
 from ..failures import classify
 from ..models import Artifact, Job, JobEvent, LendingAccount, LendingSetting, User
-from ..pricing import label_for
+from ..pricing import job_creates_debt, label_for
 from ..schemas import (
     MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENTS_TOTAL_BYTES,
@@ -45,6 +46,9 @@ _HEARTBEAT_SECONDS = 15.0
 _LOAD = (
     selectinload(Job.borrower),
     selectinload(Job.lending).selectinload(LendingSetting.owner),
+    # 代跑者自己要看得到這一趟燒的是他哪一個帳號（web-spec §8）。
+    # 預先載入是必要的：async session 裡 lazy load 會觸發同步 IO 並炸掉。
+    selectinload(Job.account),
 )
 
 
@@ -69,8 +73,18 @@ def _can_stop(job: Job, user: User) -> bool:
 
 
 def _detail(job: Job, user: User | None = None) -> JobDetail:
+    lender_id = job.lending.owner_user_id if job.lending else None
+    # 自己跑自己不掛債（SPEC §4.5）。掛債的判斷只有 pricing.job_creates_debt
+    # 一個入口 —— 這裡跟著它走，否則畫面會講一個跟帳本不一樣的故事。
+    self_run = lender_id is not None and lender_id == job.borrower_id
     debt = None
-    if job.status.creates_debt and job.total_cost_usd is not None:
+    if (
+        lender_id is not None
+        and job_creates_debt(
+            job.status, borrower_id=job.borrower_id, lender_id=lender_id
+        )
+        and job.total_cost_usd is not None
+    ):
         debt = label_for(job.total_cost_usd)
     return JobDetail(
         id=job.id,
@@ -90,6 +104,14 @@ def _detail(job: Job, user: User | None = None) -> JobDetail:
         prompt=job.prompt,
         source_type=job.source_type,
         lending_id=job.lending_id,
+        self_run=self_run,
+        # **只有代跑者本人看得到用了哪個帳號**（ADR-0001：帳號對委託者不可見）。
+        # 自己跑自己時兩個身分是同一個人，那當然看得到。
+        account_name=(
+            job.account.name
+            if job.account is not None and user is not None and lender_id == user.id
+            else None
+        ),
         result_text=job.result_text,
         error_kind=job.error_kind,
         error_detail=job.error_detail,
@@ -227,7 +249,10 @@ async def _anyone_can_run(session: AsyncSession) -> bool:
 
 
 async def _check_model(
-    model: str, requested_lending_id: uuid.UUID | None, session: AsyncSession
+    model: str,
+    requested_lending_id: uuid.UUID | None,
+    borrower_id: uuid.UUID,
+    session: AsyncSession,
 ) -> None:
     """model 必須在站台白名單，而且真的有人跑得動。
 
@@ -247,6 +272,11 @@ async def _check_model(
     事先保證每個人都行。現在派單在 Hub，跑不動這個 model 的人根本不會被挑中
     （SPEC §4.12），那條限制已經沒有存在的理由 —— 它只會讓一個人關掉 Sonnet
     就擋住全站的 Sonnet job。
+
+    ⚠️ 2026-09-23：**「自動」不再把委託者本人算進池子**（SPEC §4.5）。
+    所以多了一個以前不存在的狀態 ——「站台上跑得動這個 model 的只有你自己」。
+    它要跟「一個人都沒有」分開講，因為下一步不一樣：前者是改選指定自己，
+    後者是等別人上線。規則本身在 app/dispatch.py，三個地方共用同一份。
     """
     if model not in SITE_MODELS:
         raise HTTPException(
@@ -279,16 +309,28 @@ async def _check_model(
             )
         return
 
-    # 用 runnable_models 而不是 available_models：勾著 Fable 但每個帳號都被回過
-    # 「要買 usage credits」的人，派給他只會再失敗一次。「他願意」和「他能」
-    # 是兩件事，對外一律用交集（models.LendingSetting.runnable_models）。
-    if not any(model in s.runnable_models() for s in pool):
+    # 指定那條不排除任何人，包含指定自己（ADR-0001 的場景）。
+    if requested_lending_id is not None:
+        # 用 runnable_models 而不是 available_models：勾著 Fable 但每個帳號都被
+        # 回過「要買 usage credits」的人，派給他只會再失敗一次。「他願意」和
+        # 「他能」是兩件事，對外一律用交集（models.LendingSetting.runnable_models）。
+        if not any(model in s.runnable_models() for s in pool):
+            raise HTTPException(400, f"你指定的那位代跑者沒有開放 {model}")
+        return
+
+    if auto_candidates(pool, model=model, borrower_id=borrower_id):
+        return
+
+    # 「只有你自己」是 2026-09-23 之後才存在的狀態。不單獨講的話，使用者會看到
+    # 「線上沒有人開放 sonnet」，然後看著下拉裡那個開著 sonnet 的自己發呆。
+    if only_me(pool, model=model, borrower_id=borrower_id):
         raise HTTPException(
             400,
-            f"你指定的那位代跑者沒有開放 {model}"
-            if requested_lending_id is not None
-            else f"現在線上沒有人開放 {model}，請換一個 model 或稍後再送",
+            f"站台上現在跑得動 {model} 的只有你自己。「自動」不會派給你本人 —— "
+            "要跑的話在代跑者那一欄改選你自己，那一趟不計債。",
         )
+
+    raise HTTPException(400, f"現在線上沒有人開放 {model}，請換一個 model 或稍後再送")
 
 
 @router.post("", response_model=JobDetail, status_code=201)
@@ -298,7 +340,7 @@ async def create_job(
     session: AsyncSession = Depends(get_session),
 ) -> JobDetail:
     transcript_bytes = 0
-    await _check_model(body.model, body.requested_lending_id, session)
+    await _check_model(body.model, body.requested_lending_id, user.id, session)
     if body.transcript_key:
         _check_transcript(body.transcript_key, user)
         transcript_bytes = storage.stat(body.transcript_key) or 0
@@ -570,6 +612,13 @@ async def stream(
     )
     already_done = job.status.is_terminal
     backlog = [{"seq": e.seq, "payload": e.payload} for e in replay]
+    # 下面的 generate() 不碰資料庫，但 Depends(get_session) 的 session 會活到
+    # 回應結束 —— 也就是使用者關掉 job 頁為止。那段時間它是「idle in transaction」，
+    # 握著 jobs / job_events 的 AccessShareLock：2026-09-23 一支 ALTER TABLE 因此
+    # 等了 13 分鐘，而排在它後面的每一個查詢都跟著卡住，hub 整個凍結。
+    # 所以資料讀完就把交易結掉，串流只靠 events 的記憶體佇列。
+    await session.commit()
+    await session.close()
 
     async def generate() -> AsyncIterator[str]:
         # 先訂閱再送重播，否則兩者之間到達的事件會遺失。

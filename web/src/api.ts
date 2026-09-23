@@ -60,6 +60,12 @@ export interface JobDetail {
   lender_cli_version: string | null;
   borrower_cli_version: string | null;
   debt_label: string | null;
+  /** 這一趟是不是自己跑自己。「自動」不派給本人，但「指定自己」留著 ——
+      那一趟不計債，而**沉默的例外會被當成記帳壞掉**，所以畫面要講。 */
+  self_run: boolean;
+  /** 用了哪個出借帳號。**只有代跑者本人拿得到值**，其他人一律 null
+      （ADR-0001：帳號對委託者不可見）。 */
+  account_name: string | null;
   failure: Failure | null;
   can_stop: boolean;
 }
@@ -114,6 +120,11 @@ export interface LenderRow {
   id: string;
   name: string;
   owner: string;
+  /** 這一列就是登入的你。
+      「自動」不派給本人（SPEC §4.5），而且所有點名代跑者的文案遇到自己時要換
+      講法 —— 在這個欄位存在之前，站台上唯一開著 Fable 的人是你自己的時候，
+      提示會叫你「帶杯手搖去拜託 vivianfan」。 */
+  mine: boolean;
   online: boolean;
   accepting: boolean;
   allow_full_network: boolean;
@@ -157,6 +168,9 @@ export interface LendingAccount {
       不寫死窗名 —— 「顯示哪些窗」是這裡的決定，不是一次 migration。 */
   windows: Record<string, { utilization?: number; resetsAt?: string | number }>;
   quota_updated_at: string | null;
+  /** 上次被派到 job 是什麼時候。**null 是「還沒被派到過」，不是「不知道」。**
+      有好幾個帳號的人，這是他唯一看得出「哪一個在輪」的地方。 */
+  last_assigned_at: string | null;
   /** 這包數字還算不算「現在」。false 就不要顯示百分比 —— 代跑者自己在別的
       地方也在燒同一個帳號，站台不會知道，掛一個理直氣壯的 34% 比不顯示更糟。 */
   quota_fresh: boolean;
@@ -573,7 +587,7 @@ export const api = {
       仍然有效到期滿）—— 不擋，但不能無聲。 */
   submitAuthorizationCode: (
     code: string,
-    opts?: { accountId?: string; approverNote?: string },
+    opts?: { accountId?: string; approverNote?: string; name?: string },
   ) =>
     fetch(`${HUB}/api/workers/authorize/code`, {
       method: "POST",
@@ -582,6 +596,7 @@ export const api = {
         code,
         account_id: opts?.accountId ?? null,
         approver_note: opts?.approverNote ?? null,
+        name: opts?.name ?? null,
       }),
     }).then(json<LendingSettings>),
 

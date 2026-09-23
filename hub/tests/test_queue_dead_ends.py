@@ -178,7 +178,7 @@ async def test_submitting_is_refused_when_every_account_is_dead(session) -> None
     await _make_the_whole_site_dead(session)
 
     with pytest.raises(HTTPException) as exc:
-        await _check_model("sonnet", None, session)
+        await _check_model("sonnet", None, uuid.uuid4(), session)
     assert exc.value.status_code == 400
     assert "授權" in exc.value.detail
 
@@ -193,5 +193,5 @@ async def test_submitting_is_allowed_when_someone_is_merely_offline(session) -> 
     account.needs_reauth = False  # 但憑證還活著
     await session.flush()
 
-    await _check_model("sonnet", None, session)  # 不拋就是過
+    await _check_model("sonnet", None, uuid.uuid4(), session)  # 不拋就是過
     assert account.usable
