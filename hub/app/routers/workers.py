@@ -121,6 +121,13 @@ class AccountView(BaseModel):
     windows: dict
     quota_updated_at: datetime | None
     quota_fresh: bool
+    # 上次被派到 job。**None 是「還沒被派到過」，不是「不知道」。**
+    #
+    # ⚠️ 這個欄位一開始只加在 `_account_view` 的 dict 裡，沒加在這裡 ——
+    # 而這支端點有 response_model，pydantic 會**靜靜地**把不認得的 key 丟掉。
+    # 結果是四張卡片全寫「還沒被派到過 job」，包含跑過六個 job 的那一個。
+    # 往 `_account_view` 加欄位時，這裡要一起加。
+    last_assigned_at: datetime | None
 
 
 class LendingView(BaseModel):
