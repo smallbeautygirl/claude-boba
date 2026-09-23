@@ -981,6 +981,21 @@ binary 裡 `yne` 從回應讀 `refresh_token_expires_in`、而且 `refresh_token
 底下，Hub 要替**每一位代跑者每 8 小時** refresh 一次 —— 那正是在對這支端點排程
 打請求。這條風險原本不在清單上。
 
+> **🔁 2026-09-23 傍晚更正：上面那段的結論是錯的，429 不是限流。**
+>
+> 是 **User-Agent 抄錯**。`claude-code/2.1.278` 是憑印象寫的，CLI 真正送的是
+> `claude-cli/2.1.278 (external, cli)`（binary 裡 `X0()` 組出來的）。前面那層
+> Cloudflare 對這支路徑有依 UA 的規則：不帶 → 403 1010；帶錯的 → **一律 429**，
+> 跟 IP、帳號、請求量都無關。同一天從家裡網路與 VPN 打同一個請求也是 429，
+> 才回頭去比 UA。
+>
+> 分辨方法是看 **header**：被 Cloudflare 擋的回應沒有 `request-id`、沒有
+> `cf-cache-status`；後端回的才有。429 的 body 跟 API 真的限流長得一模一樣。
+>
+> 所以「三個請求就擋」「refresh 排程會撞限流」這兩條風險**都不成立**。
+> 整天的等待、hub 裡的熔斷、production README 那段「限流綁整台機器」，
+> 全是這一個字串造成的。修法一行：`hub/app/oauth.py` 的 `USER_AGENT`。
+
 （測試全程沒有動到憑證：沒拿到新 token 就不寫檔，事後逐位元組比對過原檔未變。）
 
 #### 💡 下一次該換個測法：讓 CLI 自己去 refresh
@@ -1060,9 +1075,9 @@ Hub 已經在用 pty 驅動 CLI 了（#9），refresh 沒有理由自己重寫�
 B 還有一個 A 沒有的好處：**token 交換的回應本身就帶 `account`**
 （`tokenAccount:{uuid, emailAddress, organizationUuid}`），身分不用另外打一支。
 
-**B 唯一沒解的是限流。** 我們對 `/v1/oauth/token` 打了幾次之後就一路 429，
-而那到底是短期懲罰還是常態上限，沒有量過 —— 而 Hub 要替每位代跑者每 8 小時
-refresh 一次，這條必須先量。
+~~**B 唯一沒解的是限流。**~~ 2026-09-23 傍晚查明那不是限流，是 UA 抄錯被
+Cloudflare 擋（見上面 refresh 那段的更正）。帶對 UA 之後無效的碼回 400、到得了
+後端。B 沒有沒解的東西了。
 
 #### 還要驗的其他兩項
 

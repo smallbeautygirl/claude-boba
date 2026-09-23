@@ -19,11 +19,25 @@
 `strings claude.exe`（2.1.278）。它們是**觀察到的**，不是文件承諾的 ——
 Anthropic 改了不會通知我們，所以測試把它們釘住。
 
-## Cloudflare
+## Cloudflare：User-Agent 不只要帶，還要帶**對的那一串**
 
-**一定要帶 User-Agent。** 不帶的話 `POST /v1/oauth/token` 回 `403 error code:
-1010`，那是 Cloudflare 擋非瀏覽器請求，**不是 OAuth 的拒絕** —— 而且錯誤訊息
-完全不會提到 UA（2026-09-23 實測）。同樣的坑在 `app/fxrate.py` 的台銀牌價踩過。
+`POST /v1/oauth/token` 前面有一層 Cloudflare 規則看 UA：
+
+| UA | 結果 |
+|---|---|
+| 不帶 | `403 error code: 1010` |
+| `claude-code/2.1.278`（我們自己編的，2026-09-23 早上到下午都在用） | **`429 rate_limit_error`，每一發都是，跟 IP 無關** |
+| 瀏覽器的 UA | 同上 429 |
+| `claude-cli/2.1.278 (external, cli)`（CLI 真正送的，binary 裡 `X0()` 組的） | 到得了後端 |
+| `axios/1.7.9` | 到得了後端 |
+
+分辨方法：被 Cloudflare 擋的回應**沒有 `request-id`、沒有 `cf-cache-status`**，
+Anthropic 後端回的才有。429 的 body 長得跟 API 的限流一模一樣，光看 body 分不出。
+
+**2026-09-23 整天的「限流」就是這一列。** 當時判斷成「綁出口 IP 的節流」，
+還為此加了下面的熔斷、寫進 SPEC 與 production README —— 直到有人從家裡網路和
+VPN 打同一個請求也拿到 429，才回頭去比 UA。教訓：**看 header 不要只看 status**，
+而且 CLI 的常數要從 binary 逐字抄，不要憑印象寫一個像的。
 """
 
 from __future__ import annotations
@@ -48,8 +62,9 @@ REVOKE_PATH = "/v1/oauth/token/revoke"
 # 手動流程：授權碼顯示在畫面上讓人複製，不導回 localhost。
 # Hub 跑在別台機器上，localhost 那條在這裡沒有意義。
 MANUAL_REDIRECT_URL = "https://platform.claude.com/oauth/code/callback"
-# CLI 自己在用的 UA。帶什麼其實不重要，**有帶**才重要（見上面 Cloudflare 那段）。
-USER_AGENT = "claude-code/2.1.278"
+# CLI 自己在用的 UA，**逐字**抄自 binary（`claude-cli/${VERSION} (external, cli)`）。
+# 帶什麼很重要：帶錯的那串會被 Cloudflare 一律回 429（見上面那段），跟 IP 無關。
+USER_AGENT = "claude-cli/2.1.278 (external, cli)"
 
 # `user:profile` 是走這條路的理由，不是附加品。其餘照 CLI 登入時要的那組 ——
 # 少要一個，那個功能在 job 裡就會安靜地不能用。
@@ -73,13 +88,10 @@ _RETRY_BACKOFF = (1.5, 4.0)
 
 # 連續被 429 之後，**整個站台停手一段時間**。
 #
-# 2026-09-23 學到的：這支端點的節流是綁在「這台機器 + 這支端點」上的
-# —— curl、Python、Node 全部一樣，換 Anthropic 帳號也一樣。在那種狀態下重試
-# **只是把洞挖得更深**：加了退避重試之後，使用者每按一次「完成授權」就是四個
-# 請求而不是一個，而每一個都是失敗認證（限流器最該狠狠節流的那種樣態）。
-#
-# 所以撞牆之後就別再撞。冷卻期間直接拒絕，連打都不打 —— 那既救了下一個使用者，
-# 也讓這段節流有機會真的退掉。
+# 這段是 2026-09-23 在誤判「限流綁這台機器的 IP」時加的（真正的原因是 UA，
+# 見模組 docstring）。留著，理由變了：真的限流若有一天出現，Hub 替每位代跑者
+# 每 8 小時 refresh 一次，多位到期時間相近的帳號一起醒來重試，只會把洞挖得更深。
+# 冷卻期間直接拒絕，連打都不打。
 _COOLDOWN_AFTER = 2
 _COOLDOWN_SECONDS = 15 * 60
 _throttled_until = 0.0

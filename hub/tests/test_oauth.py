@@ -117,6 +117,31 @@ def test_exchange_returns_tokens_and_the_identity() -> None:
     assert "user:profile" in got.scopes
 
 
+def test_every_request_carries_the_cli_user_agent_verbatim() -> None:
+    """UA 不只要帶，還要是 CLI **逐字**送的那一串。
+
+    2026-09-23 整天：hub 帶的是憑印象寫的 `claude-code/2.1.278`，Cloudflare 對那串
+    一律回 429、跟 IP 無關（從家裡與 VPN 打也一樣）。整天被當成「限流」在等，
+    還為此加了熔斷。帶對的字串後同一個無效請求回 400、到得了後端。
+
+    三支請求（交換、refresh、revoke）都要帶，少一支那個功能就會安靜地 429。
+    """
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["user-agent"])
+        return httpx.Response(200, json=TOKENS)
+
+    start = oauth.begin()
+    asyncio.run(oauth.exchange(start, "the-code", client=_client(handler)))
+    asyncio.run(oauth.refresh("sk-ant-ort01-x", client=_client(handler)))
+    asyncio.run(oauth.revoke("sk-ant-ort01-x", client=_client(handler)))
+    assert len(seen) == 3
+    # binary 裡 `X0()` 組出來的：`claude-cli/${VERSION} (external, cli)`
+    assert set(seen) == {"claude-cli/2.1.278 (external, cli)"}
+    assert not any(ua.startswith("claude-code/") for ua in seen)
+
+
 def test_the_code_may_arrive_with_the_state_fragment_attached() -> None:
     """手動流程貼回來的是 `<code>#<state>`，使用者會整串複製 ——
     §11 的既有文案就是叫他「整串複製，包含 # 後面那一段」。"""
