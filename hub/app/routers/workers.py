@@ -506,9 +506,9 @@ async def refresh_identity(
         raise HTTPException(404, "找不到這個出借帳號")
     if account.oauth_token_enc is None:
         raise HTTPException(400, "這個帳號沒有授權，沒有東西可以查")
-    if not claude_profile.enabled():
-        raise HTTPException(400, "站台把身分反查關掉了（CLAUDE_PROFILE_LOOKUP）")
-
+    # **這裡不看 `CLAUDE_PROFILE_LOOKUP`。** 那個開關管的是「授權時自動查」，
+    # 而它預設關著，因為現在必定 403。手動按這顆是**發現 scope 哪天變了的唯一
+    # 途徑** —— 用同一個開關把它也關掉，就永遠不會有人發現它變了。
     looked = await claude_profile.fetch_profile(
         secrets_box.open_(account.oauth_token_enc)
     )

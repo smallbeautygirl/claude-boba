@@ -844,6 +844,65 @@ worker                                   Hub
 | 9 | ⚠️ **部分可行**：`setup-token` 可以用 pty 驅動、授權網址解析得出來，但流程要求把**授權碼**貼回來（見下方）| — |
 | 10 | ❓ **待驗**：不起 job 能不能拿到 `rate_limit_info`？那次呼叫算不算額度？一支程式代 N 個帳號輪詢會不會被當異常（見下方）| 額度面板退成只在 job 跑完時更新，主動輪詢取消 |
 
+### ~~#12 能不能問出一個出借帳號是哪個 Claude 帳號~~ → 已解，**不能**（2026-09-23 實測）
+
+**結論：`claude setup-token` 產的 token 問不出帳號身分。`/api/oauth/profile` 回 403。**
+
+起因：代跑者可以出借多個帳號（ADR-0001），而站台從頭到尾沒看過帳號的身分 ——
+名字是他自己打的一串字。實際情況是同一個人有四列帳號，其中三列是同一台機器上的
+同一個 Claude 帳號，而**他自己也分不出來**。想做「依 Claude 帳號去重」就得先有身分。
+
+#### 端點沒有選錯，是 token 不夠
+
+端點是從 CLI binary 挖出來的（`strings claude.exe`），不是猜的也不是二手文件：
+
+```js
+async function Mxe(e){ let n = `${BASE_API_URL}/api/oauth/profile`;
+  await lt.get(n, {headers:{Authorization:`Bearer ${e}`, ...}}) }
+// 它自己的回應驗證器：
+account: { uuid, email }.passthrough()
+organization: { uuid }.passthrough()
+```
+
+而且 **CLI 自己的登入流程在交換完授權碼之後打的就是這一支**（`vCn(a.access_token)`
+→ `Mxe`）。所以我們沒有找錯端點。
+
+同一份 binary 裡也寫著原因：
+
+> `env-var and setup-token sessions default to user:inference only`
+
+授權網址的組裝證實了它 —— `setup-token` 走 `inferenceOnly` 分支，scope 只帶一個。
+
+#### 唯一真正的證據是打過一次
+
+2026-09-23 用站台上一個真的代跑 token 打了 `/api/oauth/profile`：**HTTP 403**。
+在那之前，上面每一條都只是「看起來會這樣」。
+
+#### 有一條看起來可行、但我們沒走的路
+
+**refresh token 的回應裡直接帶身分**，不需要額外的 scope：
+
+```js
+tokenAccount: D.account ? {uuid: D.account.uuid,
+                           emailAddress: D.account.email_address,
+                           organizationUuid: D.organization?.uuid} : void 0
+```
+
+但那是 refresh flow 的回應，而我們的授權是**用 pty 驅動 CLI、從 TUI 的輸出裡撈
+token**（§11 #9）—— 我們從來沒有自己碰過 OAuth 的交換，也沒有 refresh token。
+要走這條得自己實作 PKCE 交換，那是另一件事，而且它會把 §11 #9 的整個前提換掉。
+
+#### 所以現在怎麼處理
+
+- 程式留著（`hub/app/claude_profile.py`），**自動反查預設關掉**
+  （`CLAUDE_PROFILE_LOOKUP=false`）—— 開著等於每次授權多一個保證 403 的往返
+- 出借頁的「查一次」**不受那個開關影響**。scope 是 Anthropic 那邊決定的，
+  哪天變了，手動按一次是唯一會發現的途徑
+- `lending_accounts` 的 `claude_account_uuid` 唯一約束留著。Postgres 不擋多個
+  NULL，所以它現在對所有人都是 no-op，而不是一個要拆掉的東西
+- **「依 Claude 帳號去重」這件事因此還沒有解**。代跑者分辨帳號目前靠的仍然是
+  他自己取的名字（授權時必填，見 web-spec §8）
+
 ### #10 不起 job 能不能查額度（2026-09-22 提出，未驗）
 
 **為什麼要問：** §4.12 之後代跑者自己要看得到每個出借帳號的用量（5 小時窗、

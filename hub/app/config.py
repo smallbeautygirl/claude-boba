@@ -86,11 +86,16 @@ class Settings(BaseSettings):
     # 逾時給得短：這是管理頁上一個可有可無的附註，不值得讓整頁等它。
     fx_timeout: float = 5.0
 
-    # 授權時去 Anthropic 反查這個 Claude 帳號是誰（app/claude_profile.py）。
-    # **關得掉**：它會對外送一個請求，而那不是這個站台的核心功能 ——
-    # Anthropic 改了什麼的時候要能一行關掉，不是等著改程式。
-    # 關掉的代價是帳號卡上沒有 email，而且同一個帳號授權兩次擋不住。
-    claude_profile_lookup: bool = True
+    # 授權時自動去 Anthropic 反查這個 Claude 帳號是誰（app/claude_profile.py）。
+    #
+    # **預設關掉，因為它現在必定失敗。** 2026-09-23 實測：`claude setup-token`
+    # 產的 token 打 `/api/oauth/profile` 回 **403**（SPEC §11 spike #12）。
+    # 開著等於每次授權都多一個保證失敗的往返，還會在帳號卡上留下一行誤導的字。
+    #
+    # 留著這個開關而不是把整段程式刪掉：token 的 scope 是 Anthropic 那邊決定的，
+    # 哪天變了，這裡打開就會動。出借頁那顆「查一次」**不受這個開關影響** ——
+    # 手動按一次是發現「哪天變了」的唯一途徑。
+    claude_profile_lookup: bool = False
 
     @property
     def admin_email_set(self) -> frozenset[str]:
