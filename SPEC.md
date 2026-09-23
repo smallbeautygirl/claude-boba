@@ -963,6 +963,38 @@ binary 裡 `yne` 從回應讀 `refresh_token_expires_in`、而且 `refresh_token
 ⚠️ **這一項不能拿開發者自己的憑證去試** —— refresh 會輪替掉那份還在用的憑證，
 可能當場把他登出。要驗得先準備一個拋棄式的帳號。
 
+#### 🔬 試著自己打 refresh：沒有結論，但撞到一件該知道的事（2026-09-23）
+
+端點與參數都是從 binary 抄的（`POST https://platform.claude.com/v1/oauth/token`，
+`grant_type=refresh_token`、`client_id=9d1c250a-…`、`scope`）。三次嘗試：
+
+| 請求 | 結果 |
+|---|---|
+| 無 User-Agent | **403** |
+| 加上 `claude-code/2.1.278` | **429** `rate_limit_error` |
+| 再去掉 `scope` | **429** |
+
+**所以「refresh 會不會滾動」仍然沒有答案。** 403 有可能是缺 header，也有可能是
+限流的另一種回法 —— 加了 UA 之後變 429，那之後每一次都是 429，無從分辨。
+
+**撞到的那件事才是重點：這支端點限流得很兇，三個請求就擋。** 而 `/login` 方案
+底下，Hub 要替**每一位代跑者每 8 小時** refresh 一次 —— 那正是在對這支端點排程
+打請求。這條風險原本不在清單上。
+
+（測試全程沒有動到憑證：沒拿到新 token 就不寫檔，事後逐位元組比對過原檔未變。）
+
+#### 💡 下一次該換個測法：讓 CLI 自己去 refresh
+
+自己手刻 OAuth 協定是這次失敗的原因之一，而**那也不該是實作的方式** ——
+Hub 已經在用 pty 驅動 CLI 了（#9），refresh 沒有理由自己重寫一遍。
+
+測法（完全不碰正式憑證）：把憑證複製到一個臨時 HOME，把 `expiresAt` 改成過去的
+時間（CLI 的判斷是「五分鐘內到期就 refresh」），跑一次 `claude -p pong`，
+然後 diff 那個複本 —— `refreshToken` 有沒有變、到期時間有沒有往後推，一看就知道。
+
+⚠️ 但它仍然會在伺服器端輪替掉那組 refresh token，所以驗完要把新的寫回正式位置，
+否則那台機器會登出。
+
 #### 還要驗的其他兩項
 
 - Hub 能不能像驅動 `setup-token` 一樣用 pty 驅動 `claude /login`，並讀走它寫進
