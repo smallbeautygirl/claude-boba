@@ -326,16 +326,29 @@ async def push_events(
         job.status = JobStatus.RUNNING
         job.started_at = job.last_heartbeat_at
 
+    # 已經存過的 seq 一律略過，**不能炸**。worker 的 POST 可能已被上一個 hub 行程
+    # 收下並 commit、回應卻沒送到（2026-09-23 正式站：job 跑到一半 hub 被重新部署），
+    # 它接著重送同一批 —— 這裡若回 500，worker 會把一個其實跑得好好的 job 記成
+    # 失敗。seq 放進協定就是為了去重與續傳（schemas.EventBatch）；回 next_seq 讓
+    # worker 對齊到真正的尾端。
+    stored_max = (
+        await session.scalar(
+            select(func.max(JobEvent.seq)).where(JobEvent.job_id == job.id)
+        )
+        or 0
+    )
     seq = body.from_seq
     for payload in body.events:
-        session.add(JobEvent(job_id=job.id, seq=seq, payload=payload))
-        _emit(job.id, seq, payload)
-        await _absorb_rate_limit(job, payload, session)
+        if seq > stored_max:
+            session.add(JobEvent(job_id=job.id, seq=seq, payload=payload))
+            _emit(job.id, seq, payload)
+            await _absorb_rate_limit(job, payload, session)
         seq += 1
+    next_seq = max(seq, stored_max + 1)
 
     await session.commit()
     # 出租者按了停止 → 這裡回 True，worker 殺掉容器。SPEC §9 的控制通道。
-    return {"next_seq": seq, "cancel": job.status is JobStatus.CANCELLED}
+    return {"next_seq": next_seq, "cancel": job.status is JobStatus.CANCELLED}
 
 
 @router.post("/jobs/{job_id}/artifacts")
