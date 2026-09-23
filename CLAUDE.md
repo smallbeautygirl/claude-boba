@@ -94,6 +94,16 @@
   而願望還在，牆上一排破圖且沒人知道為什麼（SPEC §8）
 - **改 schema 要跑 Alembic**，不要再用 `create_all` 或手動 `ALTER TABLE`。
   Hub 啟動時會檢查版本，落後就拒絕啟動
+- **新增背景迴圈時，`hub/tests/test_sweeper_is_wired.py` 要多守一條。** 這個 repo 已經
+  三次寫好了清潔工卻沒人啟動它（authorize、expiry、orphans）。`sweep_once()` 有測試
+  不代表 `main.py` 有 create_task
+- **長連線的 endpoint（SSE、long-poll）不要讓 `Depends(get_session)` 的 session 活到
+  回應結束。** 它會一直 idle in transaction、握著表的鎖；一支 `ALTER TABLE` 排到它
+  後面，全站每一個查詢都會跟著卡住（2026-09-23 實際發生，13 分鐘）。資料讀完就
+  `commit()` + `close()`，串流階段只靠記憶體
+- **hub 對已派出的 job 有自己的判斷了**（2026-09-23，`hub/app/orphans.py`）：worker
+  超過 `job_heartbeat_timeout_seconds` 沒回報就結案為 failed。不要再假設「worker 一定
+  會回報 result」—— 它中途崩潰時就不會，而那個 job 之前會永遠「執行中」
 - **不要加「這個帳號跑不跑得動某個 model」的預先探測。** 2026-09-23 逐一量過，
   API 問不出來：`GET /v1/models`、`count_tokens`、`POST /v1/messages` 對有 Fable
   與沒有 Fable 的帳號回的東西**逐字相同**，而且有 Fable 的帳號在額度滿時同樣回

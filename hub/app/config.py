@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     worker_poll_timeout: int = 30
     # 排隊超過這個時間無人接單即作廢（SPEC §5）
     job_queue_expiry_seconds: int = 900
+    # 執行中的 job 超過這個時間沒有任何 worker 回報，hub 就替它結案為 failed
+    # （app/orphans.py）。心跳是每 3 秒一次，所以 5 分鐘不是「快到了」而是「死了」；
+    # 留這麼長是給大附件下載（領單到第一次心跳之間）與 hub 自己重啟的餘裕。
+    job_heartbeat_timeout_seconds: int = 300
 
     # 管理頁「累計花費」的台幣粗估用的匯率來源（hub/app/fxrate.py）。
     # **設成空字串就整個關掉** —— 那時管理頁只顯示美金，並說明為什麼沒有台幣，

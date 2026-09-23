@@ -33,8 +33,8 @@ from .models import Job, User
 async def sweep_once(session: AsyncSession) -> int:
     """把排太久的 queued job 標成 expired，回作廢了幾個。
 
-    只動 `queued` —— 已經被領走的 job 有 worker 在照顧它，卡住的判定在別處
-    （管理頁的 stuck-jobs），而那一類不該被這裡搶著結案。
+    只動 `queued` —— 已經被領走的 job 有 worker 在照顧它；worker 死掉之後的結案
+    是 `orphans.py` 的事（依心跳判定），管理頁的 stuck-jobs 則只列不動。
 
     **不計債**（SPEC §5）：沒有跑成任何東西，也沒有花到任何人的額度。
     """

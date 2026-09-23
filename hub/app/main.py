@@ -9,7 +9,7 @@ from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import authorize, expiry
+from . import authorize, expiry, orphans
 from .config import settings
 from .db import engine
 from .routers import (
@@ -71,10 +71,15 @@ async def lifespan(app: FastAPI):
     # `expired` 這個狀態、它的文案與 job_queue_expiry_seconds 在這之前就都存在了，
     # 只是沒有任何程式會去設它，所以 job 會永遠停在「排隊中」（見 app/expiry.py）。
     expirer = asyncio.create_task(expiry.sweeper(), name="job-expiry-sweeper")
+
+    # worker 死掉之後其 job 的清潔工。同一句話第三次：**這行是它唯一的啟動點。**
+    # 2026-09-23 一個 job 因 worker 崩潰而「執行中」半小時，才發現 hub 對已派出的
+    # job 完全沒有自己的判斷（見 app/orphans.py）。
+    orphaner = asyncio.create_task(orphans.sweeper(), name="job-orphan-sweeper")
     try:
         yield
     finally:
-        for task in (sweeper, expirer):
+        for task in (sweeper, expirer, orphaner):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task

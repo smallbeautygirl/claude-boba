@@ -124,6 +124,11 @@ async def poll(
     """
     claimed = await _claim(host, session)
     if claimed is None:
+        # 等單的 30 秒不要抱著剛才那個讀交易：它 idle in transaction 時握著 jobs 的
+        # AccessShareLock，任何 ALTER TABLE 都得等它，而排在 ALTER 後面的查詢會全部
+        # 卡住（2026-09-23 實際發生，見 routers/jobs.py 的 stream）。先把交易結掉，
+        # 等到了再開新的。
+        await session.rollback()
         await events.wait_for_job(timeout=settings.worker_poll_timeout)
         claimed = await _claim(host, session)
     if claimed is None:
@@ -268,6 +273,7 @@ async def _claim(
             job.lending_id = setting.id
             job.account_id = account.id
             job.claimed_at = datetime.now(UTC)
+            job.last_heartbeat_at = job.claimed_at
             account.last_assigned_at = job.claimed_at
             await session.commit()
             _emit(
@@ -295,9 +301,12 @@ async def push_events(
     """接收批次事件，並在回應裡夾帶控制指令（目前只有停止）。"""
     job = await _owned_job(job_id, session)
 
+    # 空批次也算：worker 每 3 秒會空打一次取控制指令（web-spec §8），
+    # 那就是心跳。app/orphans.py 靠這個時間判斷 worker 還在不在。
+    job.last_heartbeat_at = datetime.now(UTC)
     if job.status is JobStatus.CLAIMED and body.events:
         job.status = JobStatus.RUNNING
-        job.started_at = datetime.now(UTC)
+        job.started_at = job.last_heartbeat_at
 
     seq = body.from_seq
     for payload in body.events:

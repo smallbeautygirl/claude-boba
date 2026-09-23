@@ -41,6 +41,10 @@ QUEUED_STUCK_SECONDS = 600
 # 執行中超過這個時間算卡住。worker 的預設逾時是 600 秒（worker/worker.py），
 # 加兩分鐘寬限給收尾與上傳。
 #
+# 2026-09-23 起這份清單只剩「worker 還在回報、但跑太久」的那種：worker 已經沒回報
+# 的 job 會被 app/orphans.py 在 job_heartbeat_timeout_seconds 之後自動結案為 failed，
+# 不會留在這裡等人。
+#
 # ⚠️ **worker 沒有把自己的逾時回報給 hub**（`WorkerConfig` 只有 network／models／
 # budget／concurrency／CLI 版本），所以這是一個假設，不是量到的值。有代跑者把
 # 逾時調長的話，他的 job 會提早被列進來。要精確就得讓 worker 回報那個值。

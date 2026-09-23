@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from app import authorize, expiry, main
+from app import authorize, expiry, main, orphans
 
 pytestmark = pytest.mark.anyio
 
@@ -40,7 +40,7 @@ def _no_external_checks(monkeypatch):
     monkeypatch.setattr(main, "ensure_bucket", lambda: None)
 
 
-_NAMES = ("authorize-sweeper", "job-expiry-sweeper")
+_NAMES = ("authorize-sweeper", "job-expiry-sweeper", "job-orphan-sweeper")
 
 
 def _tasks(name: str) -> list[asyncio.Task]:
@@ -128,3 +128,30 @@ async def test_the_expiry_loop_survives_a_failure(monkeypatch) -> None:
     assert not task.done(), "掃到一半炸了就整個停掉了"
     task.cancel()
     assert calls >= 2
+
+
+async def test_the_orphan_loop_waits_out_the_warmup_then_sweeps(monkeypatch) -> None:
+    """hub 剛起來時所有心跳都過期了（重啟那 60 秒 worker 打不進來）——
+    開機就掃會把每個健康的 job 誤判成孤兒，所以要先等一個 timeout。"""
+    calls = 0
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    async def counting_sweep(_session) -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    monkeypatch.setattr(orphans, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(orphans, "sweep_once", counting_sweep)
+    task = asyncio.create_task(orphans.sweeper(interval=0.01, warmup=0.05))
+    await asyncio.sleep(0.03)
+    assert calls == 0, "暖機期間就開掃了"
+    await asyncio.sleep(0.07)
+    task.cancel()
+    assert calls >= 2, f"暖機結束後清潔工跑了 {calls} 圈，迴圈沒有在掃"

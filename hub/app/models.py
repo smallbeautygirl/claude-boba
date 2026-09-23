@@ -302,6 +302,10 @@ class Job(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # worker 最後一次為這個 job 打回來的時間（事件批次或空的心跳，每 ~3 秒一次）。
+    # 沒有它，hub 無法分辨「還在跑」與「worker 死了、沒人會來結案」——
+    # 2026-09-23 一個 job 就因此停在「執行中」超過半小時（見 app/orphans.py）。
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     lending: Mapped[LendingSetting | None] = relationship(foreign_keys=[lending_id])
     account: Mapped[LendingAccount | None] = relationship(foreign_keys=[account_id])
