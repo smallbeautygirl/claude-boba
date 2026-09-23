@@ -44,6 +44,31 @@ plugin 不會、也不該被載入。要讓大家共用某個 skill，就放進�
 > 兩個一起裝，清單上會出現兩個一樣的名字 —— 而指令清單是**被編輯過的推薦**
 > （`CONTEXT.md`），推薦裡有兩個同名項目，那份編輯就失效了。
 
+## `skills/pptx/` 是我們自己寫的，不是上游的
+
+**為什麼不用 Anthropic 的 pptx skill**：它在託管模型下**讀不到**。`claude setup-token`
+拿到的 token 只有 `user:inference` 這個 scope，org 同步的 skill（`skills/synced/<org>_<user>/`）
+在那條認證路徑下整包被忽略 —— 2026-09-23 對照實測：同一個 HOME，掛 `.credentials.json`
+時 `/anthropic-skills:pptx` 可用，換成 `CLAUDE_CODE_OAUTH_TOKEN` 就不可用。
+
+**為什麼不把 Anthropic 那份複製進來**：不行。它的 `LICENSE.txt`（服務同步的那份與
+[anthropics/skills](https://github.com/anthropics/skills) 公開 repo 裡的一字不差）明文
+禁止取出、保留副本、重製、衍生、散布。README 說得也直白：那四個文件 skill 是
+*source-available, not open source*，放上 GitHub 是「as a reference」。**看可以，用不行。**
+
+所以 `skills/pptx/` 是照 BD/PM 的實際情境自己寫的：用 image 裡本來就預裝的
+`pptxgenjs` / `python-pptx` / `markitdown`（見 `worker/Dockerfile`），針對「把附件
+做成幾頁」與「用公司範本改／填」這兩條路，加上沒有 LibreOffice 之下能做的結構性 QA
+（`scripts/check.py`）。它比 Anthropic 那份窄，但窄是刻意的 —— 我們的使用者是同一家
+公司的人，他們的簡報長什麼樣是已知的。
+
+`scripts/dup_slide.py`（複製／刪除投影片）與 `scripts/check.py` 都是從零寫的。
+方法（解壓改 XML、複製投影片要註冊 relationship、`text_frame.text` 會吃掉格式）是
+公開的工程知識；受著作權保護的是文字與程式碼，那兩樣這裡沒有拿。
+
+xlsx / docx / pdf **還沒有**對應的 skill。清單上那三個指令目前指向不存在的東西，
+要嘛補寫、要嘛先拿掉 —— 不要讓人點了失望。
+
 **版本釘死在 1.2.3，不追 main。** 理由同 Dockerfile 釘版本：上游更新會無聲改變
 每個 job 的行為，而這裡的內容是會指導 Claude 用 Bash 的 —— 要進來就要被看過。
 升級 = 一個 PR。

@@ -5,13 +5,13 @@
       "id": "office",
       "title": "產出文件",
       "audience": "BD・PM",
-      "hint": "跑完會產出檔案，目前要用「接著問」請它把內容貼回來 —— 檔案下載還沒做。",
+      "hint": "跑完會產出檔案，job 頁面直接下載。有公司範本就一起丟進來，會沿用它的版面。",
       "commands": [
         {
-          "name": "/anthropic-skills:pptx",
+          "name": "/pptx",
           "chip": true,
           "label": "做簡報",
-          "desc": "把內容整理成 PowerPoint"
+          "desc": "把附件或你貼的內容做成 PowerPoint；附 .pptx/.potx 的話沿用它的版面來改或填"
         },
         {
           "name": "/anthropic-skills:xlsx",
