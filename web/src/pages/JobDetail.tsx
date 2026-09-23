@@ -132,11 +132,20 @@ export function JobDetail() {
         {job.lender && ` · 由 ${job.lender} 代跑`} · <StatusChip status={job.status} />
       </p>
 
+      {/* 之前的對話。「接著問」是真的 resume（SPEC §4.2），對使用者來說這一頁
+          就是同一場對話的下一輪 —— 但每一輪各是一個 job、各有自己的頁面，
+          光給一個「接續自」連結，往上翻歷史等於在分頁間跳來跳去
+          （2026-09-23 第二次回報：「要像 Claude Code 一樣往上滑看得到」）。
+          所以把整條祖先鏈畫在這裡，舊的在上、新的在下，跟聊天介面一樣。 */}
+      {job.parent_job_id && <History parentId={job.parent_job_id} />}
+
       {/* 你送的那段話。以前這一頁只有 Claude 的回應 —— 第一個 job 還好，
           「接著問」之後就變成一場只看得到一邊的對話：你按了送出，頁面跳到新的
           job，然後你看到 Claude 在回答一個你看不見的問題（2026-09-23 回報）。
           很長的 prompt（貼整段對話那種）預設收合，不然它會把結果推到畫面外。 */}
-      <UserPrompt text={job.prompt} attachments={job.attachments} />
+      <div id="this-turn">
+        <UserPrompt text={job.prompt} attachments={job.attachments} />
+      </div>
 
       <Phase job={job} live={live} done={done} />
 
@@ -228,6 +237,104 @@ function fmtSize(n: number): string {
 // 這個 job 是拿什麼去問的。只有委託者本人與代跑者看得到這一頁（hub 的 _get_job），
 // 所以這裡沒有新的揭露 —— 兩個人本來就都看得到 prompt。
 const PROMPT_FOLD_CHARS = 600;
+
+/* 祖先鏈：沿 parent_job_id 一路往上抓，最舊的排最前面。
+
+   走前端一跳一跳抓而不是開一支「給我整條鏈」的端點：每一跳都是 getJob，
+   存取控制（只有委託者與代跑者看得到）自然沿用，不用在後端再寫一份。
+   鏈很短（人手動一輪一輪問的），多幾個請求無所謂；上限是保險，不是預期會碰到。
+
+   載入完把目前這一輪捲進畫面：歷史在上面，不捲的話使用者一進來看到的是三輪前
+   的舊問題，還以為跳錯頁。只捲一次 —— 之後串流每來一行就跳一下會很煩。 */
+const HISTORY_MAX_TURNS = 30;
+
+function History({ parentId }: { parentId: string }) {
+  const [turns, setTurns] = useState<Job[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const chain: Job[] = [];
+      let cursor: string | null = parentId;
+      try {
+        while (cursor && chain.length < HISTORY_MAX_TURNS) {
+          const j: Job = await api.getJob(cursor);
+          chain.unshift(j);
+          cursor = j.parent_job_id;
+        }
+        if (!cancelled) setTurns(chain);
+      } catch {
+        // 某一跳拿不到（多半是權限：鏈上某一輪是別人代跑、而你不是委託者）。
+        // 顯示拿得到的那幾輪比整段消失好；拿不到的那一段講清楚就好。
+        if (!cancelled) {
+          setFailed(true);
+          setTurns(chain);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parentId]);
+
+  useEffect(() => {
+    if (turns === null) return;
+    document.getElementById("this-turn")?.scrollIntoView({ block: "start" });
+  }, [turns]);
+
+  if (turns === null) return <div className="history muted">載入之前的對話…</div>;
+
+  return (
+    <div className="history">
+      <div className="history-label">
+        之前的對話 · {turns.length} 輪
+        {failed && " · 更早的幾輪拿不到（不是你的 job）"}
+      </div>
+      {turns.map((t, i) => (
+        <div className="history-turn" key={t.id}>
+          <div className="history-meta">
+            第 {i + 1} 輪 · <Link to={`/jobs/${t.id}`}>{t.id.slice(0, 8)}</Link> ·{" "}
+            <StatusChip status={t.status} />
+          </div>
+          <UserPrompt text={t.prompt} attachments={t.attachments} />
+          <Answer job={t} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* 某一輪 Claude 回的。只有成功的那趟有 result_text；失敗／中止的那一輪
+   照樣列出來（它仍是對話的一部分，下一輪的問題可能就是在回應那個錯誤），
+   只是內容換成發生了什麼。長回答收合，跟 prompt 同一套規則。 */
+function Answer({ job }: { job: Job }) {
+  const text = job.result_text;
+  if (!text) {
+    return (
+      <div className="answer-box muted">
+        {job.status === "succeeded"
+          ? "（這一輪沒有文字回應）"
+          : `（這一輪${STATUS_LABEL[job.status]}${job.error_detail ? `：${job.error_detail}` : ""}）`}
+      </div>
+    );
+  }
+  const long = text.length > PROMPT_FOLD_CHARS;
+  const body = <pre className="answer-text">{text}</pre>;
+  return (
+    <div className="answer-box">
+      <div className="prompt-label">Claude 回的</div>
+      {long ? (
+        <details>
+          <summary>{text.slice(0, 120).replace(/\s+/g, " ")}… （{text.length} 字，展開）</summary>
+          {body}
+        </details>
+      ) : (
+        body
+      )}
+    </div>
+  );
+}
 
 function UserPrompt({
   text,
