@@ -1,0 +1,124 @@
+# 這份是 lighthouse-saas-api 的 visionai-middleware-ci.yml 的**精簡版**，而且
+# 少掉的東西都是刻意的，不是漏抄。下面每一處都寫了為什麼；要補回來之前先讀那段。
+#
+# 五處刻意的偏離：
+#
+#   1. lint 掃全樹，不是只掃 diff。來源 diff-scope 是為了跟數百個既有違規共存，
+#      代價是「沒被這個 PR 碰到的檔案爛掉也沒人知道」。這裡 `ruff check .` 全樹
+#      通過，抄那個妥協等於平白買下它的缺點。
+#   2. 沒有獨立的 lint job。`pre-commit` 的前兩個 hook 就是 ruff check + ruff
+#      format，再開一個 job 等於同一件事跑兩次、裝兩次 Python。跑 pre-commit 還多
+#      一層好處：CI 用的是跟本機一模一樣那份 hook 設定，ruff 版本不會漂開。
+#   3. 沒有 pr-judge / code-review 這兩個呼叫 Anthropic API 的 job。
+#      .pre-commit-config.yaml 已經為了同一個理由拿掉過 AI review hook（個人
+#      side project，成本不划算）。而且 pr-judge 判的是 CHANGELOG 合規 —— 這個
+#      repo 沒有 CHANGELOG.md，前提本身不存在。
+#   4. web 不跑 oxlint。它現在吐 5 個 warning 但 exit 0，也就是永遠綠燈。一個不
+#      會紅的檢查比沒有檢查更糟，它會讓人以為有人在看。`tsc -b` 才是真的把關。
+#      要讓 lint 有意義得先修掉那 5 個 warning 再加 --deny-warnings，那是另一件事。
+#   5. 不收 coverage。來源收了但沒設門檻，所以那串數字不會讓任何 PR 變紅。同 4。
+#
+# 另外沒有 `paths:` 過濾 —— 來源是 monorepo，一個 repo 裡很多 app；這裡整個 repo
+# 就是一個專案，加 paths 只會製造「改了某個檔案 CI 不跑」的漏洞。
+name: CI
+
+on:
+  # PR 與直接 push 都觸發。目前的工作方式是直接推 develop，所以 push 那一輪不是
+  # 重複，是唯一一次檢查。合 PR 時同一個 commit 會跑兩輪，這是知情的取捨：等哪天
+  # 全面走 PR 了，刪掉 push 這一段就好。
+  #
+  # 來源的 `types: [... ready_for_review]` 沒有抄 —— 那是為了讓 draft gate 上的兩
+  # 個 LLM job 在離開 draft 時重新評估。這裡沒有 draft gate（見上面第 3 點），
+  # 預設的 opened/synchronize/reopened 就夠。
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+# 同一個 PR 新的 push 會取消還在跑的舊的 —— 沒有人會去看舊那輪的結果，而這是
+# private repo，Actions 分鐘數要錢。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+# Python 釘 3.11 而不是開發機上的 3.12：worker 的 code 最終在 bookworm 的 python3
+# （= 3.11）上執行，pyproject.toml 的 ruff target-version 也是 py311。CI 要測的是
+# 實際執行的那個版本，用 3.12 測會讓「本機過、容器爆」這類問題整組躲過 CI。
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # 把 .pre-commit-config.yaml 那九個 hook 原封不動在 CI 跑一次，因為本機 hook 是
+  # opt-out 的 —— 一次 `git commit --no-verify` 就繞過去了，而這個 repo 一次洩漏的
+  # 是**別人的**憑證（Observ 密碼、代跑者的一年期 OAuth token、MinIO key）。
+  #
+  # --all-files 而不是只掃改動檔：gitleaks 只掃 diff 的話，之前就已經 commit 進去
+  # 的 secret 永遠不會被發現，而那正是最不能漏的那個 hook。
+  precommit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # hook 的環境（ruff、gitleaks binary）第一次要下載 30-60 秒，之後靠這個 cache。
+      # key 綁 .pre-commit-config.yaml：改了版本就該重建，沒改就該命中。
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: pip install pre-commit==4.6.1
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  # hub 與 worker 分成兩個 job，不是兩個 step。理由跟來源把 ui-test 獨立出來一樣：
+  # 串在一起的話，hub 掛了會在 worker 開始之前就把整個 job 帶走，於是 worker 的
+  # 判決根本不存在 —— 那等於回到「測試有寫但沒有人在跑」的狀態。
+  hub-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: hub/requirements*.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      # 沒有任何 --ignore / --deselect。來源那一長串是它自己的既有失敗與需要真實
+      # upstream 的測試；這裡全部通過且不需要 DB 或 S3，一個都不該排除。
+      - run: pytest
+
+  worker-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: worker/requirements*.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pytest
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      # Node 版本的事實來源是 web/package.json 的 engines，不是這裡。CI 挑一個版本
+      # 等於憑空決定，寧可先把它寫進 repo 再讓 CI 讀。
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/package.json
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # `tsc -b && vite build`。型別檢查就是這裡真正的把關，見開頭第 4 點。
+      - run: npm run build
