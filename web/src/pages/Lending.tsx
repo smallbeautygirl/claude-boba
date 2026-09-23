@@ -51,7 +51,12 @@ function Accounts({
     <>
       <h2>你的出借帳號</h2>
       <ul className="accounts">
-        {settings.accounts.map((a) => (
+        {/* 已停用的排到最後。它們不能真的刪掉（跑過的 job 要看得出是誰跑的），
+            但它們也不該跟還在服役的那些混在一起 —— 2026-09-23 的實際情況是
+            四張卡片裡三張已經停用，而畫面上完全看不出差別。 */}
+        {[...settings.accounts]
+          .sort((x, y) => Number(y.has_token) - Number(x.has_token))
+          .map((a) => (
           <Fragment key={a.id}>
             <AccountRow account={a} reload={reload} onReplace={setReplacing} />
             {/* 表單就地展開在**被按的那一列底下**。原本它渲染在整份清單的最後，
@@ -231,6 +236,11 @@ function AccountRow({
             ⚠️ 需重新授權 —— 這個帳號目前不接單，你其他的帳號照常
           </span>
         )}
+        {/* 按過「不再出借」的帳號。**它為什麼還在這裡**要當場講 ——
+            不講的話它看起來就像那顆鈕沒有作用（2026-09-23 真的被這樣問）。 */}
+        {!account.has_token && !account.needs_reauth && (
+          <span className="muted">已停用</span>
+        )}
       </div>
 
       {/* credits 標記常駐，不做「跳一次就消失」的提示：這是帳號的狀態，跟它的
@@ -252,7 +262,14 @@ function AccountRow({
 
       {/* 百分比與重置倒數**只給本人**。知道「他一小時後就滿血」會直接變成
           「那我現在多送幾個」—— 這條跟 web-spec §3 不顯示百分比同一個理由。 */}
-      {account.quota_fresh && windows.length > 0 ? (
+      {/* 停用的帳號不必再談額度 —— 它不會被派到。這裡改成回答那個真正的問題：
+          「我按了不再出借，為什麼它還在？」 */}
+      {!account.has_token && !account.needs_reauth ? (
+        <p className="hint">
+          已經不再出借了，token 也撤掉了。<strong>紀錄留著是因為它跑過 job</strong> ——
+          那些 job 的「由誰代跑」是人情債的依據，帳號整列刪掉那條線就斷了。
+        </p>
+      ) : account.quota_fresh && windows.length > 0 ? (
         <>
           {windows.map(([key, w]) => (
             <div key={key} className="quota-row">
@@ -289,11 +306,15 @@ function AccountRow({
 
       <p className="actions">
         <button type="button" className="small" onClick={() => onReplace(account)}>
-          重新授權
+          {account.has_token ? "重新授權" : "重新啟用"}
         </button>
-        <button type="button" className="small" onClick={remove}>
-          不再出借這個帳號
-        </button>
+        {/* 已經停用的就不再給這顆 —— 按下去什麼也不會發生，而一顆沒有作用的
+            按鈕正是讓人以為「刪不掉」的原因。 */}
+        {account.has_token && (
+          <button type="button" className="small" onClick={remove}>
+            不再出借這個帳號
+          </button>
+        )}
       </p>
       {error && <p className="error">{error}</p>}
     </li>
