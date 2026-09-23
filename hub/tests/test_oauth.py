@@ -22,6 +22,15 @@ import pytest
 from app import oauth
 
 
+@pytest.fixture(autouse=True)
+def _no_cooldown():
+    """每則測試從乾淨的狀態開始 —— 熔斷是模組層的狀態，不清的話前一則的 429
+    會讓下一則直接被拒。"""
+    oauth._reset_for_tests()
+    yield
+    oauth._reset_for_tests()
+
+
 def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
@@ -258,3 +267,57 @@ def test_a_network_blip_is_not_reauthorize() -> None:
     with pytest.raises(oauth.OAuthError) as e:
         asyncio.run(oauth.refresh("fine", client=_client(handler)))
     assert not isinstance(e.value, oauth.ReauthorizeNeeded)
+
+
+# ── 熔斷 ─────────────────────────────────────────────────────────
+
+
+def test_repeated_429_makes_the_site_stop_trying(monkeypatch) -> None:
+    """**撞牆之後就別再撞。**
+
+    2026-09-23 學到的：這支端點的節流綁在「這台機器 + 這支端點」上（curl、
+    Python、Node 全部一樣，換帳號也一樣）。那種狀態下重試只是把洞挖得更深 ——
+    加了退避之後，使用者每按一次就是四個請求，而每一個都是失敗認證。
+    """
+    calls = 0
+
+    def handler(_r):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, json={"error": {"type": "rate_limit_error"}})
+
+    monkeypatch.setattr(oauth, "_RETRY_BACKOFF", (0.0,))
+    for _ in range(2):
+        with pytest.raises(oauth.OAuthError):
+            asyncio.run(
+                oauth.exchange(oauth.begin(), "c", client=_client(handler), retries=1)
+            )
+    before = calls
+
+    # 熔斷之後：連打都不打。
+    with pytest.raises(oauth.OAuthError) as e:
+        asyncio.run(oauth.exchange(oauth.begin(), "c", client=_client(handler)))
+    assert calls == before, "熔斷之後不該再送出任何請求"
+    assert "停手" in str(e.value)
+    # 那串碼沒被用掉這件事，在熔斷訊息裡也要講 —— 否則他會去重走一次授權。
+    assert "還沒有被用掉" in str(e.value)
+
+
+def test_a_success_clears_the_breaker(monkeypatch) -> None:
+    """節流退了就要恢復，不能一直卡著。"""
+    state = {"fail": True}
+
+    def handler(_r):
+        if state["fail"]:
+            return httpx.Response(429, json={"error": {"type": "rate_limit_error"}})
+        return httpx.Response(200, json=TOKENS)
+
+    monkeypatch.setattr(oauth, "_RETRY_BACKOFF", (0.0,))
+    with pytest.raises(oauth.OAuthError):
+        asyncio.run(
+            oauth.exchange(oauth.begin(), "c", client=_client(handler), retries=1)
+        )
+    oauth._reset_for_tests()
+    state["fail"] = False
+    got = asyncio.run(oauth.exchange(oauth.begin(), "c", client=_client(handler)))
+    assert got.email == "someone@example.com"

@@ -34,6 +34,7 @@ import hashlib
 import json
 import random
 import secrets
+import time
 import urllib.parse as up
 from dataclasses import dataclass, field
 
@@ -68,7 +69,42 @@ _TIMEOUT = 30.0
 #
 # 交換授權碼時退避得短（人在畫面前等），refresh 時可以長一點（背景在跑）。
 # 加抖動是因為多位代跑者的 token 會在相近的時間到期，一起醒來只會把限流撞得更死。
-_RETRY_BACKOFF = (1.5, 4.0, 9.0)
+_RETRY_BACKOFF = (1.5, 4.0)
+
+# 連續被 429 之後，**整個站台停手一段時間**。
+#
+# 2026-09-23 學到的：這支端點的節流是綁在「這台機器 + 這支端點」上的
+# —— curl、Python、Node 全部一樣，換 Anthropic 帳號也一樣。在那種狀態下重試
+# **只是把洞挖得更深**：加了退避重試之後，使用者每按一次「完成授權」就是四個
+# 請求而不是一個，而每一個都是失敗認證（限流器最該狠狠節流的那種樣態）。
+#
+# 所以撞牆之後就別再撞。冷卻期間直接拒絕，連打都不打 —— 那既救了下一個使用者，
+# 也讓這段節流有機會真的退掉。
+_COOLDOWN_AFTER = 2
+_COOLDOWN_SECONDS = 15 * 60
+_throttled_until = 0.0
+_consecutive_429 = 0
+
+
+def _cooldown_left() -> int:
+    return max(0, int(_throttled_until - time.monotonic()))
+
+
+def _note_429() -> None:
+    global _consecutive_429, _throttled_until
+    _consecutive_429 += 1
+    if _consecutive_429 >= _COOLDOWN_AFTER:
+        _throttled_until = time.monotonic() + _COOLDOWN_SECONDS
+
+
+def _note_ok() -> None:
+    global _consecutive_429, _throttled_until
+    _consecutive_429 = 0
+    _throttled_until = 0.0
+
+
+def _reset_for_tests() -> None:
+    _note_ok()
 
 
 class OAuthError(RuntimeError):
@@ -234,6 +270,12 @@ async def _post(
     reauthorize_on_invalid_grant: bool = False,
     retries: int = len(_RETRY_BACKOFF),
 ) -> dict:
+    if (left := _cooldown_left()) > 0:
+        raise OAuthError(
+            f"Anthropic 對這個流程限流了，站台先停手 {left // 60 + 1} 分鐘再試 —— "
+            "現在一直按只會讓它更久。那串授權碼還沒有被用掉"
+        )
+
     owned = client is None
     c = client or httpx.AsyncClient(timeout=_TIMEOUT)
     try:
@@ -262,6 +304,11 @@ async def _post(
         if owned:
             await c.aclose()
 
+    if resp.status_code == 429:
+        _note_429()
+    else:
+        _note_ok()
+
     if resp.status_code == 200:
         try:
             return resp.json()
@@ -272,9 +319,15 @@ async def _post(
         # 重試過了還是 429。**要講「那串碼還能用」** —— 429 是在伺服器處理之前
         # 就被擋下，授權碼沒有被消耗掉。不講的話他會去重走一次授權，
         # 而那是這整個流程最貴的一步（還會作廢他手上那組）。
+        left = _cooldown_left()
         raise OAuthError(
-            "Anthropic 對這個流程限流了。等一兩分鐘再按一次「完成授權」就好 —— "
-            "那串授權碼還沒有被用掉，不用重拿"
+            "Anthropic 對這個流程限流了。"
+            + (
+                f"站台先停手 {left // 60 + 1} 分鐘 —— 現在一直按只會讓它更久。"
+                if left
+                else "等一兩分鐘再按一次「完成授權」就好。"
+            )
+            + "那串授權碼還沒有被用掉，不用重拿"
         )
     if resp.status_code == 403 and "1010" in resp.text:
         # 這條要跟授權失敗分開講，否則使用者會一直重貼一個其實沒問題的碼。
