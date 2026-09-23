@@ -77,7 +77,10 @@
   重點是「全新」不是「tmpfs」。HOME 裡允許什麼是白名單，見 security.md 紅線 2
 - **org skill（pptx/xlsx/docx/pdf）需要暖機** —— 它們是背景同步的，而每個 job 都是
   全新 HOME、永遠是「第一次執行」，所以來不及。worker 啟動時暖一個 template 再複製。
-  同步只在「工作目錄是掛載進來的專案目錄」時才觸發（`-w /tmp` 不會）
+  同步只在「工作目錄是掛載進來的專案目錄」時才觸發（`-w /tmp` 不會）。
+  **2026-09-23 起這條只影響舊憑證檔模型**：清單上的 pptx/xlsx/docx/pdf 已改成
+  `worker/job-claude/skills/` 裡自己寫的版本，不靠暖機；託管模型的 token 本來就讀不到
+  org 同步的 skill（`worker/job-claude/README.md`）
 - **SQLAlchemy 的 enum 欄位要用 `_enum()`**，`String` 配 `Mapped[SomeEnum]` 不會轉型
 - **`NULL IN (...)` 在 SQL 裡永遠不為真** —— 自動派單的 job 會一筆都領不到且不報錯
 - **Observ 的身分端點用 `x-request-service-id`**，不是 `X-Service-Id`；送錯只會回 401

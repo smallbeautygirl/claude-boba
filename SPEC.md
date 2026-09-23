@@ -301,6 +301,11 @@ job 內容跑在出租者機器上，技術上出租者有能力看到。**不�
 > 真正會漂的只有 `anthropic-skills:*` 那 4 個，它們同步自代跑者的帳號
 > （`~/.claude/skills/synced/`），不在 repo 裡。
 
+> **2026-09-23 再修正**：那 4 個從清單上拿掉了。託管模型（`CLAUDE_CODE_OAUTH_TOKEN`）
+> 下它們整包讀不到，而 Anthropic 的授權條款不允許複製進 repo，所以 `job-claude/skills/`
+> 現在有自己寫的 `pptx` `xlsx` `docx` `pdf` 四個 —— 在容器裡、走 PR、釘版本。
+> 清單裡不再有會漂的來源；下面關於「唯一會漂的那 4 個」的推論保留作為當時的紀錄。
+
 **所以清單說謊的範圍比初判小，但位置比初判糟**：唯一會漂的那 4 個，
 正好是 BD/PM 唯一真正想要的能力（產出文件）。§9 只說了它們的**相依套件**
 預裝在 image 裡，`SKILL.md` 本身不是。
@@ -661,6 +666,7 @@ HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
 > 這個錯誤特別危險，因為訊息把人導向「去登入」，真正的原因是旗標。
 
 **文件類 skill 的相依套件預裝在 image 裡。** `pptx`、`xlsx`、`docx`、`pdf`
+（2026-09-23 起是 `job-claude/skills/` 裡自己寫的版本，用的是同一批套件）
 這些 org skill 在 Anthropic 自家沙箱是預裝的（skill 文件寫著 "preinstalled"），
 我們的容器沒有，而 egress 白名單只放行 `api.anthropic.com` —— 實測現象是
 `npm install pptxgenjs` 回 403，然後 Claude 退而求其次產 HTML 給使用者。

@@ -44,7 +44,7 @@ plugin 不會、也不該被載入。要讓大家共用某個 skill，就放進�
 > 兩個一起裝，清單上會出現兩個一樣的名字 —— 而指令清單是**被編輯過的推薦**
 > （`CONTEXT.md`），推薦裡有兩個同名項目，那份編輯就失效了。
 
-## `skills/pptx/` 是我們自己寫的，不是上游的
+## `skills/pptx/` `xlsx/` `docx/` `pdf/` 是我們自己寫的，不是上游的
 
 **為什麼不用 Anthropic 的 pptx skill**：它在託管模型下**讀不到**。`claude setup-token`
 拿到的 token 只有 `user:inference` 這個 scope，org 同步的 skill（`skills/synced/<org>_<user>/`）
@@ -66,8 +66,27 @@ plugin 不會、也不該被載入。要讓大家共用某個 skill，就放進�
 方法（解壓改 XML、複製投影片要註冊 relationship、`text_frame.text` 會吃掉格式）是
 公開的工程知識；受著作權保護的是文字與程式碼，那兩樣這裡沒有拿。
 
-xlsx / docx / pdf **還沒有**對應的 skill。清單上那三個指令目前指向不存在的東西，
-要嘛補寫、要嘛先拿掉 —— 不要讓人點了失望。
+`xlsx/`、`docx/`、`pdf/` 是 2026-09-23 照同一個模式補的，每一個都是「SKILL.md ＋ 一個
+`scripts/check.py`」：check.py 重開檔案、印出結構、抓出使用者一打開就會看到的錯 ——
+合計是寫死的數字、表頭被截掉、中文沒設東亞字型、範本的 `[公司名稱]` 沒換掉、PDF 的
+中文變黑方塊。三份腳本都在 `claude-boba-worker:2.1.278` image 裡用好／壞樣本跑過。
+
+寫的時候踩到、已經寫進 SKILL.md 的幾件事：
+
+- **openpyxl 不會算公式**，也沒有 Excel 在容器裡。所以 xlsx 的 QA 是結構性的：
+  範圍有沒有包到表頭、新函數有沒有 `_xlfn.` 前綴、合計列是不是公式。
+  load/save 一趟會**弄掉原檔的圖表與樞紐**，SKILL.md 要 Claude 事先講。
+- **python-docx 不開 `.dotx`**、不設東亞字型、不做頁碼與目錄。`docx/scripts/docx_helpers.py`
+  補這幾樣（改 content type、寫 `w:eastAsia`、插 field code、跨 run 換範本文字）。
+- **容器裡沒有任何 CJK 字型檔**。PDF 走 reportlab 內建的 CID 字型（`MSung-Light`，
+  不用字型檔、由閱讀器補字），SKILL.md 的表格有列。**pdfplumber 把 CID 字型的文字
+  抽成亂碼，pypdf 抽得對** —— check.py 因此用 pypdf 抽文字、只用 pdfplumber 看字型。
+- **沒有 OCR**（沒裝 tesseract）。掃描檔的頁面 check.py 會標成 0 字，SKILL.md 要 Claude
+  直說，不要猜內容。有 `pypdfium2`，所以 `pdf/scripts/render.py` 能把頁面轉 PNG，
+  Claude 用 Read 看 —— 水印、蓋章、轉向這類事終於有得看。
+
+清單（`hub/app/data/commands.json`）上的三項同日改指 `/xlsx` `/docx` `/pdf`。
+`anthropic-skills:*` 從此不在清單上。
 
 **版本釘死在 1.2.3，不追 main。** 理由同 Dockerfile 釘版本：上游更新會無聲改變
 每個 job 的行為，而這裡的內容是會指導 Claude 用 Bash 的 —— 要進來就要被看過。

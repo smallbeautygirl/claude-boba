@@ -117,7 +117,12 @@ async def report_config(client: httpx.AsyncClient) -> str:
     return resp.json()["name"]
 
 
-# org 層級的 skill（pptx / xlsx / docx / pdf …）由 Claude Code 在背景同步進 HOME。
+# org 層級的 skill（anthropic-skills:* …）由 Claude Code 在背景同步進 HOME。
+#
+# ⚠️ 2026-09-23：這段只對舊模型（掛 .credentials.json）有意義。託管模型的
+# CLAUDE_CODE_OAUTH_TOKEN 只有 user:inference scope，同步下來的 skill 整包讀不到；
+# 而清單上的 pptx / xlsx / docx / pdf 已改成 job-claude/skills/ 裡自己寫的版本，
+# 不依賴這裡的暖機（見 worker/job-claude/README.md）。
 # 問題是：那是背景預抓，第一次執行時來不及 —— 而每個 job 都是全新 HOME，
 # 所以每個 job 都是「第一次」，那些 skill 永遠用不到，還每次白抓 4.3MB。
 #
@@ -139,8 +144,8 @@ def _template_claude() -> Path:
 async def warm_template_home() -> bool:
     """跑一次拋棄式的 job 讓 org skill 同步下來，之後每個 job 重複使用。
 
-    成本是啟動時一次很便宜的 haiku 呼叫。不做的話，BD/PM 最主力的
-    「做簡報」「做表格」在每個 job 都會回「這個指令沒安裝」。
+    成本是啟動時一次很便宜的 haiku 呼叫。影響的只有 org 同步的 anthropic-skills:*；
+    清單上的文件類指令已經不靠它了（見上方 2026-09-23 那段）。
     """
     template = _template_claude()
     if any((template / sub).is_dir() for sub in _SYNCED_SUBDIRS):
@@ -166,7 +171,7 @@ async def warm_template_home() -> bool:
     print(
         "[worker] org skills 已就緒"
         if ok
-        else "[worker] org skills 暖機失敗，pptx/xlsx 這類指令在這台 worker 上會不可用",
+        else "[worker] org skills 暖機失敗；清單上的指令不受影響，只有 anthropic-skills:* 不可用",
         flush=True,
     )
     return ok
