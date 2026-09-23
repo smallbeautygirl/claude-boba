@@ -162,6 +162,8 @@ class LendingView(BaseModel):
     # 重新查身分時發現它跟另一列是**同一個 Claude 帳號**。只告知不合併 ——
     # 合併要搬 token，而這條路沒有新 token 可搬。
     same_as: str | None = None
+    # 剛才那次身分反查為什麼沒拿到東西。成功時是 None。
+    identity_note: str | None = None
 
 
 class AuthorizeStart(BaseModel):
@@ -222,6 +224,7 @@ def _lending_view(
     online: bool,
     merged_into: str | None = None,
     same_as: str | None = None,
+    identity_note: str | None = None,
 ) -> dict:
     """出借設定。**絕不包含 token**，連遮罩後的值都不行 ——
     只回 has_token 布林（security.md 紅線 2）。"""
@@ -229,6 +232,7 @@ def _lending_view(
     return {
         "merged_into": merged_into,
         "same_as": same_as,
+        "identity_note": identity_note,
         "has_token": any(a.usable for a in accounts),
         "budget_usd": str(s.job_budget_usd),
         "available_models": s.available_models or [],
@@ -358,7 +362,7 @@ async def submit_authorize_code(
     # 「查不到」與「還沒查」的差別。整條路不會讓授權失敗：他手上那組 token 是好的。
     merged_into: str | None = None
     if claude_profile.enabled():
-        profile = await claude_profile.fetch_profile(token)
+        profile = (await claude_profile.fetch_profile(token)).profile
         account.claude_identity_checked_at = datetime.now(UTC)
         if profile is not None:
             # 同一個 Claude 帳號他已經借出來過了。**不要退回去叫他重來** ——
@@ -505,14 +509,14 @@ async def refresh_identity(
     if not claude_profile.enabled():
         raise HTTPException(400, "站台把身分反查關掉了（CLAUDE_PROFILE_LOOKUP）")
 
-    profile = await claude_profile.fetch_profile(
+    looked = await claude_profile.fetch_profile(
         secrets_box.open_(account.oauth_token_enc)
     )
     account.claude_identity_checked_at = datetime.now(UTC)
-    if profile is not None:
-        account.claude_account_uuid = profile.account_uuid
-        account.claude_email = profile.email
-        account.claude_plan = profile.plan
+    if looked.profile is not None:
+        account.claude_account_uuid = looked.profile.account_uuid
+        account.claude_email = looked.profile.email
+        account.claude_plan = looked.profile.plan
     await session.commit()
     await session.refresh(row, ["accounts"])
 
@@ -531,6 +535,10 @@ async def refresh_identity(
         online=await host_online(session),
         merged_into=None,
         same_as=twin.name if twin else None,
+        # **查不到的時候，為什麼查不到才是重點。** 原本這個理由只寫進 log，
+        # 而這個專案從來沒有設定過 logging —— 那行字一次都沒有被輸出過，
+        # 使用者看到的只有一句「Anthropic 不給」。
+        identity_note=looked.reason,
     )
 
 

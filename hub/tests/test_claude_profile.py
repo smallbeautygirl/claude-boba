@@ -53,14 +53,15 @@ def test_reads_the_identity() -> None:
         return httpx.Response(200, json=OK)
 
     got = call("sk-ant-oat01-xxx", handler)
-    assert got == Profile(
+    assert got.profile == Profile(
         account_uuid="11111111-2222-3333-4444-555555555555",
         email="someone@example.com",
         plan="max",
     )
+    assert got.reason is None
 
 
-def test_scope_refused_is_a_result_not_a_crash() -> None:
+def test_scope_refused_says_so_in_words() -> None:
     """403 = setup-token 的 token 只有 user:inference。
 
     **這是預期中的一種結果。** 授權流程不能因此失敗 —— 他手上那組 token 是好的，
@@ -70,25 +71,37 @@ def test_scope_refused_is_a_result_not_a_crash() -> None:
     async def handler(_r):
         return httpx.Response(403, json={"error": {"message": "insufficient scope"}})
 
-    assert call("sk-ant-oat01-xxx", handler) is None
+    got = call("sk-ant-oat01-xxx", handler)
+    assert got.profile is None
+    # 403 幾乎一定是 scope，而**使用者要看得到這句話** ——
+    # 不然畫面上只剩「Anthropic 不給」，分不出是授權範圍還是對方掛了。
+    assert "授權範圍" in got.reason and "403" in got.reason
 
 
 @pytest.mark.parametrize("status", [401, 404, 429, 500])
-def test_every_other_status_is_also_just_none(status: int) -> None:
+def test_every_other_status_also_carries_a_reason(status: int) -> None:
     async def handler(_r):
         return httpx.Response(status, json={})
 
-    assert call("t", handler) is None
+    got = call("t", handler)
+    assert got.profile is None
+    # **每一條失敗路徑都要說得出原因。** 這是這個模組唯一的不變量：
+    # 拿不到身分是預期中的結果，而「為什麼拿不到」才是呼叫端要顯示的東西。
+    assert got.reason
 
 
-def test_network_failure_is_none() -> None:
+def test_network_failure_carries_a_reason() -> None:
     async def handler(_r):
         raise httpx.ConnectError("boom")
 
-    assert call("t", handler) is None
+    got = call("t", handler)
+    assert got.profile is None
+    # **每一條失敗路徑都要說得出原因。** 這是這個模組唯一的不變量：
+    # 拿不到身分是預期中的結果，而「為什麼拿不到」才是呼叫端要顯示的東西。
+    assert got.reason
 
 
-def test_a_200_with_the_wrong_shape_is_none() -> None:
+def test_a_200_with_the_wrong_shape_carries_a_reason() -> None:
     """形狀不對就當沒拿到。
 
     半個身分比沒有身分糟：uuid 是拿來當唯一鍵的，缺了它就不能去重，
@@ -98,7 +111,11 @@ def test_a_200_with_the_wrong_shape_is_none() -> None:
     async def handler(_r):
         return httpx.Response(200, json={"account": {"email": "x@y.z"}})
 
-    assert call("t", handler) is None
+    got = call("t", handler)
+    assert got.profile is None
+    # **每一條失敗路徑都要說得出原因。** 這是這個模組唯一的不變量：
+    # 拿不到身分是預期中的結果，而「為什麼拿不到」才是呼叫端要顯示的東西。
+    assert got.reason
 
 
 def test_unknown_plan_is_none_but_identity_still_counts() -> None:
@@ -113,7 +130,7 @@ def test_unknown_plan_is_none_but_identity_still_counts() -> None:
             },
         )
 
-    got = call("t", handler)
+    got = call("t", handler).profile
     assert got is not None and got.plan is None and got.email == "e@x"
 
 

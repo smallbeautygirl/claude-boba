@@ -168,6 +168,7 @@ function AccountRow({
   onReplace: (a: LendingAccount) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(account.name);
   const windows = Object.entries(account.windows);
@@ -191,6 +192,10 @@ function AccountRow({
       // 然後自己去猜哪一個才是真的。
       if (next.same_as) {
         setError(`這跟「${next.same_as}」是同一個 Claude 帳號 —— 留一個就好。`);
+      } else if (next.identity_note) {
+        // 查不到的時候**要講出是哪一種**。一句籠統的「Anthropic 不給」會讓人
+        // 以為是暫時的，然後一直按。
+        setNote(next.identity_note);
       }
       reload();
     } catch (e) {
@@ -347,7 +352,7 @@ function AccountRow({
       {account.has_token && !account.claude_email && (
         <p className="hint">
           {account.claude_identity_checked_at
-            ? "查過了，Anthropic 不給這組 token 的帳號資訊（多半是授權範圍不夠）。"
+            ? (note ?? "查過了，拿不到這組 token 的帳號資訊。")
             : "還不知道這是哪一個 Claude 帳號。"}{" "}
           <button type="button" className="small" onClick={refreshIdentity}>
             查一次

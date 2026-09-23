@@ -194,6 +194,11 @@ export interface LendingSettings {
   merged_into: string | null;
   /** 重新查身分時發現它跟這一列是同一個 Claude 帳號。只告知，不自動合併。 */
   same_as: string | null;
+  /** 剛才那次身分反查為什麼沒拿到東西（「這組 token 的授權範圍不含帳號資訊
+      （HTTP 403）」之類）。成功時是 null。**這句話要顯示給使用者看** ——
+      少了它，畫面上只剩一句「Anthropic 不給」，分不出是授權範圍、逾時，
+      還是對方掛了。 */
+  identity_note: string | null;
   /** 底下**任何一個**帳號可用就是 true。 */
   has_token: boolean;
   budget_usd: string;
