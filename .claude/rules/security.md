@@ -19,12 +19,21 @@ These rules are always active. Violations must be fixed before merging.
 
 出租者的 Anthropic 憑證是這整個系統裡最敏感的東西 —— 它被盜等於帳號被停權。
 
-**憑證有兩種，通道不同，不可互換：**
+**憑證有三種，通道不可互換：**
 
 | 憑證 | 怎麼進 job 容器 | 為什麼 |
 |---|---|---|
-| `.credentials.json`（`claude /login` 的 OAuth session） | **只以唯讀 volume 掛入** | 它是檔案，Claude Code 會就地讀它 |
+| `.credentials.json`（在自己機器上 `claude /login` 的成果） | **只以唯讀 volume 掛入** | 它是檔案，Claude Code 會就地讀它 |
 | 長期 OAuth token（`claude setup-token`，`sk-ant-oat01-…`，一年期） | **只以環境變數 `CLAUDE_CODE_OAUTH_TOKEN` 注入該 job 的容器** | 那是 Anthropic 官方為非互動場景設計的唯一通道 |
+| **站台自己跑 OAuth 拿到的 access token**（2026-09-23，SPEC §11 #13） | **同上：環境變數 `CLAUDE_CODE_OAUTH_TOKEN`** | 它跟上一列**格式完全相同**（`sk-ant-oat0…`），差別在 scope 與效期，不在通道 |
+
+> **2026-09-23 新增第三列。** 它不是一個新通道 —— 注入方式跟第二列逐字相同，
+> 實測也是用同一個環境變數跑過 job 的（§11 #13）。真正不同的是**站台手上多了
+> 一張 refresh token**，而那張的約束比 access token 更嚴，見下面那組。
+>
+> 為什麼要多這一列而不是把第二列改掉：`setup-token` 那條**還在服役**，現有的
+> 出借帳號全是那種。兩種會並存一段時間，而「這個帳號是哪一種憑證」會決定
+> 要不要在派單前 refresh —— 規則上把它們分開，程式裡才不會用一條路徑硬吃兩種。
 
 > **2026-09-22 修訂。** 這條原本寫「不寫進環境變數」，而長期 token 官方的用法
 > 就是環境變數 —— 規則與唯一可行的機制打架。`apiKeyHelper` 那條路已經驗過不通
@@ -33,6 +42,19 @@ These rules are always active. Violations must be fixed before merging.
 >
 > 這條的**用意**一直是「憑證不要散落到會被意外讀到的地方」，不是「環境變數這個
 > 機制有罪」。所以用意用下面的約束保住，機制放行。
+
+**refresh token 的額外約束（2026-09-23）：**
+
+- **絕不離開 Hub。** access token 會進 job 容器，**refresh token 不會** ——
+  它沒有任何理由出現在 worker、容器或領單回應裡。派單交出去的永遠是當下那張
+  access token，不是換票的能力
+- **它比 access token 更值錢。** access token 八小時就死；refresh token 能一直
+  換出新的 access token，而且每次 refresh 還會把自己的效期往後推（§11 #13 實測）。
+  **外洩的損失上限因此不是八小時，是「直到有人發現並撤銷」**
+- **所以撤銷是義務不是選項。** 代跑者按「不再出借」時要真的打 revoke
+  （`POST {TOKEN_URL}/revoke`），不能只刪掉我們手上那份 —— 那是舊模型留下的
+  漏洞（見 SPEC §11 #13）
+- 加密存放、絕不進 log、絕不回前端，與長期 token 同一組規則
 
 **長期 token 的額外約束，每一條都不可省：**
 
