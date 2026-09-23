@@ -18,6 +18,8 @@ const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const MAX_ATTACHMENTS_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_JOB_INPUT_BYTES = 100 * 1024 * 1024;
 const MAX_ATTACHMENTS = 20;
+// 貼進 prompt 的網址。容器打不開它們，送出前要講（見 Composer 裡那段註解）。
+const LINK = /https?:\/\/[^\s)]+/i;
 
 export interface Attachment {
   key: string;
@@ -191,6 +193,17 @@ export function Composer({
       )}
 
       {/* 錯誤貼著送出鍵。留在頁尾的話，按了送出失敗的人根本看不到它。 */}
+      {/* 容器的網路是白名單（security.md 紅線 3），只通得到 api.anthropic.com 與站台儲存 ——
+          任何貼進來的連結它都打不開，Claude 會回「我沒辦法開這個網址」然後結束，
+          job 照樣計費。2026-09-23 真的發生過：貼一個 claude.ai/artifact 連結要它做簡報，
+          US$0.10 換來一句「請把內容貼進來」。
+          只警告不阻擋：RD 把網址當參考文字貼進 prompt 是合理的。 */}
+      {LINK.test(value) && (
+        <p className="warn composer-error">
+          這個 job 跑在沒有網路的容器裡，<strong>貼進來的連結它打不開</strong>
+          （claude.ai、Google Docs、GitHub 都一樣）。把內容貼進來，或存成檔案用 + 附上。
+        </p>
+      )}
       {error && <p className="error composer-error">{error}</p>}
 
       <div className="composer-bar">
