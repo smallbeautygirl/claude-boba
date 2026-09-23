@@ -5,7 +5,8 @@
 
 Reopens the file and prints, per page, size / rotation / text length / fonts.
 Flags what the user would notice first: a page with no text at all (scan or
-blank), Chinese that came out as black boxes because the font has no CJK glyphs,
+blank), Chinese drawn with a font that cannot draw it (black boxes) or with a
+font that is not embedded at all (text layer fine, page blank in most readers),
 a form field still empty, a merged file whose pages jump between sizes.
 
 `--expect-text` makes "no text on page" a flag even when the whole file has no
@@ -24,6 +25,7 @@ import pdfplumber
 from pypdf import PdfReader
 
 CJK = re.compile(r"[぀-ヿ㐀-鿿]")
+CJK_FONT = "/usr/share/fonts/truetype/arphic/uming.ttc"
 BASE14 = ("Helvetica", "Times", "Courier", "Symbol", "Arial")
 # reportlab draws a glyph it does not have as ZapfDingbats "n" — a black square.
 MISSING_GLYPH = ("ZapfDingbats", "n")
@@ -35,6 +37,53 @@ PAGE_SIZES = {
     (420, 595): "A5",
 }
 UNTITLED = {"", "untitled", "anonymous"}
+
+
+def _unembedded_fonts(page) -> set[str]:
+    """BaseFont names used on this page whose glyphs are NOT inside the file.
+
+    This is the check that was missing on 2026-09-23. A PDF drawn with an Adobe
+    CID font (MSung-Light …) carries the Chinese in its text layer but **no
+    glyphs at all** — it expects the reader to own the Asian font pack. Every
+    other check passes: extract_text() returns the Chinese, copy-paste works,
+    the font name looks like a Chinese font. The page is simply blank.
+
+    A font is embedded iff its descriptor carries /FontFile, /FontFile2 or
+    /FontFile3. For Type0 (CID) fonts the descriptor lives one level down, on
+    the descendant font — looking only at the top level reports every CID font
+    as unembedded, including properly embedded ones.
+    """
+    out: set[str] = set()
+    try:
+        res = page.get("/Resources")
+        table = res.get_object().get("/Font") if res is not None else None
+        if table is None:
+            return out
+        for ref in table.get_object().values():
+            font = ref.get_object()
+            base = str(font.get("/BaseFont") or "").lstrip("/").split("+")[-1]
+            kids = font.get("/DescendantFonts")
+            targets = (
+                [d.get_object() for d in kids.get_object()]
+                if kids is not None
+                else [font]
+            )
+            embedded = any(
+                any(
+                    k in t.get("/FontDescriptor").get_object()
+                    for k in ("/FontFile", "/FontFile2", "/FontFile3")
+                )
+                for t in targets
+                if t.get("/FontDescriptor") is not None
+            )
+            if base and not embedded:
+                out.add(base)
+    except Exception as exc:  # noqa: BLE001 — a broken font table is not this check's job
+        # 不要讓這條檢查把整個 QA 弄倒：它是**附加**的一條規則，其餘的檢查
+        # （頁數、文字、表單）仍然有價值。但也不要沉默 —— 沉默的結果就是
+        # 這個 bug 當初的樣子：一份壞檔案配一句「clean」。
+        print(f"    (font embedding check skipped: {exc})")
+    return out
 
 
 def _size_name(w: float, h: float) -> str:
@@ -101,6 +150,8 @@ def main() -> int:
         fonts: Counter[str] = Counter()
         boxes = 0
         cjk_in_latin = 0
+        cjk_unembedded = 0
+        unembedded = _unembedded_fonts(page)
         if plumber is not None:
             for ch in plumber.pages[i - 1].chars:
                 font = str(ch.get("fontname", "?"))
@@ -109,6 +160,8 @@ def main() -> int:
                     boxes += 1
                 elif CJK.match(ch["text"]) and any(b in font for b in BASE14):
                     cjk_in_latin += 1
+                elif CJK.match(ch["text"]) and font.split("+")[-1] in unembedded:
+                    cjk_unembedded += 1
         total_chars += len(text)
         font_desc = ", ".join(
             f"{f.split('+')[-1]}×{c}" for f, c in fonts.most_common(3)
@@ -123,8 +176,19 @@ def main() -> int:
             empty_pages.append(i)
         if boxes or cjk_in_latin:
             print(
-                f"    FLAG  {boxes + cjk_in_latin} glyph(s) the font cannot draw (black boxes) — "
-                "for Chinese register UnicodeCIDFont('MSung-Light')"
+                f"    FLAG  {boxes + cjk_in_latin} glyph(s) the font cannot draw "
+                "(black boxes) — for Chinese use the embedded font, see below"
+            )
+            flags += 1
+        if cjk_unembedded:
+            # 這一條不講「可能有問題」：它是確定畫不出來，只是抽字看不出來。
+            print(
+                f"    FLAG  {cjk_unembedded} Chinese glyph(s) drawn with a "
+                "NOT-EMBEDDED font — the text is in the file but the page is "
+                "blank in most readers. The text layer and extract_text() look "
+                "perfect; only the pixels are missing.\n"
+                f"          Fix: pdfmetrics.registerFont(TTFont('UMing', '{CJK_FONT}')) "
+                "and draw with fontName='UMing'. Then render.py the page and look."
             )
             flags += 1
 

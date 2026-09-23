@@ -120,12 +120,13 @@ names. `check.py` lists which fields are still empty afterwards.
 from io import BytesIO
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))   # see §3 — Chinese
+from reportlab.pdfbase.ttfonts import TTFont
+pdfmetrics.registerFont(                                 # see §3 — Chinese
+    TTFont("UMing", "/usr/share/fonts/truetype/arphic/uming.ttc"))
 
 def overlay(w, h, text):
     buf = BytesIO(); c = canvas.Canvas(buf, pagesize=(w, h))
-    c.saveState(); c.setFont("MSung-Light", 48); c.setFillGray(0.5, 0.25)
+    c.saveState(); c.setFont("UMing", 48); c.setFillGray(0.5, 0.25)
     c.translate(w / 2, h / 2); c.rotate(35); c.drawCentredString(0, 0, text)
     c.restoreState(); c.save(); buf.seek(0)
     return PdfReader(buf).pages[0]
@@ -144,13 +145,13 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
-pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
-body = ParagraphStyle("body", fontName="MSung-Light", fontSize=11, leading=17, wordWrap="CJK")
+pdfmetrics.registerFont(TTFont("UMing", "/usr/share/fonts/truetype/arphic/uming.ttc"))
+body = ParagraphStyle("body", fontName="UMing", fontSize=11, leading=17, wordWrap="CJK")
 h1 = ParagraphStyle("h1", parent=body, fontSize=16, leading=22, spaceAfter=8)
 doc = SimpleDocTemplate("報告.pdf", pagesize=A4, title="Q3 回顧")
 story = [Paragraph("Q3 試玩期回顧", h1), Paragraph("本文件整理 …", body), Spacer(1, 8)]
 t = Table([["項目", "數量"], ["方案 A", "12"]], hAlign="LEFT")
-t.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), "MSung-Light"),
+t.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), "UMing"),
                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DDEBF7"))]))
 story.append(t); doc.build(story)
@@ -174,24 +175,42 @@ in your final message only if they asked you to invent one.
 
 ## 3. Chinese text in PDFs you create
 
-`reportlab`'s built-in fonts (Helvetica, Times) have **no CJK glyphs**; Chinese
-drawn with them comes out as blank or black boxes, and there are no CJK `.ttf`
-files in this container. Use the built-in CID fonts, which need no font file
-(the viewer supplies the glyphs):
-
-| Language | Font name |
-|---|---|
-| Traditional Chinese | `MSung-Light` |
-| Simplified Chinese | `STSong-Light` |
-| Japanese | `HeiseiMin-W3` |
+`reportlab`'s built-in fonts (Helvetica, Times) have **no CJK glyphs**. Register
+the Chinese font that is installed in this container, and **embed** it:
 
 ```python
-pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+CJK_FONT = "/usr/share/fonts/truetype/arphic/uming.ttc"
+pdfmetrics.registerFont(TTFont("UMing", CJK_FONT))     # then fontName="UMing"
 ```
 
-There is no bold variant: emphasise with size or colour. Paragraph styles need
+### Do not use `UnicodeCIDFont` ("MSung-Light", "STSong-Light", "HeiseiMin-W3")
+
+This file used to tell you to. **It produced PDFs with no visible Chinese at
+all** (2026-09-23): the CID fonts are *referenced*, not embedded — the file
+carries a font name and expects the reader to own the Adobe Asian font pack.
+Most readers do not.
+
+The failure is nasty because **every check you would normally run says it is
+fine**: the text layer is perfect, so `extract_text()` returns your Chinese, and
+copy-paste out of the viewer works. Only the pixels are missing. Measured: 0 ink
+pixels where the Chinese was, 2577 for the Latin line beside it.
+
+So: **embed, always.** If a font file is ever missing, say so — do not fall back
+to a CID font to make the script run.
+
+### The rest
+
+No bold variant: emphasise with size or colour. Paragraph styles need
 `wordWrap="CJK"` or Chinese never line-breaks (reportlab breaks on spaces).
-`check.py` flags CJK characters drawn with a Latin base font.
+
+`check.py` flags CJK drawn with a Latin base font **and CJK drawn with a
+non-embedded font** — the second rule is what would have caught the bug above.
+
+**For any created PDF with Chinese in it, render and look** (§0's `render.py`,
+then `Read` the PNG). `check.py` reads structure; only the rendered image
+answers "did the glyphs actually get drawn".
 
 ## 4. QA — required, every time
 

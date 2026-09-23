@@ -98,6 +98,11 @@
   2026-09-23 拿掉的，理由不是「設定比較整齊」—— 那是某個組織的內部位址與服務
   註冊編號，寫在程式裡等於這個 repo 一公開就連它們一起發布。沒設會在啟動時爆，
   那是刻意的（`main.py::_check_observ`，`tests/test_observ_is_required.py` 釘著）
+- **job image 裡的中文字型是必需品，不是裝飾。** 2026-09-23 之前容器裡一個字型檔
+  都沒有（`fonts-noto-cjk` 連坐在被註解掉的 LibreOffice 那段裡），pdf skill 只好
+  用 Adobe 的 CID 字型 —— 那種字型**引用而不內嵌**，做出來的 PDF 文字抽得出來、
+  頁面全白，而 `check.py` 還說它是乾淨的。現在裝的是 `fonts-arphic-uming`（+30MB）。
+  **不要換成 `fonts-noto-cjk`**：它是 PostScript outline，reportlab 拒絕內嵌
 - **改 schema 要跑 Alembic**，不要再用 `create_all` 或手動 `ALTER TABLE`。
   Hub 啟動時會檢查版本，落後就拒絕啟動
 - **新增背景迴圈時，`hub/tests/test_sweeper_is_wired.py` 要多守一條。** 這個 repo 已經

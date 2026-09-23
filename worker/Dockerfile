@@ -58,6 +58,24 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 #         libreoffice-impress libreoffice-calc libreoffice-writer fonts-noto-cjk \
 #    && rm -rf /var/lib/apt/lists/*
 
+# 中文字型。**自成一段，不要併回上面那個 LibreOffice 區塊。**
+#
+# 2026-09-23 補的，補的是一個連坐：`fonts-noto-cjk` 原本就寫在上面那段註解掉的
+# LibreOffice 指令裡，而那段被註解的理由是 LibreOffice 的 500MB —— 字型跟那個
+# 理由無關，卻跟著一起消失了。結果是容器裡**一個字型檔都沒有**
+# （`/usr/share/fonts` 這個目錄不存在），pdf skill 只好改用 Adobe 的 CID 字型
+# （`MSung-Light`），而那種字型是**引用、不是內嵌** —— 檔案裡只留一個名字，
+# 真正的字要靠閱讀器自己有亞洲字型包。沒有的話一個字都不畫：
+# 文字複製得出來、頁面上全白。實測 2026-09-23：中文區 0 個黑點、拉丁區 2577 個。
+#
+# ⚠️ **不要換成 `fonts-noto-cjk`。** 它是 `.ttc` 裡的 PostScript outline，
+# reportlab 直接拒絕內嵌（`TTFError: postscript outlines are not supported`）。
+# 要的是 TrueType outline 的中文字型，`fonts-arphic-uming` 是 Debian 上現成的那個。
+#
+# 代價 +30MB（1.47GB → 1.5GB），不是 LibreOffice 那個量級。
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-arphic-uming \
+ && rm -rf /var/lib/apt/lists/*
+
 # 讓 job 裡的 `node -e "require('pptxgenjs')"` 找得到全域套件。
 ENV NODE_PATH=/usr/local/lib/node_modules
 
