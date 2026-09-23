@@ -522,6 +522,7 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=STREAM_LINE_LIMIT,
     )
 
     state = _JobState(client, job_id)
@@ -720,6 +721,62 @@ async def _control_loop(state: _JobState) -> None:
             print(f"[worker] 控制回報失敗（將重試）：{exc!r}", flush=True)
 
 
+# stream-json 是一行一個事件，而一個事件可以很大：Claude `Read` 一份 HTML，整個
+# 檔案內容就塞在那一行的 tool_result 裡。asyncio 的 readline 預設上限是 64 KiB，
+# 超過就丟 ValueError('Separator is not found, and chunk exceed the limit') ——
+# 2026-09-23 一個 job 就這樣死在讀一份 300 KB 的 HTML 上，而且產出的 PDF 已經
+# 寫好了、只差上傳。64 MiB 是「不會再撞到」的數字，不是算出來的。
+STREAM_LINE_LIMIT = 64 * 1024 * 1024
+
+
+async def _kill_container(job_id: str) -> None:
+    """砍掉這個 job 的容器；沒有 docker 或容器已經不在都不算錯。"""
+    try:
+        killer = await asyncio.create_subprocess_exec(
+            "docker",
+            "kill",
+            f"boba-job-{job_id}",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await killer.wait()
+    except OSError:
+        pass
+
+
+async def _report_crash(
+    client: httpx.AsyncClient, job_id: str, exc: BaseException
+) -> None:
+    """worker 自己在 job 中途出錯時，把這個 job 收乾淨。
+
+    沒有這一段的話 job 會變成孤兒：容器可能還在跑、hub 上永遠「執行中」、
+    工作目錄（含 .home/ 裡的 transcript）留在磁碟上。三件事都要做，而且每一件
+    失敗都不能擋住下一件。
+
+    exc 的訊息會顯示在委託者的畫面上（hub 把 worker_error 歸為系統問題、
+    不顯示明細），這裡只是留給維護者看的。**不要把 job dict 放進來** ——
+    它進來之前 token 已經 pop 掉了，但沒必要冒這個險。
+    """
+    await _kill_container(job_id)
+    detail = f"{type(exc).__name__}: {exc}"[:2000]
+    try:
+        resp = await client.post(
+            f"/api/worker/jobs/{job_id}/result",
+            json={
+                "status": "failed",
+                "error_kind": "worker_error",
+                "error_detail": detail,
+                "lender_cli_version": LENDER_CLI_VERSION,
+                "transcript_uploaded": False,
+            },
+        )
+        resp.raise_for_status()
+    except (httpx.HTTPError, OSError) as post_exc:
+        # hub 也不在的話，這個 job 只能等管理頁的 stuck-jobs 撿起來。
+        print(f"[worker] job {job_id} 的失敗回報不出去：{post_exc!r}", flush=True)
+    shutil.rmtree((settings.job_root / job_id).resolve(), ignore_errors=True)
+
+
 async def _pump(stream: asyncio.StreamReader | None, state: _JobState) -> None:
     if stream is None:
         return
@@ -782,7 +839,9 @@ async def main() -> None:
                 await run_job(client, job)
             except (httpx.HTTPError, OSError, ValueError) as exc:
                 # 單一 job 出事不該讓 worker 整個停掉 —— 出租者不會盯著它。
+                # 但也不能只印一行就走：hub 還在等 result，容器可能還在跑。
                 print(f"[worker] job 失敗：{exc!r}", flush=True)
+                await _report_crash(client, job["job_id"], exc)
             else:
                 print(f"[worker] job {job['job_id']} 結束", flush=True)
 
