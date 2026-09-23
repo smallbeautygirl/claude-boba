@@ -158,7 +158,7 @@ export function JobDetail() {
 
       <JobOutcome job={job} onChange={setJob} />
       {done && <Artifacts jobId={job.id} />}
-      {job.can_follow_up && <FollowUp jobId={job.id} />}
+      {job.can_follow_up && <FollowUp jobId={job.id} selfRun={job.self_run} />}
       {done && <WishNudge />}
     </div>
   );
@@ -376,7 +376,7 @@ function UserPrompt({
 
 // 接著問：帶著上一個 job 的 transcript 真的 resume，不是把對話重貼一次
 // （跨機器 resume 已於 SPEC §11 spike #2 驗證可行）。
-function FollowUp({ jobId }: { jobId: string }) {
+function FollowUp({ jobId, selfRun }: { jobId: string; selfRun: boolean }) {
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -403,10 +403,17 @@ function FollowUp({ jobId }: { jobId: string }) {
           （hub/app/routers/jobs.py）—— transcript 在 MinIO 上，任何 worker 都
           拿得到，原本那台離線時不該讓使用者卡住。提交頁的勾選點名了一個人，
           而這一輪可能是別人。 */}
-      <p className="hint">
-        ⚠️ 這一輪會派給當下有空的代跑者，<strong>不一定是剛才那一位</strong>
-        —— 你接下來寫的內容與附件，那個人技術上一樣看得到。
-      </p>
+      {/* 上一輪是自己跑的：這一輪也派給自己（hub 的 dispatch.follow_up_target）。
+          「自動」不派給本人，所以自己跑自己的鏈若掉回自動，站台上只有他自己時
+          會排隊到作廢 —— 2026-09-23 正式站第一條續問鏈就這樣沒了。 */}
+      {selfRun ? (
+        <p className="hint">這一輪還是派給你自己，不計債。</p>
+      ) : (
+        <p className="hint">
+          ⚠️ 這一輪會派給當下有空的代跑者，<strong>不一定是剛才那一位</strong>
+          —— 你接下來寫的內容與附件，那個人技術上一樣看得到。
+        </p>
+      )}
       <Composer
         value={text}
         onChange={setText}

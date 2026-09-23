@@ -56,3 +56,25 @@ def only_me(settings: list[Lending], *, model: str, borrower_id: uuid.UUID) -> b
         s.owner_user_id == borrower_id and model in s.runnable_models()
         for s in settings
     )
+
+
+def follow_up_target(
+    *,
+    parent_lending_owner: uuid.UUID | None,
+    parent_lending_id: uuid.UUID | None,
+    borrower_id: uuid.UUID,
+) -> uuid.UUID | None:
+    """接著問這一輪要不要指名代跑者。
+
+    預設不指名（None = 自動）：transcript 在 MinIO 上，任何出借帳號都拿得到，
+    指名會讓那個人剛好停接單時，使用者卡在一個他看不懂的等待上。
+
+    **唯一的例外是「上一輪是你自己跑的」。** 自動自 2026-09-23 起不派給本人
+    （auto_candidates），所以自己跑自己的鏈若掉回自動，站台上只有他自己時就是
+    一條死路 —— 而且是安靜的那種：提交時不擋，排隊 15 分鐘後「目前沒人有空」
+    （2026-09-23 正式站第一條續問鏈就這樣作廢）。他第一輪就是明確選了自己、
+    不計債，這一輪沿用是他預期的事，不是替他做決定。
+    """
+    if parent_lending_owner is not None and parent_lending_owner == borrower_id:
+        return parent_lending_id
+    return None

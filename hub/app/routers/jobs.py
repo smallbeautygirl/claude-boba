@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 from .. import events, notify, storage
 from ..auth import require_user
 from ..db import get_session
-from ..dispatch import auto_candidates, only_me
+from ..dispatch import auto_candidates, follow_up_target, only_me
 from ..enums import JobStatus, SourceType
 from ..failures import classify
 from ..models import Artifact, Job, JobEvent, LendingAccount, LendingSetting, User
@@ -438,6 +438,16 @@ async def follow_up(
             body.attachment_keys, user, storage.stat(parent.transcript_key) or 0
         )
 
+    # 續問預設不指名代跑者，**除了上一輪是自己跑的**（規則與理由在
+    # dispatch.follow_up_target）。然後跟第一次提交走同一道死路檢查 ——
+    # 續問以前沒走這條，所以死路是排隊 15 分鐘後才以「沒人有空」的樣子出現。
+    requested = follow_up_target(
+        parent_lending_owner=parent.lending.owner_user_id if parent.lending else None,
+        parent_lending_id=parent.lending_id,
+        borrower_id=user.id,
+    )
+    await _check_model(parent.model, requested, user.id, session)
+
     job = Job(
         borrower_id=user.id,
         prompt=body.prompt,
@@ -446,9 +456,7 @@ async def follow_up(
         parent_job_id=parent.id,
         transcript_key=parent.transcript_key,
         attachment_keys=body.attachment_keys,
-        # 續問不指名代跑者 —— transcript 在 MinIO 上，任何出借帳號都拿得到。
-        # 指名會讓那個人剛好停接單時，使用者卡在一個他看不懂的等待上。
-        requested_lending_id=None,
+        requested_lending_id=requested,
         status=JobStatus.QUEUED,
     )
     session.add(job)
