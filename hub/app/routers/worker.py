@@ -151,7 +151,7 @@ async def poll(
 
 
 async def _pick_account(
-    setting: LendingSetting, session: AsyncSession
+    setting: LendingSetting, session: AsyncSession, model: str | None = None
 ) -> LendingAccount | None:
     """在一位代跑者的出借帳號之間挑一個（SPEC §4.12）。
 
@@ -167,6 +167,10 @@ async def _pick_account(
     usable = []
     for a in setting.accounts:
         if not a.usable:
+            continue
+        # 這個帳號被回過「這個 model 要買 usage credits」。派給它只會再失敗一次，
+        # 而代跑者已經被通知過了（`_absorb_credits_required`）。
+        if model is not None and model in (a.credits_required_models or []):
             continue
         running = await session.scalar(
             select(func.count())
@@ -246,16 +250,14 @@ async def _claim(
             # 自動派單只考慮跑得動這個 model 的人。舊版是「有人跑不動就整批擋在
             # 提交時」—— 那是因為當時 Hub 挑不了，只能事先保證每個人都行。
             candidates = [
-                s
-                for s in settings_by_id.values()
-                if job.model in (s.available_models or [])
+                s for s in settings_by_id.values() if job.model in s.runnable_models()
             ]
         for setting in candidates:
             if setting is None:
                 continue
             if job.model not in (setting.available_models or []):
                 continue
-            account = await _pick_account(setting, session)
+            account = await _pick_account(setting, session, job.model)
             if account is None:
                 continue
             job.status = JobStatus.CLAIMED
@@ -374,6 +376,7 @@ async def push_result(
         )
 
     await _absorb_auth_failure(job, body, session)
+    await _absorb_credits_required(job, body, session)
     debt = await _maybe_create_debt(job, session)
 
     await session.commit()
@@ -416,6 +419,36 @@ async def _absorb_auth_failure(
             setting.accepting = False
         lender = await session.get(User, setting.owner_user_id)
         notify.account_needs_reauth(lender, account.name)
+
+
+async def _absorb_credits_required(
+    job: Job, body: JobResult, session: AsyncSession
+) -> None:
+    """這個帳號跑這個 model 要買 usage credits —— 記下來，以後不再派給它。
+
+    **站台問不出來，只能跑失敗一次才知道**（2026-09-23 spike，理由寫在
+    `models.LendingAccount.credits_required_models`）。所以這裡是唯一的資料來源，
+    少了它，同一個帳號會用一模一樣的方式失敗到天荒地老 —— 跟授權失效那條同樣的
+    沉默失敗，只是換一個原因。
+
+    只擋**那一個帳號的那一個 model**：他可能有另一個帳號有 credits，而 Sonnet
+    與 Haiku 完全不受影響。也不動「接單中」—— 他仍然接得了其他 model 的 job。
+    """
+    if body.error_kind != "credits_required" or job.account_id is None:
+        return
+    account = await session.get(LendingAccount, job.account_id)
+    if account is None:
+        return
+    blocked = list(account.credits_required_models or [])
+    if job.model in blocked:
+        return
+    # JSONB 的 list 就地 append 不會被 SQLAlchemy 偵測到，要整個換掉。
+    account.credits_required_models = [*blocked, job.model]
+
+    setting = await session.get(LendingSetting, account.lending_id)
+    if setting is not None:
+        lender = await session.get(User, setting.owner_user_id)
+        notify.account_needs_credits(lender, account.name, job.model)
 
 
 async def _maybe_create_debt(job: Job, session: AsyncSession) -> Debt | None:

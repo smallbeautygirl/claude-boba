@@ -106,6 +106,8 @@ class AccountView(BaseModel):
     has_token: bool
     needs_reauth: bool
     approver_note: str | None
+    # 這個帳號被回過「要買 usage credits」的 model。空的是常態。
+    credits_required_models: list[str]
     # 本人看得到精確百分比與重置時間；委託者只有紅綠燈（web-spec §3 / §8）。
     windows: dict
     quota_updated_at: datetime | None
@@ -124,6 +126,8 @@ class LendingView(BaseModel):
     has_token: bool
     budget_usd: str
     available_models: list[str]
+    # 他勾的之中真的派得動的那些（= available_models ∩ 帳號跑得動的）。
+    runnable_models: list[str]
     allow_full_network: bool
     accepting: bool
     online: bool
@@ -165,6 +169,9 @@ def _account_view(a: LendingAccount) -> dict:
         "has_token": a.oauth_token_enc is not None,
         "needs_reauth": a.needs_reauth,
         "approver_note": a.approver_note,
+        # 這個帳號被回過「要買 usage credits」的 model。**只有本人看得到** ——
+        # 它掛在 _account_view 上，而帳號本身對委託者不可見（ADR-0001）。
+        "credits_required_models": a.credits_required_models or [],
         "windows": a.rate_limit_windows or {},
         "quota_updated_at": a.quota_updated_at,
         "quota_fresh": _fresh_utilization(a) is not None,
@@ -179,6 +186,9 @@ def _lending_view(s: LendingSetting, *, online: bool) -> dict:
         "has_token": any(a.usable for a in accounts),
         "budget_usd": str(s.job_budget_usd),
         "available_models": s.available_models or [],
+        # 他勾的之中真的派得動的那些。兩個都回：chips 要顯示他勾了什麼，
+        # 而「有沒有帳號跑得動」是另一件事，混成一個欄位就講不清楚了。
+        "runnable_models": s.runnable_models(),
         "allow_full_network": s.allow_full_network,
         "accepting": s.accepting,
         "online": online,
@@ -223,6 +233,12 @@ async def update_lending(
         row.available_models = body.available_models
     if body.allow_full_network is not None:
         row.allow_full_network = body.allow_full_network
+    # 存一次條件就把 credits 標記清掉，讓它再試一次。
+    #
+    # 他會回到這一頁動條件，多半正是因為他去買了 credits 或改了主意 ——
+    # 而標記錯了的代價只是下一個 job 再失敗一次（0.5 秒、US$0、不計債），
+    # 標記卡著不動的代價卻是他以為開著的 Fable 永遠派不到他。
+    _clear_credits_marks(row)
     if body.accepting is not None:
         if body.accepting and not any(a.usable for a in row.accounts):
             raise HTTPException(400, "還沒授權，接單了也跑不動")
@@ -367,6 +383,34 @@ async def remove_account(
     return _lending_view(row, online=await host_online(session))
 
 
+def _clear_credits_marks(row: LendingSetting) -> None:
+    for a in row.accounts:
+        if a.credits_required_models:
+            a.credits_required_models = []
+
+
+@router.post("/accounts/{account_id}/credits-retry", response_model=LendingView)
+async def retry_credits(
+    account_id: uuid.UUID,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """「我買了 credits，再試一次」。
+
+    清掉這個帳號的 credits 標記就好 —— 站台驗不了他到底買了沒
+    （2026-09-23 spike：唯一驗得出來的方法就是真的跑一趟，而跑得動的那一趟
+    要花他 US$0.22）。所以這顆按鈕不驗證，它只是把那個帳號放回派單池；
+    真的沒買的話，下一個 job 會再失敗一次，然後標記自己回來。
+    """
+    row = await _my_lending(user, session)
+    account = next((a for a in row.accounts if a.id == account_id), None)
+    if account is None:
+        raise HTTPException(404, "找不到這個出借帳號")
+    account.credits_required_models = []
+    await session.commit()
+    return _lending_view(row, online=await host_online(session))
+
+
 @router.get("/lenders")
 async def list_lenders(
     user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
@@ -409,7 +453,10 @@ async def list_lenders(
             "online": online and s.accepting and bool(usable),
             "accepting": s.accepting,
             "allow_full_network": s.allow_full_network,
-            "available_models": s.available_models or [],
+            # 委託者看到的是**派得動的**那些，不是他勾了什麼 —— 下拉裡出現一個
+            # 送出去必定失敗的 model，比不出現更糟。帳號為什麼跑不動不外流：
+            # 帳號對委託者不可見（ADR-0001）。
+            "available_models": s.runnable_models(),
             "claude_code_version": next(
                 (a.claude_code_version for a in usable if a.claude_code_version), None
             ),

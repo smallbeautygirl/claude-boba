@@ -127,6 +127,28 @@ class LendingSetting(Base):
         back_populates="lending", order_by="LendingAccount.created_at"
     )
 
+    def runnable_models(self) -> list[str]:
+        """他開放的 model 之中，現在真的派得動的那些。
+
+        「他願意」和「他能」是兩件事，分開存（`available_models` 在人身上、
+        `credits_required_models` 在帳號上），**對外一律用兩者的交集** ——
+        勾著 Fable 但沒有一個帳號有 credits 的人，不該出現在提交頁的 Fable 選項裡。
+
+        沒有任何可用帳號時原樣回傳他勾的：那種情況的阻礙是授權，不是 credits，
+        把它講成 credits 會把人導去買一個不需要買的東西。
+
+        ⚠️ 會碰 `self.accounts`，呼叫前要先 selectinload，否則在 async session
+        裡會炸。
+        """
+        usable = [a for a in self.accounts if a.usable]
+        if not usable:
+            return list(self.available_models or [])
+        return [
+            m
+            for m in (self.available_models or [])
+            if any(m not in (a.credits_required_models or []) for a in usable)
+        ]
+
 
 class LendingAccount(Base):
     """被借出去的那個 Claude 帳號本身。一位代跑者可以有多個。
@@ -182,6 +204,22 @@ class LendingAccount(Base):
 
     # 上次被派到 job 的時間。額度資料還沒有或已過期時，派單用它退回輪流。
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 這個帳號被 Anthropic 回過「這個 model 要買 usage credits」的 model 清單。
+    #
+    # **這是量到的，不是問到的**（2026-09-23 spike）：站台問不出一個帳號跑不跑得動
+    # Fable。`GET /v1/models`、`count_tokens`、`POST /v1/messages` 三個端點，對有
+    # Fable 和沒有 Fable 的帳號回的東西**逐字相同**（都是 429 `rate_limit_error`
+    # ／`"Error"`）—— 而且有 Fable 的帳號在額度滿的時候也回 429，額度滿正是這個
+    # 站台存在的理由。唯一講得出差別的是 CLI 的 `api_error_code: credits_required`，
+    # 但那要真的跑一趟：跑不動是 US$0，跑得動要 US$0.22（CLI 自己的 system prompt）。
+    #
+    # 所以不預先探測，改成**跑失敗一次就記下來**：那一次 0.5 秒、US$0、不計債，
+    # 而且答案永遠是最新的。預先探測是花代跑者的錢，去問一個會自己變的餘額。
+    #
+    # 屬於帳號不屬於條件：「願不願意開 Fable」是人的態度（`available_models`），
+    # 「這個帳號現在有沒有 credits」是帳號的物理性質，跟額度同一類（SPEC §4.12）。
+    credits_required_models: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

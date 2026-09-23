@@ -17,7 +17,11 @@ const QUOTA: Record<LenderRow["quota"], string> = {
   unknown: "⚪️",
 };
 
-// 選單顯示的是「站台白名單 ∩ 該代跑者白名單」（web-spec §3）。
+// 選單顯示的是「站台白名單 ∩ 該代跑者現在派得動的」（web-spec §3）。
+//
+// ⚠️ `LenderRow.available_models` 回的是後端的 `runnable_models()`，不是他勾了
+// 什麼 —— 勾著 Fable 但每個帳號都要買 usage credits 的人，不該讓 Fable 出現在
+// 這個下拉裡。他勾了什麼只有他自己在出借頁看得到（ADR-0001：帳號對委託者不可見）。
 // 寫死一份清單的話，挑了只開 Haiku 的人仍然選得到 Sonnet，要等 job 送出去才失敗 ——
 // 而失敗不計債（SPEC §5），那個帳號的額度就白燒了。
 //

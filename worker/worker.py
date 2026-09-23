@@ -666,7 +666,17 @@ def _result_payload(
             str(result.get(k) or "") for k in ("subtype", "terminal_reason", "result")
         ).lower()
 
-        if _looks_like_auth_failure(reason):
+        # 「這個 model 要買 usage credits」。**看 api_error_code，不看訊息字串** ——
+        # 那句話是給人看的，會改；而這個碼是 CLI 給程式看的欄位。
+        #
+        # HTTP 狀態是 429，跟額度滿一模一樣（2026-09-23 spike 實測：raw API 對
+        # 有 Fable 與沒有 Fable 的帳號都只回 `rate_limit_error`／`"Error"`）。
+        # 分得出來的只有這個碼，所以它是這條路唯一的證據。
+        if result.get("api_error_code") == "credits_required":
+            # Hub 收到會把那個出借帳號對這個 model 標記起來（routers/worker.py），
+            # 之後不再把這個 model 的 job 派給它。
+            status, kind = "failed", "credits_required"
+        elif _looks_like_auth_failure(reason):
             # 代跑者的授權失效了。這跟委託者做了什麼完全無關，
             # 而且**每一個派給這個帳號的 job 都會這樣死**，所以要講得出來 ——
             # Hub 收到這個 kind 會把那個出借帳號停掉（routers/worker.py）。

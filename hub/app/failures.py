@@ -94,8 +94,34 @@ _AUTH_FAILURE = Failure(
 )
 
 
+# 代跑者的帳號要買 usage credits 才跑得動這個 model（2026-09-23）。
+#
+# **不沿用「原樣顯示 Claude 的訊息」那一條。** Claude 那句話是
+# 「manage usage credits at claude.ai/settings/usage」—— 它假設看訊息的人就是
+# 帳號持有人，但這裡看畫面的是委託者，要買 credits 的是代跑者。原樣顯示會把
+# 委託者導到他自己的帳單頁，去買一個對這個 job 完全沒有用的東西。
+#
+# 這跟 CLAUDE.md 記的「超出預算，換 Haiku 再試」是同一類的錯：訊息本身沒說謊，
+# 但它指向的下一步是錯的，而那比只說「失敗了」更糟。
+def _credits_required(lender: str | None, model: str | None) -> Failure:
+    who = lender or "代跑者"
+    what = f"{model} " if model else ""
+    return Failure(
+        FailureKind.SYSTEM,
+        f"{who} 的帳號要買 usage credits 才跑得動 {what}job",
+        f"不是你的問題，也不計債，這個 job 也沒有花到錢。{who} 的帳號已經不會再"
+        f"接這個 model 的 job —— 換個人、換成 Sonnet，或等他買了 credits 再送。",
+        show_detail=False,
+    )
+
+
 def classify(
-    status: JobStatus, error_kind: str | None, error_detail: str | None
+    status: JobStatus,
+    error_kind: str | None,
+    error_detail: str | None,
+    *,
+    lender: str | None = None,
+    model: str | None = None,
 ) -> Failure | None:
     """成功的 job 回 None。"""
     if not status.is_terminal or status is JobStatus.SUCCEEDED:
@@ -110,6 +136,10 @@ def classify(
     # （「換成 Haiku 再送一次」）比只說「失敗了」更糟。
     if error_kind == "auth_failed" or "oauth access token is invalid" in blob:
         return _AUTH_FAILURE
+
+    # 排在 _BY_STATUS 前面的理由同上一條：原因比狀態可信。
+    if error_kind == "credits_required":
+        return _credits_required(lender, model)
 
     if fixed := _BY_STATUS.get(status):
         return fixed

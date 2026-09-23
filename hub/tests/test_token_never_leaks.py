@@ -39,6 +39,7 @@ def _account(*, has_token: bool) -> SimpleNamespace:
         oauth_token_enc=secrets_box.seal(FAKE_TOKEN) if has_token else None,
         approver_note=None,
         needs_reauth=False,
+        credits_required_models=[],
         usable=has_token,
         rate_limit_windows={"five_hour": {"utilization": 0.34}},
         quota_updated_at=datetime.now(UTC),
@@ -51,6 +52,9 @@ def _setting(*, has_token: bool) -> SimpleNamespace:
     return SimpleNamespace(
         job_budget_usd="5.0000",
         available_models=["sonnet", "haiku"],
+        # 真的那個是 LendingSetting.runnable_models()（勾的 ∩ 帳號跑得動的）。
+        # 這個檔案測的是「token 不外流」，不是派單規則，所以假一個就好。
+        runnable_models=lambda: ["sonnet", "haiku"],
         allow_full_network=False,
         accepting=True,
         accounts=[_account(has_token=has_token)],

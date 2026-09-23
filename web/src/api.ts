@@ -117,6 +117,9 @@ export interface LenderRow {
   online: boolean;
   accepting: boolean;
   allow_full_network: boolean;
+  /** 這個人現在**派得動**的 model，不是他勾了什麼 —— 下拉裡出現一個送出去
+      必定失敗的 model，比不出現更糟。為什麼跑不動不外流：帳號對委託者不可見
+      （ADR-0001）。 */
   available_models: string[];
   claude_code_version: string | null;
   /** 這個人的**池子**現在有多滿 —— 取他最充裕的那個帳號，不是平均。
@@ -142,6 +145,11 @@ export interface LendingAccount {
   /** token 失效（到期／被撤銷／帳號被收回）。**只有這個帳號停接單，
       其他照跑** —— job 不受影響，另一個帳號會接。 */
   needs_reauth: boolean;
+  /** 這個帳號被 Anthropic 回過「這個 model 要買 usage credits」的 model。
+      **量到的，不是問到的**（2026-09-23 spike）：站台問不出一個帳號跑不跑得動
+      Fable，三個 API 端點對有跟沒有的帳號回的東西逐字相同。所以這份清單是
+      job 真的失敗過一次才有的 —— 那一次 0.5 秒、US$0、不計債。 */
+  credits_required_models: string[];
   /** 「這是誰的額度／誰批准的」。公司帳號要填（SPEC §4.12）。 */
   approver_note: string | null;
   /** `rate_limit_event` 的整包 unifiedWindows。key 是窗名（five_hour、
@@ -162,6 +170,10 @@ export interface LendingSettings {
   has_token: boolean;
   budget_usd: string;
   available_models: string[];
+  /** 他勾的之中真的派得動的那些（= available_models ∩ 帳號跑得動的）。
+      chips 顯示 available_models（他勾了什麼），這個用來說明
+      「勾了但現在沒有帳號跑得動」。 */
+  runnable_models: string[];
   allow_full_network: boolean;
   accepting: boolean;
   /** 領單主機在不在。託管模型下 job 全跑在同一台機器上 ——
@@ -585,6 +597,15 @@ export const api = {
   removeAccount: (id: string) =>
     fetch(`${HUB}/api/workers/accounts/${id}`, {
       method: "DELETE",
+      headers: authed(),
+    }).then(json<LendingSettings>),
+
+  /** 「我買了 credits，再試一次」。站台驗不了他到底買了沒 —— 唯一驗得出來的
+      方法就是真的跑一趟，而跑得動的那一趟要花他 US$0.22。所以這隻只是把那個
+      帳號放回派單池；真的沒買，下一個 job 會再失敗一次，標記自己回來。 */
+  retryCredits: (id: string) =>
+    fetch(`${HUB}/api/workers/accounts/${id}/credits-retry`, {
+      method: "POST",
       headers: authed(),
     }).then(json<LendingSettings>),
 

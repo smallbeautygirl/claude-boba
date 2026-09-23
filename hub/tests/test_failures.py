@@ -115,3 +115,60 @@ def test_auth_failure_recognised_from_the_message_alone() -> None:
         "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
     )
     assert f is not None and f.kind is FailureKind.SYSTEM
+
+
+# --- credits_required（2026-09-23）------------------------------------------
+#
+# Claude 自己那句話是「manage usage credits at claude.ai/settings/usage」。
+# 它假設看訊息的人就是帳號持有人 —— 但這裡看畫面的是委託者，要買 credits 的是
+# 代跑者。原樣傳回去會把委託者導去他自己的帳單頁，買一個對這個 job 毫無用處的
+# 東西。這跟「超出預算，換 Haiku 再試」是同一類的錯：訊息沒說謊，但下一步是錯的。
+
+_CREDITS_DETAIL = (
+    "Fable 5.1 requires usage credits. Switch to another model, or manage "
+    "usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
+    "to continue."
+)
+
+
+def test_credits_required_names_the_lender_not_the_borrower() -> None:
+    f = classify(
+        JobStatus.FAILED,
+        "credits_required",
+        _CREDITS_DETAIL,
+        lender="Vivian",
+        model="fable",
+    )
+    assert f is not None
+    assert "Vivian" in f.title
+    assert "fable" in f.title
+
+
+def test_credits_required_never_shows_claudes_own_link() -> None:
+    """那個連結指向**委託者自己的**帳單頁，而他買了也沒用。"""
+    f = classify(
+        JobStatus.FAILED,
+        "credits_required",
+        _CREDITS_DETAIL,
+        lender="Vivian",
+        model="fable",
+    )
+    assert f is not None
+    assert f.show_detail is False
+    assert "claude.ai/settings/usage" not in f"{f.title}{f.hint}"
+
+
+def test_credits_required_is_not_the_borrowers_problem() -> None:
+    """跟授權失效同一類：他修不了，所以不能給他「再試一次」這種建議。"""
+    f = classify(JobStatus.FAILED, "credits_required", _CREDITS_DETAIL, lender="Vivian")
+    assert f is not None
+    assert f.kind is FailureKind.SYSTEM
+    assert f.hint and "不計債" in f.hint
+
+
+def test_credits_required_works_without_a_lender_name() -> None:
+    """job 還沒派出去就失敗的話沒有名字可點 —— 不能因此炸掉或印出 None。"""
+    f = classify(JobStatus.FAILED, "credits_required", _CREDITS_DETAIL)
+    assert f is not None
+    assert "None" not in f.title
+    assert "代跑者" in f.title

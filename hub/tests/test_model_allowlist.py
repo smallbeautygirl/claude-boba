@@ -26,12 +26,25 @@ from app.routers.jobs import _check_model
 from fastapi import HTTPException
 
 
-def _lender(*models: str, lid: uuid.UUID | None = None) -> SimpleNamespace:
-    """一位可接單的代跑者（出借設定）。model 白名單屬於人，不屬於帳號。"""
+def _lender(
+    *models: str,
+    lid: uuid.UUID | None = None,
+    blocked: tuple[str, ...] = (),
+) -> SimpleNamespace:
+    """一位可接單的代跑者（出借設定）。
+
+    **「他願意」和「他能」是兩件事**（2026-09-23）：`available_models` 是他勾的，
+    屬於人；帳號有沒有 usage credits 屬於帳號。`_check_model` 看的是兩者的交集，
+    也就是 `runnable_models()` —— 這裡照真的那個算一次，不要只回 available_models，
+    否則這組測試會對「勾了但跑不動」完全沒有感覺。
+
+    `blocked` = 他每一個帳號都被回過「要買 usage credits」的 model。
+    """
     return SimpleNamespace(
         id=lid or uuid.uuid4(),
         available_models=list(models),
         accepting=True,
+        runnable_models=lambda: [m for m in models if m not in blocked],
     )
 
 
@@ -109,6 +122,23 @@ def test_fable_refused_when_nobody_opened_it() -> None:
 
 def test_fable_passes_when_one_lender_opened_it() -> None:
     check("fable", lenders=[_lender("sonnet", "haiku"), _lender("sonnet", "fable")])
+
+
+def test_opened_fable_but_no_account_has_credits_is_refused() -> None:
+    """勾了 Fable ≠ 跑得動 Fable。
+
+    帳號被回過 `credits_required` 之後就不該再算數 —— 派給他只會再失敗一次，
+    而委託者看到的是一個「送出去才發現沒用」的下拉選項。
+    """
+    with pytest.raises(HTTPException) as e:
+        check("fable", lenders=[_lender("sonnet", "fable", blocked=("fable",))])
+    assert e.value.status_code == 400
+    assert "fable" in e.value.detail
+
+
+def test_other_models_still_pass_when_only_fable_is_blocked() -> None:
+    """credits 標記只擋那一個 model —— Sonnet 與 Haiku 完全不受影響。"""
+    check("sonnet", lenders=[_lender("sonnet", "fable", blocked=("fable",))])
 
 
 # --- 指定代跑者 -----------------------------------------------------------

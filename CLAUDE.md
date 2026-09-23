@@ -94,6 +94,12 @@
   而願望還在，牆上一排破圖且沒人知道為什麼（SPEC §8）
 - **改 schema 要跑 Alembic**，不要再用 `create_all` 或手動 `ALTER TABLE`。
   Hub 啟動時會檢查版本，落後就拒絕啟動
+- **不要加「這個帳號跑不跑得動某個 model」的預先探測。** 2026-09-23 逐一量過，
+  API 問不出來：`GET /v1/models`、`count_tokens`、`POST /v1/messages` 對有 Fable
+  與沒有 Fable 的帳號回的東西**逐字相同**，而且有 Fable 的帳號在額度滿時同樣回
+  429 —— 把 429 讀成「沒權限」會誤傷最該用這個站台的人。唯一的訊號是 CLI 的
+  `api_error_code: credits_required`，而那要真的跑一趟（跑得動的那趟 US$0.22）。
+  做法是失敗一次就記在 `LendingAccount.credits_required_models`。見 SPEC §9 spike #11
 
 ## 規則
 

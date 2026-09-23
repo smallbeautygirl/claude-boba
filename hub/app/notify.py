@@ -172,6 +172,33 @@ def account_needs_reauth(lender: Any, account_name: str) -> None:
     )
 
 
+def account_needs_credits(lender: Any, account_name: str, model: str) -> None:
+    """某個出借帳號被回「這個 model 要買 usage credits」，通知它的主人。
+
+    **跟 `account_needs_reauth` 同一個理由：沒有這個通知，他不會知道。** 站台只是
+    安靜地不再把這個 model 的 job 派給那個帳號，其他照跑，所以不會有東西壞給他看。
+    而他自己以為 Fable 是開著的。
+
+    不帶 job 內容，只講帳號與 model —— 這是帳號的狀態，跟哪一個 job 無關。
+    """
+    text = (
+        f"你的出借帳號「{account_name}」跑 {model} 需要 usage credits，"
+        f"所以站台先不把 {model} 的 job 派給它了（其他 model 照常）。\n\n"
+        "那個 job 沒有花到你的額度，也沒有讓對方欠債。"
+        "買了 credits 之後，到「我來代跑」按一下〔再試一次〕就會恢復。\n\n"
+        f"[去看看]({settings.web_base_url.rstrip('/')}/worker)"
+    )
+    if lender is not None and lender.teams_webhook_url:
+        _fire(lender.teams_webhook_url, _card("出借帳號需要 usage credits", text, _BAD))
+        return
+    if not settings.teams_channel_webhook or lender is None:
+        return
+    _fire(
+        settings.teams_channel_webhook,
+        _mention_card(lender.email, lender.display_name, "{@} " + text),
+    )
+
+
 def job_stopped(borrower, lender_name: str, job_id: object, note: str | None) -> None:
     """出租者中止了 job。
 

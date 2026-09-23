@@ -654,7 +654,38 @@ HOME="$clean_home" claude -p "$task" [--resume "$transcript"] \
 > - **提交頁沒人開就不列 Fable**，旁邊一行字說去找誰（web-spec §3）。空池子的退路是預設
 >   model，不是整份白名單：Fable 的規則是「有人開才有」，退路不該比正常狀態寬。
 > - **帳號能不能跑 Fable 是帳號的物理性質**，跟額度同一類，記在帳號上；「願不願意開」
->   仍記在人身上。對外用兩者的交集。這一條等 OAuth token 對沒權限 model 的回應實測完再做。
+>   仍記在人身上。對外用兩者的交集（`LendingSetting.runnable_models()`）。
+>
+> **spike #11（2026-09-23）：站台問不出一個帳號跑不跑得動 Fable。** 拿兩個真的帳號
+> （一個 team/max 有 Fable、一個 pro 沒有）逐一打過：
+>
+> | 端點 | 沒有 Fable | 有 Fable | 分得出來 |
+> |---|---|---|---|
+> | `GET /v1/models` | 清單含 `claude-fable-5-1` | 同左 | ✗ 那是全站清單，不是帳號的 |
+> | `POST /v1/messages/count_tokens` | 200 | 200 | ✗ 只驗 model 存不存在（亂編的回 404） |
+> | `POST /v1/messages` | 429 `rate_limit_error` ／ `"Error"` | **同左** | ✗ |
+> | CLI `claude --model fable` | `api_error_code: credits_required` | 跑完 | ✓ |
+>
+> 第三列是關鍵：**有 Fable 的帳號在額度滿的時候也回 429**，而額度滿正是這個站台
+> 存在的理由。所以 429 永遠不能讀成「沒有權限」—— 照那樣做，最該用這個站台的人
+> 會剛好被判成不能開 Fable。加 `claude-code` beta header、換 user-agent 都試過，
+> raw API 就是只回那一句 `"Error"`。
+>
+> **所以不預先探測，改成跑失敗一次就記下來**（`LendingAccount.credits_required_models`）：
+>
+> - 預先探測要花代跑者的錢：跑不動是 US$0，**跑得動要 US$0.22**（CLI 自己的 system
+>   prompt 就 10.8K tokens）。`--max-budget-usd 0.01` 只降到 US$0.16，中止發生在
+>   呼叫之後。而 Q2 原本想的是「每次存條件都重驗」，那是每次存檔燒掉他四分之一杯手搖。
+> - 它問的還是一個**會自己變的餘額**（訊息是 "requires usage credits"，不是
+>   「你的方案沒有」），所以存起來的值兩個方向都會過期。
+> - 而失敗很便宜：0.5 秒、US$0、不計債。第一個 Fable job 失敗一次，之後站台就不再
+>   把那個 model 派給那個帳號，並通知代跑者。
+> - 恢復是他自己按的：出借頁上常駐標記 + 一顆〔我買了 credits，再試一次〕，
+>   存出借條件也會清掉。站台不驗證他到底買了沒 —— 驗證的唯一方法就是再花 US$0.22。
+> - **失敗訊息不原樣傳回去。** Claude 那句話是「manage usage credits at
+>   claude.ai/settings/usage」，它假設看訊息的人就是帳號持有人；但看畫面的是委託者，
+>   要買的是代跑者。原樣顯示會把他導去自己的帳單頁買一個沒用的東西 —— 跟
+>   「超出預算，換 Haiku 再試」同一類的錯。
 
 **隔離手段是乾淨的 HOME，不是 `--bare`。** 容器的 `$HOME/.claude/` 裡**只有**唯讀掛入的
 `.credentials.json`，沒有 `settings.json`、`plugins/`、`skills/` 或 MCP 設定，所以出租者的

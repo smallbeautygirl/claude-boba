@@ -145,6 +145,16 @@ function AccountRow({
     }
   }
 
+  async function retryCredits() {
+    setError(null);
+    try {
+      await api.retryCredits(account.id);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "改不了，請重新整理再試");
+    }
+  }
+
   return (
     <li className="account">
       <div className="account-head">
@@ -158,6 +168,23 @@ function AccountRow({
           </span>
         )}
       </div>
+
+      {/* credits 標記常駐，不做「跳一次就消失」的提示：這是帳號的狀態，跟它的
+          額度燈一樣。只提示一次的話，一個月後他自己也想不起來為什麼 Fable 的
+          job 都跑在另一個帳號上。
+
+          文案不寫「這個帳號不能跑 Fable」—— 它能，只是要買 credits，而那是他
+          按幾下就能改變的事。寫成能力會讓人以為要換帳號。 */}
+      {account.credits_required_models.length > 0 && (
+        <p className="warn">
+          這個帳號跑 {account.credits_required_models.join("、")} 需要 usage
+          credits，所以站台先不把這些 model 的 job 派給它（其他 model 照常）。
+          買好之後按這裡：{" "}
+          <button type="button" className="small" onClick={retryCredits}>
+            我買了 credits，再試一次
+          </button>
+        </p>
+      )}
 
       {/* 百分比與重置倒數**只給本人**。知道「他一小時後就滿血」會直接變成
           「那我現在多送幾個」—— 這條跟 web-spec §3 不顯示百分比同一個理由。 */}
@@ -482,6 +509,20 @@ function Conditions({
       {models.length === 0 && (
         <p className="warn">至少要留一個 —— 一個都沒有的話沒有人派得動你。</p>
       )}
+      {/* 「他勾了」和「他派得動」是兩件事，對外用的是交集。勾著卻沒有一個帳號
+          跑得動的話，他會以為 Fable 是開著的，而委託者的下拉裡根本沒有它 ——
+          兩邊都不知道發生了什麼。這一行就是把那個落差講出來。
+
+          用 settings（存起來的）而不是 models（畫面上勾的）：剛勾還沒存的那一刻
+          後端還不知道，這時講「沒有帳號跑得動」會是錯的。 */}
+      {settings.available_models
+        .filter((m) => !settings.runnable_models.includes(m))
+        .map((m) => (
+          <p key={m} className="warn">
+            你開了 {m}，但現在沒有帳號跑得動它 —— {m} 的 job 不會派給你。
+            原因在上面那個帳號的說明裡。
+          </p>
+        ))}
       {/* 定性、不估分鐘數：反推出來的分鐘數是假精確，而且會隨 model 版本變。
           他該知道的是「撞到就中止、不計債、燒的是自己的額度」—— 那是 Fable 對
           代跑者真正的代價，不是價目表。上限本身不加欄位也不設門檻（SPEC §4.12：

@@ -98,7 +98,15 @@ def _detail(job: Job, user: User | None = None) -> JobDetail:
         borrower_cli_version=job.borrower_cli_version,
         debt_label=debt,
         failure=f.as_dict()
-        if (f := classify(job.status, job.error_kind, job.error_detail))
+        if (
+            f := classify(
+                job.status,
+                job.error_kind,
+                job.error_detail,
+                lender=job.lending.owner.display_name if job.lending else None,
+                model=job.model,
+            )
+        )
         else None,
         can_stop=bool(user and _can_stop(job, user)),
         # 下載連結只發給看得到這一頁的人 —— _get_job 已經擋過（委託者本人與代跑者），
@@ -245,7 +253,13 @@ async def _check_model(
             400, f"這個站台只跑 {'、'.join(SITE_MODELS)}，不支援 {model}"
         )
 
-    stmt = select(LendingSetting).where(LendingSetting.accepting.is_(True))
+    # selectinload 是必要的：runnable_models() 會碰 accounts，在 async session 裡
+    # 沒有預先載入就會炸（lazy load 觸發同步 IO）。
+    stmt = (
+        select(LendingSetting)
+        .where(LendingSetting.accepting.is_(True))
+        .options(selectinload(LendingSetting.accounts))
+    )
     if requested_lending_id is not None:
         stmt = stmt.where(LendingSetting.id == requested_lending_id)
     pool = list(await session.scalars(stmt))
@@ -265,7 +279,10 @@ async def _check_model(
             )
         return
 
-    if not any(model in (s.available_models or []) for s in pool):
+    # 用 runnable_models 而不是 available_models：勾著 Fable 但每個帳號都被回過
+    # 「要買 usage credits」的人，派給他只會再失敗一次。「他願意」和「他能」
+    # 是兩件事，對外一律用交集（models.LendingSetting.runnable_models）。
+    if not any(model in s.runnable_models() for s in pool):
         raise HTTPException(
             400,
             f"你指定的那位代跑者沒有開放 {model}"
