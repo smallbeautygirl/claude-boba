@@ -293,6 +293,15 @@ button.small:hover:not(:disabled) { background: var(--accent-soft); border-color
 /* 帳號名字點下去就能改。做成 button 而不是可點的 <strong>：可及性上這**是**
    一個動作，鍵盤要走得到、讀螢幕要念得出來。外觀刻意維持純文字，那支筆才是
    「這裡可以點」的提示。 */
+/* 已停用的出借帳號，收在一個 <details> 裡。摺起來時只是一行灰字 ——
+   它存在的理由是「東西還在，只是不擋路」，所以不要把它做得顯眼。 */
+.retired > summary {
+  cursor: pointer; color: var(--muted); padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.retired > summary:hover { color: var(--ink); }
+.retired .account { opacity: 0.75; }
+
 .rename-open {
   background: none; border: 0; padding: 0; cursor: pointer;
   color: var(--ink); font: inherit;

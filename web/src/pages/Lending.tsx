@@ -47,39 +47,59 @@ function Accounts({
   const [adding, setAdding] = useState(false);
   const [replacing, setReplacing] = useState<LendingAccount | null>(null);
 
+  // 「已停用」＝ 按過「不再出借」而且跑過 job 的那些：token 撤掉了，紀錄留著。
+  // `needs_reauth` 不算 —— 那是壞掉了需要他處理，不是他決定不借了，收起來會害他
+  // 看不到自己少了一個能跑的帳號。
+  const live = settings.accounts.filter((a) => a.has_token);
+  const retired = settings.accounts.filter((a) => !a.has_token);
+
+  const renderAccount = (a: LendingAccount) => (
+    <Fragment key={a.id}>
+      <AccountRow account={a} reload={reload} onReplace={setReplacing} />
+      {/* 表單就地展開在**被按的那一列底下**。原本它渲染在整份清單的最後，
+          所以按第一列的「重新授權」時，表單跳到畫面外的底部 —— 使用者
+          看到的是「按了沒反應」（2026-09-22 回報）。
+
+          帳號多起來之後這個距離只會更遠，而「哪一列」正是這個動作最需要
+          講清楚的事：按錯列會作廢掉另一個帳號的 token。 */}
+      {replacing?.id === a.id && (
+        <li className="account authorizing">
+          <Authorize
+            account={a}
+            onDone={() => {
+              setReplacing(null);
+              reload();
+            }}
+            onCancel={() => setReplacing(null)}
+          />
+        </li>
+      )}
+    </Fragment>
+  );
+
   return (
     <>
       <h2>你的出借帳號</h2>
-      <ul className="accounts">
-        {/* 已停用的排到最後。它們不能真的刪掉（跑過的 job 要看得出是誰跑的），
-            但它們也不該跟還在服役的那些混在一起 —— 2026-09-23 的實際情況是
-            四張卡片裡三張已經停用，而畫面上完全看不出差別。 */}
-        {[...settings.accounts]
-          .sort((x, y) => Number(y.has_token) - Number(x.has_token))
-          .map((a) => (
-          <Fragment key={a.id}>
-            <AccountRow account={a} reload={reload} onReplace={setReplacing} />
-            {/* 表單就地展開在**被按的那一列底下**。原本它渲染在整份清單的最後，
-                所以按第一列的「重新授權」時，表單跳到畫面外的底部 —— 使用者
-                看到的是「按了沒反應」（2026-09-22 回報）。
+      <ul className="accounts">{live.map(renderAccount)}</ul>
+      {live.length === 0 && (
+        <p className="hint">目前沒有能接單的帳號 —— 下面授權一個。</p>
+      )}
 
-                帳號多起來之後這個距離只會更遠，而「哪一列」正是這個動作最需要
-                講清楚的事：按錯列會作廢掉另一個帳號的 token。 */}
-            {replacing?.id === a.id && (
-              <li className="account authorizing">
-                <Authorize
-                  account={a}
-                  onDone={() => {
-                    setReplacing(null);
-                    reload();
-                  }}
-                  onCancel={() => setReplacing(null)}
-                />
-              </li>
-            )}
-          </Fragment>
-        ))}
-      </ul>
+      {/* 已停用的收起來。**不硬刪**：刪了那些 job 就講不出燒的是哪一個帳號
+          （ADR-0001 要那個來回答「上個月公司帳號跑了幾個」「被停權時是誰批准的」）。
+          人情債不受影響，那是掛在人身上的。
+
+          但它們也不該佔著版面 —— 2026-09-23 的實際情況是四張卡片裡三張已經停用，
+          而使用者以為「不再出借」那顆鈕沒有作用。
+
+          用 <details> 而不是自己做開合：它自己記得開關狀態、鍵盤走得到、
+          讀螢幕念得出來，而我們一行 state 都不用管。 */}
+      {retired.length > 0 && (
+        <details className="retired">
+          <summary>已停用（{retired.length}）</summary>
+          <ul className="accounts">{retired.map(renderAccount)}</ul>
+        </details>
+      )}
 
       {adding ? (
         <Authorize
