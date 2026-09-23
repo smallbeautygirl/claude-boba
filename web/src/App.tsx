@@ -8,6 +8,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
+import { About } from "./pages/About";
 import { Admin } from "./pages/Admin";
 import { JobDetail } from "./pages/JobDetail";
 import { Leaderboard } from "./pages/Leaderboard";
@@ -40,6 +41,7 @@ const TITLES: Record<string, string> = {
   "/leaderboard": "排行榜",
   "/wishes": "許願板",
   "/admin": "管理",
+  "/about": "這是什麼",
 };
 
 function useDocumentTitle() {
@@ -93,7 +95,18 @@ function Shell() {
   useDocumentTitle();
 
   if (loading) return <div className="card">載入中…</div>;
-  if (!me) return <Login />;
+  // 介紹頁是八個畫面裡唯一一個在登入牆**外**的（web-spec §13）：它最可能的抵達
+  // 方式是同事把連結貼在群組裡，而那個人還沒登入。
+  //
+  // 其餘路徑照舊渲染登入表單，**但網址留在原地** —— 登入完就落在他本來要去的
+  // 那一頁。「換你了」的按鈕指向 /worker 就是靠這個。
+  if (!me)
+    return (
+      <Routes>
+        <Route path="/about" element={<About />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
 
   return (
     <>
@@ -158,6 +171,7 @@ function Shell() {
         <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/wishes" element={<Wishes />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/about" element={<About />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

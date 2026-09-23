@@ -1,6 +1,7 @@
 // 用 Observ（公司帳號）登入。Hub 不儲存密碼，只轉交一次換 token。
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 
 export function Login() {
@@ -26,7 +27,14 @@ export function Login() {
   return (
     <form className="card narrow" onSubmit={submit}>
       <h1>claude-boba 🧋</h1>
-      <p className="lede">用你的 Observ 帳號登入。</p>
+      {/* 介紹連結放在 lede 旁邊，**不要**搬到底部那句「密碼只會轉交給 Observ」
+          附近 —— 那句話要被當真，旁邊不能站著別的東西（web-spec §10 的註記、
+          §9 對許願板貼圖提示的同一條理由）。
+          §10 禁止的是跟登入無關、只為了有趣的裝飾；這個連結回答的是
+          「我為什麼要登入」。 */}
+      <p className="lede">
+        用你的 Observ 帳號登入。 <Link to="/about">這是什麼？</Link>
+      </p>
       <label>
         Email
         <input

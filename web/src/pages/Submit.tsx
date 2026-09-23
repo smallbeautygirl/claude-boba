@@ -4,8 +4,9 @@
 // 不做精靈式多步驟 —— 拆成三頁只是增加三次點擊（web-spec §3）。
 
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, DEFAULT_MODELS, SITE_MODELS, type LenderRow } from "../api";
+import { useAuth } from "../auth";
 import { Composer, fmtSize } from "../Composer";
 
 // 額度只給紅綠燈，不給百分比：精確數字會讓人盤算「他還有 66%，再送一個沒差」，
@@ -388,6 +389,8 @@ export function Submit() {
       <h1>丟一個 job 出去 🧋</h1>
       <p className="lede">額度用完了？找還有額度的同事幫你跑。跑完請他喝一杯就好。</p>
 
+      <FirstTime />
+
       {/* 順序：說明 → job 參數 → 同意 → 輸入列。
           會擋住送出、或決定這個 job 花多少錢的東西，全部排在送出鍵**上面** ——
           送出鍵現在在輸入列裡，參數放它下面的話，使用者會按到一顆不會動的鍵
@@ -648,5 +651,24 @@ export function Submit() {
 
 
     </div>
+  );
+}
+
+// 一個 job 都沒跑過的人，在 lede 底下多看到兩行 —— 跑過第一個之後**永久消失**。
+//
+// 這是「還是想讓大家知道這個站在做什麼」的實際兌現方式（web-spec §13）：
+// 被動的連結抵達率接近零，而那正是 §10 當初否決獨立說明頁的理由。介紹仍然長在
+// 提交頁上（§10 成立），想看完整版的人才點進去。
+//
+// **這段不能長大。** 它一長大就會開始重複 §3 底下那些文案，然後有人會想「不如
+// 全搬去介紹頁」—— 那就真的推翻 §10 了。
+function FirstTime() {
+  const { me } = useAuth();
+  if (!me || me.has_run_a_job) return null;
+  return (
+    <p className="hint first-time">
+      🧋 第一次來？這裡不收錢 —— 同事用他的 Claude 額度幫你跑完，你欠他一杯飲料，
+      記在帳本上。 <Link to="/about">這是什麼？</Link>
+    </p>
   );
 }

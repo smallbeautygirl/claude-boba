@@ -8,8 +8,10 @@
 
 import { useState } from "react";
 import { api, type JobDetail as Job } from "./api";
+import { useAuth } from "./auth";
 import "./JobOutcome.css";
 import { usd } from "./money";
+import { YourTurn } from "./YourTurn";
 
 export function JobOutcome({ job, onChange }: { job: Job; onChange: (j: Job) => void }) {
   return (
@@ -17,8 +19,22 @@ export function JobOutcome({ job, onChange }: { job: Job; onChange: (j: Job) => 
       {job.can_stop && <StopPanel job={job} onChange={onChange} />}
       {job.status === "succeeded" ? <Success job={job} /> : job.failure && <Failed job={job} />}
       <VersionNote job={job} />
+      <Recruit job={job} />
     </>
   );
+}
+
+// 「換你了」（web-spec §13）。**只在他剛欠了一杯的時候** —— 成功、而且不是自己
+// 跑自己。招募的時機不是「他還不懂」，是他剛受惠：這時整件事怎麼運作他已經知道，
+// 不需要先被說服。
+//
+// 失敗的那趟刻意不放：失敗不計債，沒有人欠誰，而且他正在看一則錯誤訊息 ——
+// 那個當下擺一個邀請只會讀成沒讀空氣。
+function Recruit({ job }: { job: Job }) {
+  const { me } = useAuth();
+  if (!me || me.is_lender) return null;
+  if (job.status !== "succeeded" || job.self_run) return null;
+  return <YourTurn tone="after-job" />;
 }
 
 function Success({ job }: { job: Job }) {

@@ -18,9 +18,19 @@ import uuid
 import pytest
 from app.auth import require_user
 from app.config import Settings, settings
+from app.db import engine
 from app.main import app
 from app.models import User
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _fresh_pool():
+    # `/me` 現在會查兩個畫面旗標（has_run_a_job / is_lender），所以這個檔碰得到
+    # 資料庫了。每個 TestClient 跑在自己的事件迴圈上，而連線池會留著上一個迴圈的
+    # 連線 —— 不倒掉的話第二個測試會拿到「Event loop is closed」。
+    # 單獨跑會過、整檔跑會炸，就是這個（test_admin.py 同一條）。
+    engine.sync_engine.pool.dispose()
 
 
 @pytest.fixture
