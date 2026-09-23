@@ -153,13 +153,64 @@ def test_cloudflare_is_not_reported_as_an_auth_failure() -> None:
     assert "稍後" in msg
 
 
-def test_rate_limited_says_wait() -> None:
+def test_rate_limited_retries_then_gives_up(monkeypatch) -> None:
+    """429 會重試。**這是站台該替使用者吃下來的錯** —— 他手上拿著一串會過期的
+    一次性碼，而「稍後再試」對他來說是去重走一次授權。
+
+    退避時間 monkeypatch 掉：睡 15 秒的測試等於沒有測試（會被跳過或被砍掉）。
+    """
+    seen = 0
+
     def handler(_r):
+        nonlocal seen
+        seen += 1
         return httpx.Response(429, json={"error": {"type": "rate_limit_error"}})
 
+    monkeypatch.setattr(oauth, "_RETRY_BACKOFF", (0.0, 0.0))
     with pytest.raises(oauth.OAuthError) as e:
-        asyncio.run(oauth.exchange(oauth.begin(), "c", client=_client(handler)))
-    assert "稍後" in str(e.value)
+        asyncio.run(
+            oauth.exchange(oauth.begin(), "c", client=_client(handler), retries=2)
+        )
+    assert seen == 3  # 第一次 + 兩次重試
+    msg = str(e.value)
+    # **要講「那串碼還能用」**：429 是在伺服器處理之前就被擋下，授權碼沒有被
+    # 消耗掉。不講的話他會去重走一次授權，而那會作廢他手上那組。
+    assert "不用重拿" in msg
+
+
+def test_a_429_that_clears_on_retry_succeeds(monkeypatch) -> None:
+    """重試不只是為了講好聽的話 —— 它真的要能救回那一次。"""
+    calls = 0
+
+    def handler(_r):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, json={"error": {"type": "rate_limit_error"}})
+        return httpx.Response(200, json=TOKENS)
+
+    monkeypatch.setattr(oauth, "_RETRY_BACKOFF", (0.0,))
+    got = asyncio.run(
+        oauth.exchange(oauth.begin(), "c", client=_client(handler), retries=1)
+    )
+    assert got.email == "someone@example.com" and calls == 2
+
+
+def test_other_errors_are_not_retried(monkeypatch) -> None:
+    """重試一個確定會失敗的請求，只是讓人多等好幾秒。"""
+    calls = 0
+
+    def handler(_r):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+    monkeypatch.setattr(oauth, "_RETRY_BACKOFF", (0.0, 0.0))
+    with pytest.raises(oauth.OAuthError):
+        asyncio.run(
+            oauth.exchange(oauth.begin(), "c", client=_client(handler), retries=2)
+        )
+    assert calls == 1
 
 
 # ── refresh ──────────────────────────────────────────────────────

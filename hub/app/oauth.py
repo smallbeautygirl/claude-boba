@@ -28,9 +28,11 @@ Anthropic 改了不會通知我們，所以測試把它們釘住。
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
+import random
 import secrets
 import urllib.parse as up
 from dataclasses import dataclass, field
@@ -60,6 +62,13 @@ SCOPES = (
 )
 
 _TIMEOUT = 30.0
+
+# 429 的重試。**這是站台該替使用者吃下來的錯**：他手上拿著一串會過期的一次性碼，
+# 而「稍後再試」對他來說是去重走一次授權 —— 那正是這個流程最貴的一步。
+#
+# 交換授權碼時退避得短（人在畫面前等），refresh 時可以長一點（背景在跑）。
+# 加抖動是因為多位代跑者的 token 會在相近的時間到期，一起醒來只會把限流撞得更死。
+_RETRY_BACKOFF = (1.5, 4.0, 9.0)
 
 
 class OAuthError(RuntimeError):
@@ -126,7 +135,11 @@ def begin() -> Start:
 
 
 async def exchange(
-    start: Start, code: str, *, client: httpx.AsyncClient | None = None
+    start: Start,
+    code: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    retries: int | None = None,
 ) -> Tokens:
     """把授權碼換成 token。
 
@@ -143,12 +156,20 @@ async def exchange(
         "code_verifier": start.verifier,
         "state": tail or start.state,
     }
-    data = await _post(payload, client, on_invalid_grant="這串授權碼不被接受")
+    data = await _post(
+        payload,
+        client,
+        on_invalid_grant="這串授權碼不被接受",
+        **({} if retries is None else {"retries": retries}),
+    )
     return _tokens(data, fallback_refresh=None)
 
 
 async def refresh(
-    refresh_token: str, *, client: httpx.AsyncClient | None = None
+    refresh_token: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    retries: int | None = None,
 ) -> Tokens:
     """用 refresh token 換一張新的 access token。
 
@@ -162,7 +183,12 @@ async def refresh(
         "client_id": CLIENT_ID,
         "scope": " ".join(SCOPES),
     }
-    data = await _post(payload, client, reauthorize_on_invalid_grant=True)
+    data = await _post(
+        payload,
+        client,
+        reauthorize_on_invalid_grant=True,
+        **({} if retries is None else {"retries": retries}),
+    )
     return _tokens(data, fallback_refresh=refresh_token)
 
 
@@ -206,21 +232,32 @@ async def _post(
     *,
     on_invalid_grant: str = "",
     reauthorize_on_invalid_grant: bool = False,
+    retries: int = len(_RETRY_BACKOFF),
 ) -> dict:
     owned = client is None
     c = client or httpx.AsyncClient(timeout=_TIMEOUT)
     try:
-        resp = await c.post(
-            TOKEN_BASE + TOKEN_PATH,
-            content=json.dumps(payload),
-            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
-        )
-    except httpx.HTTPError as exc:
-        # **不是 ReauthorizeNeeded。** 連不上跟憑證死掉是兩件事，而把前者講成
-        # 後者，會叫人去重跑一次授權並作廢他還能用的憑證。
-        raise OAuthError(
-            f"連不到 Anthropic（{type(exc).__name__}），等一下再試"
-        ) from exc
+        for attempt in range(retries + 1):
+            try:
+                resp = await c.post(
+                    TOKEN_BASE + TOKEN_PATH,
+                    content=json.dumps(payload),
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": USER_AGENT,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                # **不是 ReauthorizeNeeded。** 連不上跟憑證死掉是兩件事，而把
+                # 前者講成後者，會叫人去重跑一次授權並作廢他還能用的憑證。
+                raise OAuthError(
+                    f"連不到 Anthropic（{type(exc).__name__}），等一下再試"
+                ) from exc
+            # **只重試 429。** 其他錯誤重試沒有意義，只會讓人多等好幾秒
+            # 才看到一個本來就確定的失敗。
+            if resp.status_code != 429 or attempt == retries:
+                break
+            await asyncio.sleep(_RETRY_BACKOFF[attempt] * (1 + random.random() * 0.4))
     finally:
         if owned:
             await c.aclose()
@@ -232,7 +269,13 @@ async def _post(
             raise OAuthError("Anthropic 回了 200，但內容不是 JSON") from exc
 
     if resp.status_code == 429:
-        raise OAuthError("Anthropic 對這個流程限流了，稍後再試一次")
+        # 重試過了還是 429。**要講「那串碼還能用」** —— 429 是在伺服器處理之前
+        # 就被擋下，授權碼沒有被消耗掉。不講的話他會去重走一次授權，
+        # 而那是這整個流程最貴的一步（還會作廢他手上那組）。
+        raise OAuthError(
+            "Anthropic 對這個流程限流了。等一兩分鐘再按一次「完成授權」就好 —— "
+            "那串授權碼還沒有被用掉，不用重拿"
+        )
     if resp.status_code == 403 and "1010" in resp.text:
         # 這條要跟授權失敗分開講，否則使用者會一直重貼一個其實沒問題的碼。
         raise OAuthError("被 Anthropic 的前端防護擋下（不是授權碼的問題），稍後再試")
