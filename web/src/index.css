@@ -439,3 +439,16 @@ button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
   margin-left: 12px; padding-left: 14px;
   border-left: 2px solid var(--accent, var(--line));
 }
+
+/* ── 你送的（JobDetail） ───────────────────────────────────────────────
+   跟 Claude 的事件流分開一塊，靠左側線與淡底區分「這是我說的」。
+   pre 保留使用者的換行 —— prompt 常常是貼進來的清單或對話，壓成一段會看不懂。 */
+.prompt-box {
+  margin: 14px 0 10px; padding: 10px 14px;
+  background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--muted);
+  border-radius: 6px;
+}
+.prompt-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.prompt-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 14px; }
+.prompt-box summary { cursor: pointer; font-size: 14px; color: var(--ink); }
+.prompt-box details[open] summary { color: var(--muted); font-size: 12px; margin-bottom: 6px; }

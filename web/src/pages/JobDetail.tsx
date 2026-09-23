@@ -132,6 +132,12 @@ export function JobDetail() {
         {job.lender && ` · 由 ${job.lender} 代跑`} · <StatusChip status={job.status} />
       </p>
 
+      {/* 你送的那段話。以前這一頁只有 Claude 的回應 —— 第一個 job 還好，
+          「接著問」之後就變成一場只看得到一邊的對話：你按了送出，頁面跳到新的
+          job，然後你看到 Claude 在回答一個你看不見的問題（2026-09-23 回報）。
+          很長的 prompt（貼整段對話那種）預設收合，不然它會把結果推到畫面外。 */}
+      <UserPrompt text={job.prompt} />
+
       <Phase job={job} live={live} done={done} />
 
       <div className="stream">
@@ -217,6 +223,28 @@ function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// 這個 job 是拿什麼去問的。只有委託者本人與代跑者看得到這一頁（hub 的 _get_job），
+// 所以這裡沒有新的揭露 —— 兩個人本來就都看得到 prompt。
+const PROMPT_FOLD_CHARS = 600;
+
+function UserPrompt({ text }: { text: string }) {
+  const long = text.length > PROMPT_FOLD_CHARS;
+  const body = <pre className="prompt-text">{text}</pre>;
+  return (
+    <div className="prompt-box">
+      <div className="prompt-label">你送的</div>
+      {long ? (
+        <details>
+          <summary>{text.slice(0, 120).replace(/\s+/g, " ")}… （{text.length} 字，展開）</summary>
+          {body}
+        </details>
+      ) : (
+        body
+      )}
+    </div>
+  );
 }
 
 // 接著問：帶著上一個 job 的 transcript 真的 resume，不是把對話重貼一次

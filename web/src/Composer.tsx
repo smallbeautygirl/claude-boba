@@ -20,6 +20,7 @@ const MAX_JOB_INPUT_BYTES = 100 * 1024 * 1024;
 const MAX_ATTACHMENTS = 20;
 // 貼進 prompt 的網址。容器打不開它們，送出前要講（見 Composer 裡那段註解）。
 const LINK = /https?:\/\/[^\s)]+/i;
+const ARTIFACT = /claude\.ai\/(code\/)?artifact\//i;
 
 export interface Attachment {
   key: string;
@@ -202,6 +203,16 @@ export function Composer({
         <p className="warn composer-error">
           這個 job 跑在沒有網路的容器裡，<strong>貼進來的連結它打不開</strong>
           （claude.ai、Google Docs、GitHub 都一樣）。把內容貼進來，或存成檔案用 + 附上。
+          {/* artifact 是 PM/BD 最常見的來源，所以直接教怎麼拿：左上角標題的下拉選單。
+              Copy as Markdown 比 Download 好 —— 連檔案都不用，而且會連同頁面上
+              現場追加的內容一起帶出來（那些存在 db 裡，抓 HTML 是拿不到的）。 */}
+          {ARTIFACT.test(value) && (
+            <>
+              {" "}
+              claude.ai 的 artifact：點<strong>左上角的標題</strong> →{" "}
+              <strong>Copy as Markdown</strong> 貼進來；或 Export → Download 後用 + 附上。
+            </>
+          )}
         </p>
       )}
       {error && <p className="error composer-error">{error}</p>}
