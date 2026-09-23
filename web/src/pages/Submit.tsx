@@ -5,11 +5,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, SITE_MODELS, type LenderRow } from "../api";
+import { api, DEFAULT_MODELS, SITE_MODELS, type LenderRow } from "../api";
 import { Composer, fmtSize } from "../Composer";
 
-// 站台白名單。預設不含 Fable：它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，
-// 同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料（SPEC §9）。
 // 額度只給紅綠燈，不給百分比：精確數字會讓人盤算「他還有 66%，再送一個沒差」，
 // 把人情變成資源計算（web-spec §3）。
 const QUOTA: Record<LenderRow["quota"], string> = {
@@ -27,16 +25,48 @@ const QUOTA: Record<LenderRow["quota"], string> = {
 // 派給有開放這個 model 的人（SPEC §4.12）。舊版取交集是因為當時 Hub 挑不了人
 // （誰先 poll 誰拿到），只能事先保證每個人都跑得動 —— 那讓一個人關掉 Sonnet
 // 就擋住全站的 Sonnet。
-function offeredModels(lenders: LenderRow[], lendingId: string) {
-  const pool = lendingId
+//
+// 退路是 DEFAULT_MODELS 而不是整份白名單：Fable 只在有人開的時候才該出現在下拉，
+// 半夜沒人接單的時候讓它出現，送出去的 job 會排隊等一個可能永遠不會來的人。
+function poolFor(lenders: LenderRow[], lendingId: string) {
+  return lendingId
     ? lenders.filter((l) => l.id === lendingId)
     : lenders.filter((l) => l.online && l.accepting);
-  if (pool.length === 0) return SITE_MODELS;
+}
+
+function offeredModels(lenders: LenderRow[], lendingId: string) {
+  const pool = poolFor(lenders, lendingId);
+  if (pool.length === 0) return DEFAULT_MODELS;
   const offered = SITE_MODELS.filter((m) =>
     pool.some((l) => l.available_models.includes(m.value)),
   );
-  // 聯集是空的（沒有人回報過條件）就退回站台白名單 —— 總比給一個空下拉好。
-  return offered.length ? offered : SITE_MODELS;
+  // 聯集是空的（沒有人回報過條件）就退回預設 —— 總比給一個空下拉好。
+  return offered.length ? offered : DEFAULT_MODELS;
+}
+
+// Fable 不在下拉裡的時候，一行字說清楚「為什麼沒有」跟「該去找誰」（web-spec §3）。
+// 四種狀態要分開講，因為使用者接下來該做的事不一樣：指定的人沒開 → 去拜託他或換人；
+// 線上有人但都沒開 → 去拜託線上的人；有人開了但離線 → 等他，不是求他；全站沒人開 → 死心。
+//
+// 語氣是站台一貫的「好啦我請」，但**不能讓人以為問了就會有** —— CLAUDE.md 記過一次
+// 錯誤訊息把人導錯方向的教訓。點名最多三個，超過就不點：一長串名字沒有人會真的去問。
+function fableHint(lenders: LenderRow[], lendingId: string): string | null {
+  const pool = poolFor(lenders, lendingId);
+  if (pool.some((l) => l.available_models.includes("fable"))) return null;
+  if (lendingId) {
+    const who = lenders.find((l) => l.id === lendingId)?.owner ?? "他";
+    return `${who} 沒開 Fable。帶杯手搖去拜託他，或換回自動。`;
+  }
+  const opened = lenders.filter((l) => l.available_models.includes("fable"));
+  if (opened.length) {
+    // 離線或暫停接單都算 —— 對委託者來說一樣是「現在派不到他」。
+    return `${opened.map((l) => l.owner).join("、")} 有開 Fable，但現在沒在接單。`;
+  }
+  if (pool.length === 0) return "全站還沒有人開 Fable。";
+  const names = pool.map((l) => l.owner);
+  const target =
+    names.length > 3 ? "一位線上的代跑者" : names.join("、");
+  return `線上沒人開 Fable。想跑的話，帶杯手搖去拜託 ${target}。`;
 }
 
 // 前端先擋，不要讓人上傳三分鐘才說太大（web-spec §3）。
@@ -106,8 +136,9 @@ async function previewOf(file: File): Promise<string> {
 // Claude Code 每一則 assistant row 都帶 usage，最後一則就是那一刻的 context 佔用。
 // 所以這個數字是**量到的不是估的** —— 不必 tokenize，讀檔案結尾就有。
 //
-// 分母固定 200K：run-job.sh 只帶 --model，沒有 1M context 的旗標，而站台白名單
-// 只有 sonnet / haiku。
+// 分母固定 200K：run-job.sh 只帶 --model，沒有 1M context 的旗標。Sonnet / Haiku
+// 是 200K；Fable 的 context 是 1M，所以這個警告對 Fable 的 job 偏保守 —— 它會在其實
+// 裝得下的時候也講話。不為此分兩套：八成的人選的是 Sonnet，而多講一句的代價是零。
 const CONTEXT_WINDOW = 200_000;
 
 // 超過這裡才講話。門檻不是「快爆了」而是「代跑時會爆」—— 你的 prompt、附件，
@@ -217,6 +248,10 @@ export function Submit() {
 
   const models = useMemo(
     () => offeredModels(lenders, lendingId),
+    [lenders, lendingId],
+  );
+  const fableNote = useMemo(
+    () => fableHint(lenders, lendingId),
     [lenders, lendingId],
   );
   const lender = lenders.find((l) => l.id === lendingId)?.owner ?? null;
@@ -373,6 +408,16 @@ export function Submit() {
           </select>
         </label>
       </div>
+      {/* Fable 不在下拉裡的原因。放下拉外面而不是 disabled option：原生 <select>
+          的 disabled option 掛不了說明，而「為什麼沒有」才是這行字的重點。 */}
+      {fableNote && <p className="hint under-field">🍖 {fableNote}</p>}
+      {/* 選到 Fable 才講，而且用級距表的詞、不出數字 —— 精確數字會讓人計較
+          （SPEC §4.7）。帳本照舊只顯示級距；要算錢的人 job 詳情頁本來就看得到金額。 */}
+      {chosen === "fable" && (
+        <p className="hint under-field">
+          🍖 Fable 一趟常常會超出級距表 —— 到那裡就不是請飲料的等級了。
+        </p>
+      )}
 
       {/* 必須主動勾選，不能預設打勾 —— 預設打勾的同意等於沒有揭露（web-spec §3）。 */}
       <div className="consent">

@@ -30,8 +30,12 @@ MAX_ATTACHMENTS_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_JOB_INPUT_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 20
 
-# 站台白名單（SPEC §9）。不含 Fable：它的 output 單價是 Haiku 的 10 倍、
-# Sonnet 的 5 倍，同一個 job 用 Haiku 是一杯手搖、用 Fable 就是一頓好料。
+# 站台白名單（SPEC §9）。**Fable 在名單上，但不在任何人的預設條件裡**：
+# 它的 output 單價是 Haiku 的 10 倍、Sonnet 的 5 倍，同一個 job 用 Haiku 是一杯
+# 手搖、用 Fable 就是一頓好料。§9 原本寫「想開放的出租者自己在 .env 加」——
+# 那是舊架構的門；job 改到共用主機跑之後，出租者沒有 .env 了，這條白名單是唯一
+# 能開那扇門的地方。所以 2026-09-23 把 Fable 放進來，由代跑者在出借條件裡自己勾
+# （預設不勾，見 routers/workers.py 的 DEFAULT_MODELS）。
 #
 # **這份清單必須在伺服器端強制，前端的下拉只是方便。** 2026-09-22 spike #8
 # 實測：`--settings availableModels` 根本不擋 model —— 掛 .credentials.json
@@ -39,7 +43,11 @@ MAX_ATTACHMENTS = 20
 # 「站台白名單 ∩ 出租者白名單」這條線在 CLI 那層不存在，Hub 是唯一擋得住的
 # 位置。不擋的話，借用者直接打 API 帶 model: "opus" 就能用出租者的額度跑
 # Opus，讓對方欠十倍的錢。
-SITE_MODELS = ("sonnet", "haiku")
+SITE_MODELS = ("sonnet", "haiku", "fable")
+
+# 新代跑者的預設條件。**沒有 Fable** —— 開放 Fable 是一個要自己按下去的決定，
+# 因為燒的是他的額度，而一個 Fable job 撞到 US$5 上限只要幾分鐘。
+DEFAULT_MODELS = ["sonnet", "haiku"]
 
 
 class JobCreate(BaseModel):

@@ -172,14 +172,23 @@ export interface LendingSettings {
   accounts: LendingAccount[];
 }
 
-/** 站台的 model 白名單。順序即偏好順序，第一個是預設 —— 預設不是 Opus，
-    因為委託者不會知道差別、會直接送出，而那等於每個 job 貴 2.5 倍（web-spec §3）。
+/** 站台的 model 白名單。順序即偏好順序，第一個是預設 —— 預設不是 Fable，
+    因為委託者不會知道差別、會直接送出，而那等於每個 job 貴 5 倍（web-spec §3）。
     放在這裡而不是某一頁裡面：提交頁與出借設定頁都要用同一份，
-    兩份會各自漂移。對應 hub 的 `schemas.SITE_MODELS`。 */
+    兩份會各自漂移。對應 hub 的 `schemas.SITE_MODELS`。
+
+    Fable（2026-09-23）在名單上，但**不在任何人的預設條件裡**：代跑者要自己勾。
+    提交頁只在有人開了的時候才列它 —— 沒人開就不在下拉裡，旁邊一行字告訴你去找誰。 */
 export const SITE_MODELS = [
   { value: "sonnet", label: "Sonnet（預設）" },
   { value: "haiku", label: "Haiku（最省）" },
+  { value: "fable", label: "Fable（最貴）" },
 ];
+
+/** 沒有任何代跑者資料時的退路（提交頁池子是空的、或條件還沒載進來）。
+    **刻意不含 Fable**：Fable 的規則是「有人開才有」，退路不該比正常狀態寬。
+    對應 hub 的 `schemas.DEFAULT_MODELS`。 */
+export const DEFAULT_MODELS = SITE_MODELS.filter((m) => m.value !== "fable");
 
 /** 管理頁的系統狀態。三種分類刻意分開，因為可信度不同：
     `checks` 是這次真的量到的、`facts` 是讀得出來但不是健康檢查、

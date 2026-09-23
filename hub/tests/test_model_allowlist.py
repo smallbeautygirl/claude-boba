@@ -81,8 +81,34 @@ def test_made_up_model_is_refused() -> None:
 
 
 def test_allowed_models_pass() -> None:
-    for m in ("sonnet", "haiku"):
-        check(m, lenders=[_lender("sonnet", "haiku")])  # 不拋就是過
+    for m in ("sonnet", "haiku", "fable"):
+        check(m, lenders=[_lender("sonnet", "haiku", "fable")])  # 不拋就是過
+
+
+# --- Fable（2026-09-23）------------------------------------------------------
+#
+# Fable 在站台白名單上，但不在任何人的預設條件裡（schemas.DEFAULT_MODELS）。
+# 所以擋住 Fable 的不是第一段（站台不收），是第二段（沒人開）。這兩個測試
+# 釘住的是「Fable 是 opt-in，不是 opt-out」—— 改成預設就開的話這裡會先叫。
+
+
+def test_fable_is_on_the_site_allowlist_but_off_by_default() -> None:
+    from app.schemas import DEFAULT_MODELS, SITE_MODELS
+
+    assert "fable" in SITE_MODELS
+    assert "fable" not in DEFAULT_MODELS
+
+
+def test_fable_refused_when_nobody_opened_it() -> None:
+    """一群只開預設 model 的代跑者，Fable 的 job 要在送出時就被退回，不是排隊。"""
+    with pytest.raises(HTTPException) as e:
+        check("fable", lenders=[_lender("sonnet", "haiku"), _lender("haiku")])
+    assert e.value.status_code == 400
+    assert "fable" in e.value.detail
+
+
+def test_fable_passes_when_one_lender_opened_it() -> None:
+    check("fable", lenders=[_lender("sonnet", "haiku"), _lender("sonnet", "fable")])
 
 
 # --- 指定代跑者 -----------------------------------------------------------

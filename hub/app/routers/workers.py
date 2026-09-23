@@ -20,7 +20,7 @@ from .. import authorize, secrets_box
 from ..auth import require_user
 from ..db import get_session
 from ..models import Job, LendingAccount, LendingSetting, User, WorkerHost
-from ..schemas import SITE_MODELS
+from ..schemas import DEFAULT_MODELS, SITE_MODELS
 
 router = APIRouter(prefix="/api/workers", tags=["lending"])
 
@@ -148,7 +148,7 @@ async def _my_lending(user: User, session: AsyncSession) -> LendingSetting:
     if row is None:
         row = LendingSetting(
             owner_user_id=user.id,
-            available_models=["sonnet", "haiku"],
+            available_models=list(DEFAULT_MODELS),
             # 還沒授權之前先不要接單 —— 接了也跑不動，只會讓委託者等。
             accepting=False,
         )

@@ -228,7 +228,11 @@ async def _check_model(
     `--model` 直接帶給 CLI 的。前端的下拉只是方便，直接打 API 就繞過去了。
 
     不擋的後果不是「跑錯 model」，是**委託者可以讓代跑者欠十倍的錢** ——
-    Opus 的 output 單價是 Haiku 的 10 倍，而債務照實際花費算。
+    Fable 的 output 單價是 Haiku 的 10 倍，而債務照實際花費算。
+
+    2026-09-23 起 Fable 在站台白名單上，但沒有人預設開放它（schemas.DEFAULT_MODELS）。
+    所以對 Fable 來說，第二段那條「至少一位開了」才是真正在擋的那條 ——
+    沒有人勾 Fable 的站台，Fable 的 job 在這裡就會被退回。
 
     ⚠️ 2026-09-22：這裡從「**每一位**可接單的代跑者都要跑得動」放寬成「**至少
     一位**跑得動」。舊的那條是因為當時 Hub 挑不了人（誰先 poll 誰拿到），只能
@@ -238,7 +242,7 @@ async def _check_model(
     """
     if model not in SITE_MODELS:
         raise HTTPException(
-            400, f"這個站台只跑 {' 或 '.join(SITE_MODELS)}，不支援 {model}"
+            400, f"這個站台只跑 {'、'.join(SITE_MODELS)}，不支援 {model}"
         )
 
     stmt = select(LendingSetting).where(LendingSetting.accepting.is_(True))

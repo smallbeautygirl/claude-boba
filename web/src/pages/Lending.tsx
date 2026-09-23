@@ -464,6 +464,7 @@ function Conditions({
       <h2 className="sr-only">可用 model</h2>
       <p className="hint">
         可以用哪些 model：只勾 Haiku 的話，同事送 Sonnet 的 job 就不會派給你。
+        Fable 預設關著，勾了才會有人把 Fable 的 job 派給你。
       </p>
       <div className="chips">
         {SITE_MODELS.map((m) => (
@@ -480,6 +481,17 @@ function Conditions({
       </div>
       {models.length === 0 && (
         <p className="warn">至少要留一個 —— 一個都沒有的話沒有人派得動你。</p>
+      )}
+      {/* 定性、不估分鐘數：反推出來的分鐘數是假精確，而且會隨 model 版本變。
+          他該知道的是「撞到就中止、不計債、燒的是自己的額度」—— 那是 Fable 對
+          代跑者真正的代價，不是價目表。上限本身不加欄位也不設門檻（SPEC §4.12：
+          上限講的是他對風險的態度，不分 model）。 */}
+      {models.includes("fable") && (
+        <p className="warn">
+          你現在的上限是 US${budget || "?"}。Fable 會很快撞到它 ——
+          撞到就中止、不計債，燒掉的是你的額度，而委託者什麼都沒拿到。
+          開 Fable 的話，考慮把上限調高一點。
+        </p>
       )}
 
       {/* 外網不是效能設定，是安全邊界（security.md 紅線 3）。預設關著，
