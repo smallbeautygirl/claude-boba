@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import events, notify, secrets_box, storage
+from .. import credentials, events, notify, storage
 from ..config import settings
 from ..db import get_session
 from ..dispatch import auto_candidates
@@ -135,9 +135,27 @@ async def poll(
         return Response(status_code=204)
 
     job, setting, account = claimed
+
+    # **交出去之前確認那張 access token 還活著。** `oauth` 那種八小時就死，而 job
+    # 可能在授權之後很久才被派出去（SPEC §11 #13）。少了這一行，代跑者會在授權滿
+    # 八小時之後突然「不能跑」，而錯誤長得像帳號出問題。
+    #
+    # 交出去的永遠是 access token —— refresh token 不進領單回應、不進 worker、
+    # 不進容器（security.md 紅線 2）。
+    token = await credentials.access_token(account, session)
+    if token is None:
+        # 換不到、而且帳號已經被標成要重新授權。這個 job 退回排隊，讓下一輪
+        # 換一個帳號接 —— 不要把它判失敗，委託者什麼都沒做錯。
+        job.status = JobStatus.QUEUED
+        job.lending_id = None
+        job.account_id = None
+        job.claimed_at = None
+        await session.commit()
+        return Response(status_code=204)
+
     return WorkerJob(
-        # 託管模型：job 跑在這台主機上，用 Hub 挑中的那個出借帳號的長期 token。
-        oauth_token=secrets_box.open_(account.oauth_token_enc),
+        # 託管模型：job 跑在這台主機上，用 Hub 挑中的那個出借帳號的 token。
+        oauth_token=token,
         job_id=job.id,
         prompt=job.prompt,
         model=job.model,
@@ -399,7 +417,7 @@ async def push_result(
     if debt is not None:
         lender = await session.get(User, debt.lender_id)
         notify.debt_created(
-            borrower, lender, LABELS[debt.tier], debt.amount_usd, job.id
+            borrower, lender, LABELS[debt.tier], debt.amount_usd, debt.id
         )
     _emit(job.id, -1, {"type": "stream_end", "status": str(job.status)})
     return {"ok": True}

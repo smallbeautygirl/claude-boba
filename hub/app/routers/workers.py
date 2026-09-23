@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,9 +16,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import authorize, claude_profile, secrets_box
+from .. import claude_profile, oauth, secrets_box
 from ..auth import require_user
 from ..db import get_session
+from ..enums import CredentialKind
 from ..models import Job, LendingAccount, LendingSetting, User, WorkerHost
 from ..schemas import DEFAULT_MODELS, SITE_MODELS
 
@@ -297,21 +298,43 @@ async def update_lending(
     return _lending_view(row, online=await host_online(session))
 
 
+# 進行中的授權。key 是出借設定 id —— 一位代跑者同時只會有一個授權在跑，
+# 而重開一次就該作廢上一個（他手上那個授權頁也跟著失效）。
+#
+# 放記憶體不放 DB：它活五分鐘，而 Hub 重啟時本來就沒有人在授權流程的中途。
+# 存進 DB 只會多一張要清的表。
+_starts: dict[uuid.UUID, tuple[oauth.Start, datetime]] = {}
+# 跟舊流程一樣的五分鐘。文案講的是「站台這邊只保留五分鐘」——
+# 那是我們的保留時間，不是 Anthropic 那串碼的效期（web-spec §8 的既有註記）。
+_START_TTL = timedelta(minutes=5)
+
+
+def _take_start(lending_id: uuid.UUID) -> oauth.Start | None:
+    got = _starts.pop(lending_id, None)
+    if got is None:
+        return None
+    start, at = got
+    return start if datetime.now(UTC) - at < _START_TTL else None
+
+
 @router.post("/authorize", response_model=AuthorizeStart)
 async def start_authorize(
     user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """開始授權，回授權網址。
+    """開始授權：產生 Claude 的授權網址。
+
+    **站台自己跑 OAuth**，不驅動 CLI（SPEC §11 #13）。`claude setup-token` 是專為
+    非互動設計的子指令，但它拿到的 token 只有 `user:inference` —— 問不出帳號身分
+    （#12 實測 403）。`claude login` 有足夠的 scope 但沒有非互動入口，要驅動整個
+    TUI，而這個 repo 已經被 TUI 擷取咬過一次（§11 的截斷 token 事件）。
 
     代跑者去那個網址授權，拿到一個**一次性授權碼**貼回來（見 /authorize/code）。
-    走這條而不是請他自己貼 token：一年期 token 從頭到尾不經過人的手。
+    這條跟舊流程對使用者是一樣的 UX —— 換掉的是站台這一側怎麼拿到 token。
     """
     row = await _my_lending(user, session)
-    try:
-        url = await authorize.start(row.id)
-    except authorize.AuthorizeError as exc:
-        raise HTTPException(503, str(exc)) from exc
-    return {"authorize_url": url}
+    begun = oauth.begin()
+    _starts[row.id] = (begun, datetime.now(UTC))
+    return {"authorize_url": begun.url}
 
 
 @router.post("/authorize/code", response_model=LendingView)
@@ -328,10 +351,17 @@ async def submit_authorize_code(
     仍然有效到期滿 —— 這句話由前端在按鈕旁講清楚）；不帶就是新增一個帳號。
     """
     row = await _my_lending(user, session)
+    begun = _take_start(row.id)
+    if begun is None:
+        raise HTTPException(400, "這個授權已經過期了，請重新按一次「開始出借」")
     try:
-        token = await authorize.submit_code(row.id, body.code)
-    except authorize.AuthorizeError as exc:
+        tokens = await oauth.exchange(begun, body.code)
+    except oauth.OAuthError as exc:
+        # **不要收掉 start。** 貼錯一個字不該讓他從頭再走一次 —— 重走會換一組
+        # code_challenge，讓他手上那個授權頁也一起作廢（舊流程的同一條教訓）。
+        _starts[row.id] = (begun, datetime.now(UTC))
         raise HTTPException(400, str(exc)) from exc
+    token = tokens.access_token
 
     # 授權之前有沒有任何能跑的帳號。用來判斷「接單」是不是被系統關掉的 ——
     # 見下面那段。
@@ -353,43 +383,64 @@ async def submit_authorize_code(
         row.accounts.append(account)
 
     # 拿到就馬上加密，明文不要在任何地方多待一行。
+    now = datetime.now(UTC)
     account.oauth_token_enc = secrets_box.seal(token)
+    account.credential_kind = CredentialKind.OAUTH
+    # **refresh token 絕不離開 Hub**（security.md 紅線 2）。它比 access token
+    # 值錢得多：access 八小時就死，這張能一直換出新的。
+    account.refresh_token_enc = secrets_box.seal(tokens.refresh_token)
+    account.access_expires_at = now + timedelta(seconds=tokens.expires_in)
+    account.refresh_expires_at = (
+        now + timedelta(seconds=tokens.refresh_expires_in)
+        if tokens.refresh_expires_in
+        else None
+    )
+    account.scopes = list(tokens.scopes)
 
-    # 這組 token 到底是哪一個 Claude 帳號（app/claude_profile.py）。
-    #
-    # **拿不到是預期中的結果**（最可能是 scope：setup-token 產的 token 只有
-    # user:inference），那時 uuid / email 留 None，只記「問過了」—— 帳號卡才講得出
-    # 「查不到」與「還沒查」的差別。整條路不會讓授權失敗：他手上那組 token 是好的。
+    # **身分直接來自交換的回應**，不用另外打 /api/oauth/profile ——
+    # 那正是自己走 OAuth 而不是驅動 TUI 的額外好處（SPEC §11 #13）：
+    # 那支端點要 `user:profile`，而這個回應不受它的 scope 限制。
     merged_into: str | None = None
-    if claude_profile.enabled():
-        profile = (await claude_profile.fetch_profile(token)).profile
-        account.claude_identity_checked_at = datetime.now(UTC)
-        if profile is not None:
-            # 同一個 Claude 帳號他已經借出來過了。**不要退回去叫他重來** ——
-            # `claude setup-token` 產一次就作廢上一組，退回等於把他剛拿到的那組
-            # 燒掉，而他做錯的事只是重複授權了同一個帳號。
-            # 改成把新 token 換到那一列上，並告訴他換到哪裡去了。
-            twin = next(
-                (
-                    a
-                    for a in row.accounts
-                    if a is not account
-                    and a.claude_account_uuid == profile.account_uuid
-                ),
-                None,
-            )
-            if twin is not None:
-                twin.oauth_token_enc = account.oauth_token_enc
-                twin.needs_reauth = False
-                twin.claude_identity_checked_at = account.claude_identity_checked_at
-                merged_into = twin.name
-                if account in row.accounts and body.account_id is None:
-                    row.accounts.remove(account)
-                    await session.delete(account)
-                account = twin
-            account.claude_account_uuid = profile.account_uuid
-            account.claude_email = profile.email
-            account.claude_plan = profile.plan
+    profile = (
+        claude_profile.Profile(
+            account_uuid=tokens.account_uuid, email=tokens.email or "", plan=None
+        )
+        if tokens.account_uuid
+        else None
+    )
+    if profile is not None:
+        account.claude_identity_checked_at = now
+    if profile is not None:
+        # 同一個 Claude 帳號他已經借出來過了。**不要退回去叫他重來** ——
+        # 授權碼是一次性的，退回等於把他剛換到的那組憑證燒掉，而他做錯的事
+        # 只是重複授權了同一個帳號。改成把新憑證換到那一列上，並告訴他換去哪。
+        twin = next(
+            (
+                a
+                for a in row.accounts
+                if a is not account and a.claude_account_uuid == profile.account_uuid
+            ),
+            None,
+        )
+        if twin is not None:
+            # **整組搬過去，不是只搬 access token。** 少搬 refresh token 的話，
+            # 那一列八小時後就再也換不到新的，而且要到那時才會被發現。
+            twin.oauth_token_enc = account.oauth_token_enc
+            twin.refresh_token_enc = account.refresh_token_enc
+            twin.credential_kind = account.credential_kind
+            twin.access_expires_at = account.access_expires_at
+            twin.refresh_expires_at = account.refresh_expires_at
+            twin.scopes = account.scopes
+            twin.needs_reauth = False
+            twin.claude_identity_checked_at = account.claude_identity_checked_at
+            merged_into = twin.name
+            if account in row.accounts and body.account_id is None:
+                row.accounts.remove(account)
+                await session.delete(account)
+            account = twin
+        account.claude_account_uuid = profile.account_uuid
+        account.claude_email = profile.email
+        account.claude_plan = profile.plan
     del token
     account.needs_reauth = False
     if body.approver_note is not None:
@@ -465,11 +516,27 @@ async def remove_account(
     if account is None:
         raise HTTPException(404, "找不到這個出借帳號")
 
+    # **真的去撤銷，不只是刪掉我們手上那份。** 在這之前那組憑證在 Anthropic 那邊
+    # 照樣有效 —— 代跑者以為自己收回了額度，其實沒有（security.md 紅線 2）。
+    #
+    # 撤不掉不擋流程：他要的是「別再用我的額度」，而站台停止使用是立刻生效的。
+    revoke_failed = False
+    if (
+        account.credential_kind is CredentialKind.OAUTH
+        and account.refresh_token_enc is not None
+    ):
+        revoke_failed = not await oauth.revoke(
+            secrets_box.open_(account.refresh_token_enc)
+        )
+
     used = await session.scalar(
         select(func.count()).select_from(Job).where(Job.account_id == account_id)
     )
     if used:
         account.oauth_token_enc = None
+        account.refresh_token_enc = None
+        account.access_expires_at = None
+        account.refresh_expires_at = None
         account.needs_reauth = False
         account.rate_limit_windows = {}
         account.quota_updated_at = None
@@ -482,7 +549,18 @@ async def remove_account(
         row.accepting = False
     await session.commit()
     await session.refresh(row, ["accounts"])
-    return _lending_view(row, online=await host_online(session))
+    return _lending_view(
+        row,
+        online=await host_online(session),
+        # 撤銷失敗要講。站台這邊是停用了，但那組憑證還活在 Anthropic 那邊 ——
+        # 不講的話他會以為已經收回，而那正是這件事最重要的一句話。
+        identity_note=(
+            "站台已經停用它，但向 Anthropic 撤銷沒有成功 —— "
+            "到 Claude 的設定頁手動撤銷一次比較保險。"
+            if revoke_failed
+            else None
+        ),
+    )
 
 
 @router.post("/accounts/{account_id}/identity", response_model=LendingView)

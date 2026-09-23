@@ -41,6 +41,7 @@ CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
 TOKEN_BASE = "https://platform.claude.com"
 TOKEN_PATH = "/v1/oauth/token"
+REVOKE_PATH = "/v1/oauth/token/revoke"
 # 手動流程：授權碼顯示在畫面上讓人複製，不導回 localhost。
 # Hub 跑在別台機器上，localhost 那條在這裡沒有意義。
 MANUAL_REDIRECT_URL = "https://platform.claude.com/oauth/code/callback"
@@ -163,6 +164,40 @@ async def refresh(
     }
     data = await _post(payload, client, reauthorize_on_invalid_grant=True)
     return _tokens(data, fallback_refresh=refresh_token)
+
+
+async def revoke(
+    refresh_token: str, *, client: httpx.AsyncClient | None = None
+) -> bool:
+    """撤銷一組 refresh token。回「有沒有成功」，不拋。
+
+    **這是義務不是選項**（security.md 紅線 2）。在這之前，按「不再出借這個帳號」
+    只是刪掉我們手上那一份 —— 那組憑證在 Anthropic 那邊照樣有效到期滿。
+    代跑者以為自己收回了額度，其實沒有。
+
+    失敗不擋流程：他要的是「別再用我的額度」，而站台這邊停止使用是立刻生效的。
+    撤不掉時該讓他知道，但不該因此不讓他停借。
+    """
+    owned = client is None
+    c = client or httpx.AsyncClient(timeout=_TIMEOUT)
+    try:
+        resp = await c.post(
+            TOKEN_BASE + REVOKE_PATH,
+            content=json.dumps(
+                {
+                    "token": refresh_token,
+                    "token_type_hint": "refresh_token",
+                    "client_id": CLIENT_ID,
+                }
+            ),
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+        )
+        return resp.status_code < 400
+    except httpx.HTTPError:
+        return False
+    finally:
+        if owned:
+            await c.aclose()
 
 
 async def _post(

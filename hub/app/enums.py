@@ -87,3 +87,15 @@ class WishTarget(StrEnum):
 
     WISH = "wish"
     COMMENT = "comment"
+
+
+class CredentialKind(StrEnum):
+    """一個出借帳號的憑證是哪一種。security.md 紅線 2 的那張表。
+
+    兩種會並存一段時間 —— 現有的出借帳號全是 `SETUP_TOKEN`，而這決定**派單前
+    要不要先 refresh**：`SETUP_TOKEN` 一年期、拿了就用；`OAUTH` 八小時就死，
+    每次派單前都要確認手上那張還活著。
+    """
+
+    SETUP_TOKEN = "setup_token"
+    OAUTH = "oauth"

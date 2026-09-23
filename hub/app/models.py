@@ -27,6 +27,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
 from .enums import (
+    CredentialKind,
     DebtStatus,
     DebtTier,
     JobStatus,
@@ -227,6 +228,23 @@ class LendingAccount(Base):
     # 屬於帳號不屬於條件：「願不願意開 Fable」是人的態度（`available_models`），
     # 「這個帳號現在有沒有 credits」是帳號的物理性質，跟額度同一類（SPEC §4.12）。
     credits_required_models: Mapped[list[str]] = mapped_column(JSONB, default=list)
+
+    # 這是哪一種憑證（security.md 紅線 2）。決定派單前要不要先 refresh。
+    credential_kind: Mapped[CredentialKind] = mapped_column(
+        _enum(CredentialKind), default=CredentialKind.SETUP_TOKEN
+    )
+    # 只有 `OAUTH` 那種才有。**絕不離開 Hub** —— 它不進領單回應、不進 worker、
+    # 不進容器。派單交出去的永遠是當下那張 access token，不是換票的能力。
+    #
+    # 它比 access token 值錢得多：access token 八小時就死，這張能一直換出新的，
+    # 而且每次 refresh 還會把自己的效期往後推（SPEC §11 #13 實測）。
+    refresh_token_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    # `oauth_token_enc` 那張 access token 什麼時候到期。
+    # `SETUP_TOKEN` 的是 None —— 它一年期，而我們不知道確切哪一天。
+    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refresh_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 實際拿到的 scope。用來回答「為什麼這個帳號查得到 email、那個查不到」。
+    scopes: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
     # 這個出借帳號**實際上是哪一個 Claude 帳號**（app/claude_profile.py）。
     #
