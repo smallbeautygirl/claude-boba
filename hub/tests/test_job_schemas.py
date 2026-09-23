@@ -40,6 +40,7 @@ def _fake_job(**overrides):
         "stop_note": None,
         "lender_cli_version": "2.1.278",
         "borrower_cli_version": None,
+        "attachment_keys": [],
     }
     return SimpleNamespace(**(base | overrides))
 

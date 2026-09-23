@@ -30,6 +30,7 @@ from ..schemas import (
     TRANSCRIPT_SNIFF_BYTES,
     TRANSCRIPT_SNIFF_LINES,
     FollowUp,
+    JobAttachment,
     JobCreate,
     JobDetail,
     JobSummary,
@@ -100,6 +101,17 @@ def _detail(job: Job, user: User | None = None) -> JobDetail:
         if (f := classify(job.status, job.error_kind, job.error_detail))
         else None,
         can_stop=bool(user and _can_stop(job, user)),
+        # 下載連結只發給看得到這一頁的人 —— _get_job 已經擋過（委託者本人與代跑者），
+        # 跟「產出的檔案」同一條規則。
+        attachments=[
+            JobAttachment(
+                name=storage.attachment_name(key),
+                download_url=storage.presign_get(
+                    key, filename=storage.attachment_name(key)
+                ),
+            )
+            for key in (job.attachment_keys or [])
+        ],
     )
 
 

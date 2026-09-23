@@ -109,6 +109,16 @@ class JobDetail(JobSummary):
     failure: dict | None
     # 目前這個人能不能中止它（執行中，而且他是跑這個 job 的出租者）。
     can_stop: bool
+    # 送進來的附件。跟 prompt 一起構成「你送的」—— 少了它，job 頁上那段話
+    # 常常讀不懂（「把這份做成三頁」—— 哪一份？）。
+    # 只有名字與下載連結，**不查大小**：那要對 MinIO 逐檔 HEAD，一個 job 最多
+    # 20 個附件，而這一頁會被反覆載入。
+    attachments: list[JobAttachment]
+
+
+class JobAttachment(BaseModel):
+    name: str
+    download_url: str
 
 
 class WorkerConfig(BaseModel):

@@ -49,6 +49,9 @@ export interface JobDetail {
   total_cost_usd: string | null;
   prompt: string;
   source_type: "paste" | "transcript";
+  /** 送進來的附件：名字 + 下載連結。只有委託者本人與代跑者拿得到這一頁，
+      所以連結不是新的揭露。沒有大小 —— 那要對 MinIO 逐檔查，而這頁會反覆載入。 */
+  attachments: { name: string; download_url: string }[];
   lending_id: string | null;
   result_text: string | null;
   error_kind: string | null;
@@ -208,7 +211,12 @@ export interface AdminStats {
   jobs_by_status: Record<string, number>;
   /** 分母只算跑完的（成功 + 失敗）。沒有跑完的 job 時是 null。 */
   success_rate: number | null;
+  /** 全精度的帳（Numeric(12,6)）。畫面上取到小數點後兩位，換算台幣用這個原值。 */
   spend_usd: string;
+  /** 台幣粗估用的匯率。打不到來源時是 null，理由在 twd_note。 */
+  twd: { rate: string; quoted_on: string; source: string } | null;
+  /** 匯率的附註：沿用舊價、或拿不到的原因。正常時是空字串。 */
+  twd_note: string;
 }
 
 export interface StuckJob {

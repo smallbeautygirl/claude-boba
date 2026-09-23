@@ -136,7 +136,7 @@ export function JobDetail() {
           「接著問」之後就變成一場只看得到一邊的對話：你按了送出，頁面跳到新的
           job，然後你看到 Claude 在回答一個你看不見的問題（2026-09-23 回報）。
           很長的 prompt（貼整段對話那種）預設收合，不然它會把結果推到畫面外。 */}
-      <UserPrompt text={job.prompt} />
+      <UserPrompt text={job.prompt} attachments={job.attachments} />
 
       <Phase job={job} live={live} done={done} />
 
@@ -229,7 +229,13 @@ function fmtSize(n: number): string {
 // 所以這裡沒有新的揭露 —— 兩個人本來就都看得到 prompt。
 const PROMPT_FOLD_CHARS = 600;
 
-function UserPrompt({ text }: { text: string }) {
+function UserPrompt({
+  text,
+  attachments,
+}: {
+  text: string;
+  attachments: { name: string; download_url: string }[];
+}) {
   const long = text.length > PROMPT_FOLD_CHARS;
   const body = <pre className="prompt-text">{text}</pre>;
   return (
@@ -242,6 +248,20 @@ function UserPrompt({ text }: { text: string }) {
         </details>
       ) : (
         body
+      )}
+      {/* 附件跟 prompt 是同一句話的兩半：「把這份做成三頁」—— 哪一份？
+          沒有這一列，代跑者看這頁時完全不知道 Claude 讀了什麼檔案。 */}
+      {attachments.length > 0 && (
+        <ul className="prompt-files">
+          {attachments.map((a) => (
+            <li key={a.name}>
+              📎{" "}
+              <a href={a.download_url} download>
+                {a.name}
+              </a>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
