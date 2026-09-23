@@ -29,6 +29,10 @@ def _account() -> SimpleNamespace:
         rate_limit_windows={"five_hour": {"utilization": 0.3}},
         quota_updated_at=datetime.now(UTC),
         last_assigned_at=datetime.now(UTC),
+        claude_account_uuid=None,
+        claude_email=None,
+        claude_plan=None,
+        claude_identity_checked_at=None,
         # `_fresh_utilization()` 會呼叫它 —— 額度新不新鮮不是這組測試的題目，
         # 給一個值讓它走得過去就好。
         utilization=lambda window="five_hour": 0.3,

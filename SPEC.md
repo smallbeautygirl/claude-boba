@@ -185,6 +185,37 @@ job 內容跑在出租者機器上，技術上出租者有能力看到。**不�
   沒有」分開講，因為下一步不一樣 —— 前者是改選自己，後者是等別人上線。前端先擋，
   後端保留一道（SPEC §4.13：失敗要盡量往前挪）
 
+#### 2026-09-23：出借帳號的身分反查
+
+在這之前**站台從頭到尾沒看過出借帳號的身分**。名字是代跑者自己打的一串字，
+所以同一個 Claude 帳號授權兩次會變成兩列看起來不相干的帳號 —— 而它們共用同一份
+額度與 rate limit，派單會以為有兩個池子。2026-09-23 實際發生（四列，其中三列是
+同一台機器上的同一個帳號）。
+
+**端點是從 CLI binary 裡挖出來的，不是文件也不是猜的**（`strings claude.exe`）：
+Claude Code 自己就在打 `GET /api/oauth/profile`，帶 `Authorization: Bearer <token>`，
+回 `account:{uuid, email, display_name}` 與 `organization:{uuid, organization_type}`。
+
+- **`account.uuid` 是去重的鍵，不是 email** —— email 會改，uuid 不會
+- 唯一約束的範圍是**每位代跑者**（`uq_lending_account_claude_uuid`）。
+  Postgres 的唯一索引不擋多個 NULL，而那正是要的行為：反查不到身分的帳號全是
+  NULL，它們不該互相衝突。**認得出來的去重，認不出來的放行**
+- **重複授權不退回，改成把新 token 換到既有那一列上。** `claude setup-token`
+  產一次就作廢上一組 —— 退回等於燒掉他剛拿到的那組，而他做錯的只是重複授權
+- **另外給一支「查一次」**（`POST /accounts/{id}/identity`）。身分是授權當下問的，
+  而重新授權會作廢現在還能用的 token —— 為了知道 email 燒掉一組 token，
+  代價跟收益完全不成比例
+- **「查過了拿不到」與「還沒查」是兩種狀態**，分開存（`claude_identity_checked_at`）
+  也分開講。兩個都顯示空白的話，他不知道下一步是按按鈕還是去找 Anthropic
+
+> ⚠️ **scope 還沒驗。** 同一份 binary 裡寫著 `env-var and setup-token sessions
+> default to user:inference only`，而我們的 token 正是 `setup-token` 產的。
+> `/api/oauth/profile` 收不收這種 token，到寫下這段為止**沒有人實際打過一次**。
+> 所以整條路的設計是「拿不到就安靜放棄」：403、逾時、格式不符一律不擋授權、
+> 不存東西，只記一行狀態碼。反查也關得掉（`CLAUDE_PROFILE_LOOKUP`）。
+>
+> 驗的方法：在出借頁對一個還有 token 的帳號按「查一次」。
+
 ### 4.6 記帳：API 等價金額
 存兩套資料，顯示 API 等價金額。
 

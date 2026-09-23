@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import authorize, secrets_box
+from .. import authorize, claude_profile, secrets_box
 from ..auth import require_user
 from ..db import get_session
 from ..models import Job, LendingAccount, LendingSetting, User, WorkerHost
@@ -128,6 +128,13 @@ class AccountView(BaseModel):
     # 結果是四張卡片全寫「還沒被派到過 job」，包含跑過六個 job 的那一個。
     # 往 `_account_view` 加欄位時，這裡要一起加。
     last_assigned_at: datetime | None
+    # 這個出借帳號實際上是哪一個 Claude 帳號。站台自己反查的（app/claude_profile.py）。
+    # **只有本人看得到** —— 它掛在 _account_view 上。
+    claude_email: str | None
+    claude_plan: str | None
+    # 問過了沒有。有時間但 email 是 None = 問過了，Anthropic 不給
+    # （最可能是 scope）。None = 還沒問過，或反查被關掉。
+    claude_identity_checked_at: datetime | None
 
 
 class LendingView(BaseModel):
@@ -148,6 +155,13 @@ class LendingView(BaseModel):
     accepting: bool
     online: bool
     accounts: list[AccountView]
+    # 剛才那次授權其實是**同一個 Claude 帳號**，所以新 token 被換到既有的那一列上，
+    # 沒有新增。這裡放那一列的名字，讓前端講得出「換到哪裡去了」——
+    # 不講的話他會以為授權失敗了（清單上沒有他剛命名的那個帳號）。
+    merged_into: str | None = None
+    # 重新查身分時發現它跟另一列是**同一個 Claude 帳號**。只告知不合併 ——
+    # 合併要搬 token，而這條路沒有新 token 可搬。
+    same_as: str | None = None
 
 
 class AuthorizeStart(BaseModel):
@@ -195,15 +209,26 @@ def _account_view(a: LendingAccount) -> dict:
         # 的地方 —— 而那正是他會問的第一個問題。
         # None 是「還沒被派到過」，不是「不知道」（同 utilization 那條）。
         "last_assigned_at": a.last_assigned_at,
+        "claude_email": a.claude_email,
+        "claude_plan": a.claude_plan,
+        "claude_identity_checked_at": a.claude_identity_checked_at,
         "quota_fresh": _fresh_utilization(a) is not None,
     }
 
 
-def _lending_view(s: LendingSetting, *, online: bool) -> dict:
+def _lending_view(
+    s: LendingSetting,
+    *,
+    online: bool,
+    merged_into: str | None = None,
+    same_as: str | None = None,
+) -> dict:
     """出借設定。**絕不包含 token**，連遮罩後的值都不行 ——
     只回 has_token 布林（security.md 紅線 2）。"""
     accounts = list(s.accounts)
     return {
+        "merged_into": merged_into,
+        "same_as": same_as,
         "has_token": any(a.usable for a in accounts),
         "budget_usd": str(s.job_budget_usd),
         "available_models": s.available_models or [],
@@ -325,12 +350,50 @@ async def submit_authorize_code(
 
     # 拿到就馬上加密，明文不要在任何地方多待一行。
     account.oauth_token_enc = secrets_box.seal(token)
+
+    # 這組 token 到底是哪一個 Claude 帳號（app/claude_profile.py）。
+    #
+    # **拿不到是預期中的結果**（最可能是 scope：setup-token 產的 token 只有
+    # user:inference），那時 uuid / email 留 None，只記「問過了」—— 帳號卡才講得出
+    # 「查不到」與「還沒查」的差別。整條路不會讓授權失敗：他手上那組 token 是好的。
+    merged_into: str | None = None
+    if claude_profile.enabled():
+        profile = await claude_profile.fetch_profile(token)
+        account.claude_identity_checked_at = datetime.now(UTC)
+        if profile is not None:
+            # 同一個 Claude 帳號他已經借出來過了。**不要退回去叫他重來** ——
+            # `claude setup-token` 產一次就作廢上一組，退回等於把他剛拿到的那組
+            # 燒掉，而他做錯的事只是重複授權了同一個帳號。
+            # 改成把新 token 換到那一列上，並告訴他換到哪裡去了。
+            twin = next(
+                (
+                    a
+                    for a in row.accounts
+                    if a is not account
+                    and a.claude_account_uuid == profile.account_uuid
+                ),
+                None,
+            )
+            if twin is not None:
+                twin.oauth_token_enc = account.oauth_token_enc
+                twin.needs_reauth = False
+                twin.claude_identity_checked_at = account.claude_identity_checked_at
+                merged_into = twin.name
+                if account in row.accounts and body.account_id is None:
+                    row.accounts.remove(account)
+                    await session.delete(account)
+                account = twin
+            account.claude_account_uuid = profile.account_uuid
+            account.claude_email = profile.email
+            account.claude_plan = profile.plan
     del token
     account.needs_reauth = False
     if body.approver_note is not None:
         account.approver_note = body.approver_note.strip() or None
     # 換 token 時順便改名。空字串當成「不改」—— 帳號不能沒有名字。
-    if body.name is not None and body.name.strip():
+    # 併進既有那一列時**不改名**：那一列已經有名字，而他剛才打的是給一個
+    # 他以為是新帳號的名字 —— 用它蓋掉會讓人更糊塗。
+    if merged_into is None and body.name is not None and body.name.strip():
         account.name = body.name.strip()
 
     # 最後一個帳號失效時，系統會自動把接單關掉（routers/worker.py）。那不是他按的，
@@ -344,7 +407,9 @@ async def submit_authorize_code(
 
     await session.commit()
     await session.refresh(row, ["accounts"])
-    return _lending_view(row, online=await host_online(session))
+    return _lending_view(
+        row, online=await host_online(session), merged_into=merged_into
+    )
 
 
 class AccountPatch(BaseModel):
@@ -408,6 +473,59 @@ async def remove_account(
     await session.commit()
     await session.refresh(row, ["accounts"])
     return _lending_view(row, online=await host_online(session))
+
+
+@router.post("/accounts/{account_id}/identity", response_model=LendingView)
+async def refresh_identity(
+    account_id: uuid.UUID,
+    user: User = Depends(require_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """重新問一次「這個帳號是哪個 Claude 帳號」。
+
+    **為什麼要有這支：身分是授權當下才問的，而重新授權會作廢現在那組 token。**
+    沒有這支的話，想知道既有帳號的 email 就得燒掉一組還能用的 token，
+    那個代價跟得到的資訊完全不成比例。
+
+    去重也走這裡：問到的 uuid 跟他另一個帳號一樣時，**只告訴他，不自動合併** ——
+    合併要搬 token，而這支沒有新 token 可搬，硬合會讓其中一列失去憑證。
+    """
+    row = await _my_lending(user, session)
+    account = next((a for a in row.accounts if a.id == account_id), None)
+    if account is None:
+        raise HTTPException(404, "找不到這個出借帳號")
+    if account.oauth_token_enc is None:
+        raise HTTPException(400, "這個帳號沒有授權，沒有東西可以查")
+    if not claude_profile.enabled():
+        raise HTTPException(400, "站台把身分反查關掉了（CLAUDE_PROFILE_LOOKUP）")
+
+    profile = await claude_profile.fetch_profile(
+        secrets_box.open_(account.oauth_token_enc)
+    )
+    account.claude_identity_checked_at = datetime.now(UTC)
+    if profile is not None:
+        account.claude_account_uuid = profile.account_uuid
+        account.claude_email = profile.email
+        account.claude_plan = profile.plan
+    await session.commit()
+    await session.refresh(row, ["accounts"])
+
+    twin = next(
+        (
+            a
+            for a in row.accounts
+            if a.id != account.id
+            and a.claude_account_uuid is not None
+            and a.claude_account_uuid == account.claude_account_uuid
+        ),
+        None,
+    )
+    return _lending_view(
+        row,
+        online=await host_online(session),
+        merged_into=None,
+        same_as=twin.name if twin else None,
+    )
 
 
 def _clear_credits_marks(row: LendingSetting) -> None:

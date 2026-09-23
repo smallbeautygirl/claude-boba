@@ -163,6 +163,21 @@ function AccountRow({
   }
 
   // 改名的暫存。開著編輯時才有值。
+  async function refreshIdentity() {
+    setError(null);
+    try {
+      const next = await api.refreshIdentity(account.id);
+      // 「這兩列其實是同一個帳號」要當場講。不講的話他會看到兩列一樣的 email，
+      // 然後自己去猜哪一個才是真的。
+      if (next.same_as) {
+        setError(`這跟「${next.same_as}」是同一個 Claude 帳號 —— 留一個就好。`);
+      }
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "查不到，請重新整理再試");
+    }
+  }
+
   async function rename() {
     setError(null);
     try {
@@ -227,6 +242,14 @@ function AccountRow({
           >
             <strong>{account.name}</strong> ✎
           </button>
+        )}
+        {/* **這個帳號到底是哪一個 Claude 帳號。** 名字是他自己打的一串字，
+            在這行字出現之前，站台與他都無從分辨兩列是不是同一個帳號。 */}
+        {account.claude_email && (
+          <span className="muted">
+            {account.claude_email}
+            {account.claude_plan && ` · ${account.claude_plan}`}
+          </span>
         )}
         {account.approver_note && (
           <span className="muted">（批准者：{account.approver_note}）</span>
@@ -298,6 +321,19 @@ function AccountRow({
           的地方 —— 而那是他看到三張卡片時會問的第一個問題。
           **null 是「還沒被派到過」，不是「不知道」**：那兩件事分開講
           （同 LendingAccount.utilization 的那條註解）。 */}
+      {/* 身分有三種狀態，而**「查不到」與「還沒查」必須分開講** ——
+          兩個都是空白的話，他不知道該去按那顆按鈕還是該去找 Anthropic。 */}
+      {account.has_token && !account.claude_email && (
+        <p className="hint">
+          {account.claude_identity_checked_at
+            ? "查過了，Anthropic 不給這組 token 的帳號資訊（多半是授權範圍不夠）。"
+            : "還不知道這是哪一個 Claude 帳號。"}{" "}
+          <button type="button" className="small" onClick={refreshIdentity}>
+            查一次
+          </button>
+        </p>
+      )}
+
       <p className="hint">
         {account.last_assigned_at
           ? `上次被派到 job：${since(account.last_assigned_at)}`
@@ -370,11 +406,22 @@ function Authorize({
     setBusy(true);
     setError(null);
     try {
-      await api.submitAuthorizationCode(code.trim(), {
+      const next = await api.submitAuthorizationCode(code.trim(), {
         accountId: account?.id,
         approverNote: note.trim() || undefined,
         name: name.trim() || undefined,
       });
+      // **他剛才授權的是他已經借出來的那個 Claude 帳號。** 新 token 被換到既有
+      // 那一列上了，清單上不會多出他剛命名的那一個 —— 不講的話他會以為授權失敗。
+      //
+      // 這條路刻意不是「退回去叫他重來」：`claude setup-token` 產一次就作廢上一組，
+      // 退回等於把他剛拿到的那組燒掉，而他做錯的只是重複授權了同一個帳號。
+      if (next.merged_into) {
+        alert(
+          `這是你已經借出來的那個 Claude 帳號，所以新的 token 換到「${next.merged_into}」上了，` +
+            "沒有新增一筆。",
+        );
+      }
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "這串碼沒有被接受，請再授權一次");

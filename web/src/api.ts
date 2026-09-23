@@ -171,6 +171,16 @@ export interface LendingAccount {
   /** 上次被派到 job 是什麼時候。**null 是「還沒被派到過」，不是「不知道」。**
       有好幾個帳號的人，這是他唯一看得出「哪一個在輪」的地方。 */
   last_assigned_at: string | null;
+  /** 這個出借帳號實際上是哪一個 Claude 帳號。站台向 Anthropic 反查的
+      （`hub/app/claude_profile.py`，端點是從 CLI binary 裡挖出來的）。 */
+  claude_email: string | null;
+  /** max / pro / team / enterprise，認不出來是 null。 */
+  claude_plan: string | null;
+  /** **問過了沒有**，跟問到了什麼是兩件事：
+      null = 還沒問過（或站台把反查關掉了）；
+      有時間但 claude_email 是 null = 問過了，Anthropic 不給
+      （最可能是 scope —— setup-token 的 token 只有 user:inference）。 */
+  claude_identity_checked_at: string | null;
   /** 這包數字還算不算「現在」。false 就不要顯示百分比 —— 代跑者自己在別的
       地方也在燒同一個帳號，站台不會知道，掛一個理直氣壯的 34% 比不顯示更糟。 */
   quota_fresh: boolean;
@@ -180,6 +190,10 @@ export interface LendingAccount {
     就是一份設定（CONTEXT.md：出借設定）。
     **token 永遠不在這裡面** —— security.md 紅線 2，任何回應都不帶它。 */
 export interface LendingSettings {
+  /** 剛才那次授權其實是同一個 Claude 帳號，新 token 換到這一列上了，沒有新增。 */
+  merged_into: string | null;
+  /** 重新查身分時發現它跟這一列是同一個 Claude 帳號。只告知，不自動合併。 */
+  same_as: string | null;
   /** 底下**任何一個**帳號可用就是 true。 */
   has_token: boolean;
   budget_usd: string;
@@ -620,6 +634,14 @@ export const api = {
       帳號放回派單池；真的沒買，下一個 job 會再失敗一次，標記自己回來。 */
   retryCredits: (id: string) =>
     fetch(`${HUB}/api/workers/accounts/${id}/credits-retry`, {
+      method: "POST",
+      headers: authed(),
+    }).then(json<LendingSettings>),
+
+  /** 重新問一次這個帳號是哪個 Claude 帳號。
+      **不要用「重新授權」去達成這件事** —— 那會作廢現在還能用的 token。 */
+  refreshIdentity: (id: string) =>
+    fetch(`${HUB}/api/workers/accounts/${id}/identity`, {
       method: "POST",
       headers: authed(),
     }).then(json<LendingSettings>),

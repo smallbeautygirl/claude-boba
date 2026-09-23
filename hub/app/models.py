@@ -160,6 +160,13 @@ class LendingAccount(Base):
     """
 
     __tablename__ = "lending_accounts"
+    # 同一位代跑者不能把同一個 Claude 帳號出借兩次。Postgres 的唯一索引不擋多個
+    # NULL —— 那正是要的：反查不到身分的帳號全是 NULL，不該互相衝突。
+    __table_args__ = (
+        UniqueConstraint(
+            "lending_id", "claude_account_uuid", name="uq_lending_account_claude_uuid"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=_uuid
@@ -220,6 +227,25 @@ class LendingAccount(Base):
     # 屬於帳號不屬於條件：「願不願意開 Fable」是人的態度（`available_models`），
     # 「這個帳號現在有沒有 credits」是帳號的物理性質，跟額度同一類（SPEC §4.12）。
     credits_required_models: Mapped[list[str]] = mapped_column(JSONB, default=list)
+
+    # 這個出借帳號**實際上是哪一個 Claude 帳號**（app/claude_profile.py）。
+    #
+    # 在這之前站台從頭到尾沒看過帳號的身分：`name` 是代跑者自己打的一串字，
+    # 同一個 Claude 帳號授權兩次會變成兩個看起來不相干的帳號，而它們共用同一份
+    # 額度與 rate limit —— 派單會以為有兩個池子。
+    #
+    # `claude_account_uuid` 是去重的鍵，不是 email：email 會改，uuid 不會。
+    claude_account_uuid: Mapped[str | None] = mapped_column(String(64), index=True)
+    claude_email: Mapped[str | None] = mapped_column(String(200))
+    # max / pro / team / enterprise。認不出來就是 None，它只是附註。
+    claude_plan: Mapped[str | None] = mapped_column(String(20))
+    # **問過了沒有**，跟問到了什麼是兩件事。
+    # None = 還沒問過（或反查關著）；有時間但 uuid 是 None = 問過了，Anthropic 不給
+    # —— 最可能是 scope：setup-token 產的 token 只有 user:inference。
+    # 少了這個欄位，帳號卡上的空白講不出是哪一種。
+    claude_identity_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

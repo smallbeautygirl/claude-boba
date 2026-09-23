@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     # 逾時給得短：這是管理頁上一個可有可無的附註，不值得讓整頁等它。
     fx_timeout: float = 5.0
 
+    # 授權時去 Anthropic 反查這個 Claude 帳號是誰（app/claude_profile.py）。
+    # **關得掉**：它會對外送一個請求，而那不是這個站台的核心功能 ——
+    # Anthropic 改了什麼的時候要能一行關掉，不是等著改程式。
+    # 關掉的代價是帳號卡上沒有 email，而且同一個帳號授權兩次擋不住。
+    claude_profile_lookup: bool = True
+
     @property
     def admin_email_set(self) -> frozenset[str]:
         """小寫化 + trim 之後的 admin 清單。
