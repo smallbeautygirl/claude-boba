@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { api, type JobDetail as Job } from "./api";
 import "./JobOutcome.css";
+import { usd } from "./money";
 
 export function JobOutcome({ job, onChange }: { job: Job; onChange: (j: Job) => void }) {
   return (
@@ -25,7 +26,7 @@ function Success({ job }: { job: Job }) {
     <div className="outcome ok">
       <pre>{job.result_text}</pre>
       <p className="cost">
-        花費 US${job.total_cost_usd} — {job.debt_label}
+        花費 {usd(job.total_cost_usd)} — {job.debt_label}
       </p>
     </div>
   );

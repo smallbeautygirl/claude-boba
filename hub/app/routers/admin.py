@@ -27,6 +27,7 @@ from ..auth import is_admin, require_user
 from ..config import settings
 from ..db import get_session
 from ..enums import JobStatus
+from ..fxrate import usd_to_twd
 from ..models import Job, LendingAccount, LendingSetting, User, WorkerHost
 from .workers import host_online
 
@@ -359,6 +360,7 @@ async def stats(
     by_status = {str(s): n for s, n in rows}
     done = sum(by_status.get(s, 0) for s in (JobStatus.SUCCEEDED, JobStatus.FAILED))
     spend = await session.scalar(select(func.sum(Job.total_cost_usd))) or Decimal(0)
+    rate, note = await usd_to_twd()
     return {
         "users": users,
         "jobs_total": sum(by_status.values()),
@@ -371,6 +373,19 @@ async def stats(
             else None
         ),
         "spend_usd": str(spend),
+        # 台幣是**粗估**，而且是附註 —— 帳單是美金，對帳以美金為準。
+        # 拿不到匯率就回 None 並把原因一起回（`twd_note`），不要回一個猜的數字：
+        # 一個看起來像量到、其實是寫死係數的台幣，比沒有台幣糟。
+        "twd": (
+            {
+                "rate": str(rate.twd_per_usd),
+                "quoted_on": rate.quoted_on,
+                "source": rate.source_label,
+            }
+            if rate
+            else None
+        ),
+        "twd_note": note,
     }
 
 

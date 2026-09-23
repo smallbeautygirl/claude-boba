@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type DebtRow, type Ledger as LedgerData } from "../api";
+import { usd } from "../money";
 
 export function Ledger() {
   const [data, setData] = useState<LedgerData | null>(null);
@@ -86,7 +87,8 @@ function Row({
         <div className="debt-label">{debt.label}</div>
         <div className="muted">
           {debt.direction === "owe" ? `欠 ${debt.counterpart}` : `${debt.counterpart} 欠你`}
-          {" · "}US${Number(debt.amount_usd).toFixed(2)}
+          {" · "}
+          {usd(debt.amount_usd)}
           {debt.status !== "settled" && ` · 已經 ${debt.days} 天了`}
           {debt.status === "nudged" && " · 對方說請過了"}
         </div>

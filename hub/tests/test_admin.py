@@ -39,6 +39,9 @@ def _admins(monkeypatch):
     # 「attached to a different loop」。單獨跑會過、整檔跑會炸，就是這個。
     engine.sync_engine.pool.dispose()
     monkeypatch.setattr(settings, "admin_emails", f" {ADMIN.upper()} ,x@y.com")
+    # /stats 會去問匯率。關掉來源，測試才不會在跑的時候打外部服務 ——
+    # 那會讓測試在沒網路的機器上變慢、變紅，而且紅的原因跟這個檔在測的事無關。
+    monkeypatch.setattr(settings, "fx_api_url", "")
     yield
     app.dependency_overrides.clear()
 
@@ -66,13 +69,28 @@ def test_nobody_is_admin_when_the_list_is_empty(monkeypatch) -> None:
 def test_stats_never_names_anyone() -> None:
     """聚合數字不指名。多回一個 per-user 欄位就會踩到這條。"""
     body = _client(ADMIN).get("/api/admin/stats").json()
+    # twd / twd_note 是匯率，不是某個人的數字 —— 它們不碰這條界線。
     assert set(body) == {
         "users",
         "jobs_total",
         "jobs_by_status",
         "success_rate",
         "spend_usd",
+        "twd",
+        "twd_note",
     }
+
+
+def test_stats_still_answers_when_the_rate_source_is_off() -> None:
+    """匯率是附註，不是這一頁的必要條件。
+
+    台幣拿不到就整頁 500 的話，一個「順便」的欄位會有本事讓維運介面在
+    最需要它的時候消失。所以那時是 twd=None + 一句原因，其餘照常。
+    """
+    body = _client(ADMIN).get("/api/admin/stats").json()
+    assert body["twd"] is None
+    assert body["twd_note"]
+    assert body["spend_usd"] is not None
 
 
 def test_stuck_jobs_carry_no_job_content() -> None:

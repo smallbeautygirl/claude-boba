@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { TERMINAL, api, type JobStatus, type JobSummary } from "../api";
+import { usd } from "../money";
 
 const POLL_MS = 10000;
 
@@ -59,7 +60,7 @@ export function MyJobs() {
               </div>
               <div className="muted">
                 {ago(j.created_at)} · {j.model}
-                {j.total_cost_usd && ` · US$${Number(j.total_cost_usd).toFixed(2)}`}
+                {j.total_cost_usd && ` · ${usd(j.total_cost_usd)}`}
               </div>
             </div>
             <span className={`chip ${j.status}`}>{LABEL[j.status]}</span>

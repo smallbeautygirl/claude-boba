@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { api, type AdminHealth, type AdminStats, type StuckJob } from "../api";
 import { useAuth } from "../auth";
+import { usd } from "../money";
 
 function mmss(total: number) {
   const m = Math.floor(total / 60);
@@ -157,9 +158,36 @@ export function Admin() {
               : `${Math.round(stats.success_rate * 100)}%`}
           </li>
           <li>
-            累計花費 <span className="cost">US${stats.spend_usd}</span>
+            {/* 美金是帳，台幣是附註 —— 所以美金在前、用 .cost，台幣用「約」。
+                位數的處理在 money.ts，四個顯示金額的地方共用同一份。
+                換算台幣用的是**未取整的原值**，不是畫面上那個兩位數。 */}
+            累計花費 <span className="cost">{usd(stats.spend_usd)}</span>
+            {stats.twd && (
+              <>
+                {" "}
+                · 約 NT$
+                {Math.round(
+                  Number(stats.spend_usd) * Number(stats.twd.rate),
+                ).toLocaleString("zh-TW")}
+              </>
+            )}
           </li>
         </ul>
+      )}
+      {/* 匯率這件事要嘛講清楚、要嘛不要講。拿不到的時候寫出原因，
+          不要讓台幣無聲消失 —— 這一頁的規則是「量不到的東西連同原因一起講」。 */}
+      {stats && (
+        <p className="hint">
+          {stats.twd ? (
+            <>
+              台幣是<strong>粗估</strong>：{stats.twd.source}，{stats.twd.quoted_on}{" "}
+              的 {stats.twd.rate}。帳單是美金，<strong>對帳以美金為準</strong>。
+              {stats.twd_note && `（${stats.twd_note}）`}
+            </>
+          ) : (
+            <>台幣換算暫時算不出來：{stats.twd_note || "沒有匯率"}。</>
+          )}
+        </p>
       )}
       <p className="hint">
         這裡只有總數。<strong>誰用得兇、誰欠誰，這頁查不到</strong>，那是帳本上

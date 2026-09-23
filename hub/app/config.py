@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # 排隊超過這個時間無人接單即作廢（SPEC §5）
     job_queue_expiry_seconds: int = 900
 
+    # 管理頁「累計花費」的台幣粗估用的匯率來源（hub/app/fxrate.py）。
+    # **設成空字串就整個關掉** —— 那時管理頁只顯示美金，並說明為什麼沒有台幣，
+    # 不會退化成一個寫死的係數。粗估可以粗，不可以來路不明。
+    fx_api_url: str = "https://api.finmindtrade.com/api/v4/data"
+    # 逾時給得短：這是管理頁上一個可有可無的附註，不值得讓整頁等它。
+    fx_timeout: float = 5.0
+
     @property
     def admin_email_set(self) -> frozenset[str]:
         """小寫化 + trim 之後的 admin 清單。
