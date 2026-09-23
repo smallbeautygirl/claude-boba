@@ -260,6 +260,7 @@ interface Candidate {
 
 export function Submit() {
   const navigate = useNavigate();
+  const { me } = useAuth();
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("sonnet");
   const [lendingId, setLendingId] = useState("");
@@ -480,17 +481,22 @@ export function Submit() {
             checked={consented}
             onChange={(e) => setConsented(e.target.checked)}
           />
+          {/* 點名的是**真正看得到的人**（web-spec〈隱私勾選〉，2026-09-23 改）。
+              託管模型下 job 在共用主機上跑，代跑者只出借額度、碰不到內容；
+              看得到的是能登進主機與 MinIO 的管理者。名字從 /me 帶下來，不寫死；
+              清單為空就退回「站台管理者」—— 沒有名字不代表沒有人看得到。 */}
           <span>
             我了解{" "}
             <strong>
-              {lender ? `${lender} 技術上可以看到我送出的內容` : "代跑者技術上可以看到我送出的內容"}
+              站台管理者{me?.admin_names?.length ? `（${me.admin_names.join("、")}）` : ""}
+              技術上可以看到我送出的內容
             </strong>
           </span>
         </label>
         <p>
-          這個 job 會在{lender ? ` ${lender} ` : "對方"}的電腦上執行。
-          系統預設不讓代跑者查看內容，但技術上他有能力看到。
-          請不要送出公司機密、客戶個資，或任何你不希望被對方看到的東西。
+          這個 job 會在站台的共用主機上執行，不在{lender ? ` ${lender} ` : "代跑者"}的電腦上
+          —— 代跑者看不到內容，能碰到那台主機的管理者技術上看得到。
+          請不要送出公司機密、客戶個資，或任何你不希望被他們看到的東西。
         </p>
       </div>
 

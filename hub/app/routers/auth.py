@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import notify, observ
@@ -57,7 +57,29 @@ async def me(
         # 的權限，登進去看得到所有人的對話與檔案。靠前端不渲染是不夠的：
         # 沒渲染不等於沒送出去，打開開發者工具就看得到。
         "s3_console_url": settings.s3_console_url if admin else "",
+        # 提交頁的隱私勾選要點名**真正看得到內容的人**。託管模型下那是能碰到主機的
+        # 管理者，不是代跑者（他反而看不到）—— 2026-09-22 之後的文案一直點錯人。
+        "admin_names": await _admin_names(session),
     }
+
+
+async def _admin_names(session: AsyncSession) -> list[str]:
+    """站台管理者的顯示名稱，給隱私揭露點名用。
+
+    來源是 `ADMIN_EMAILS`（跟 is_admin 同一份），對回 users 表拿 display_name；
+    還沒登入過的管理者沒有 users 列，就用 email 的 @ 前半 —— 揭露不能因為某個
+    管理者還沒登入就少一個人。排序固定，文案才不會每次重畫換順序。
+    """
+    emails = settings.admin_email_set
+    if not emails:
+        return []
+    rows = await session.execute(
+        select(User.email, User.display_name).where(
+            func.lower(User.email).in_(sorted(emails))
+        )
+    )
+    by_email = {e.lower(): name for e, name in rows}
+    return sorted(by_email.get(e) or e.split("@", 1)[0] for e in emails)
 
 
 async def _has_run_a_job(session: AsyncSession, user: User) -> bool:
