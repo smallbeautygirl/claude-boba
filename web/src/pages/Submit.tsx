@@ -510,6 +510,8 @@ export function Submit() {
         }
         rows={session ? 4 : 8}
         usedBytes={session?.size ?? 0}
+        // 指定了人才知道他的網路模式；「自動」還不知道會派給誰，不警告。
+        networkOpen={lendingId ? (lenders.find((l) => l.id === lendingId)?.allow_full_network ?? null) : null}
       />
 
       <div className="resume">

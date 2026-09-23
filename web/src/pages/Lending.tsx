@@ -734,8 +734,10 @@ function Conditions({
         </p>
       )}
 
-      {/* 外網不是效能設定，是安全邊界（security.md 紅線 3）。預設關著，
-          而且要說清楚打開之後多出來的能力是什麼 —— 不是「可能有風險」這種空話。 */}
+      {/* 2026-09-23 起預設開（security.md 紅線 3 改寫）：job 早就不在你的電腦上跑，
+          擋外網保護的那台機器不存在了。要講清楚的是**還在的**那個風險 —— 容器裡
+          有你那張 8 小時的 access token，不是「可能有風險」這種空話；也不要把關掉
+          講成偏執，那是他的決定。 */}
       <div className="consent">
         <label className="checkbox">
           <input
@@ -743,12 +745,14 @@ function Conditions({
             checked={network}
             onChange={(e) => setNetwork(e.target.checked)}
           />
-          允許 job 連到整個網際網路
+          允許 job 連到整個網際網路（預設開）
         </label>
         <p>
-          預設只放行 Claude 本身與這個站台的儲存空間。打開之後，同事送進來的內容
-          就能從執行環境對外連線 —— 需要它的情境（例如 <code>pip install</code>）
-          確實存在，但打開的是一道邊界，不是一個效能選項。
+          開著的話，同事貼進來的連結、<code>pip install</code> 都能用。
+          要知道的風險是：執行環境裡有你那張 <strong>8 小時的 access token</strong>，
+          一段惡意的貼上內容理論上能叫 Claude 把它送出去。損失有上限（8 小時、只有
+          用量額度、你隨時能撤銷），但不是零。關掉的話 job 只連得到 Claude 本身與
+          站台儲存，同事貼連結會被擋。
         </p>
       </div>
 

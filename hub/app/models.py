@@ -115,7 +115,10 @@ class LendingSetting(Base):
     )
     owner: Mapped[User] = relationship()
 
-    allow_full_network: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 2026-09-23 起預設**開**（security.md 紅線 3 的改寫）。job 早就不在代跑者的
+    # 電腦上跑了，擋外網保護的那台機器已經不存在；剩下的風險是容器裡那張 8 小時
+    # 的 access token，代跑者要關可以自己關。
+    allow_full_network: Mapped[bool] = mapped_column(Boolean, default=True)
     available_models: Mapped[list[str]] = mapped_column(JSONB, default=list)
     job_budget_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal(5))
     accepting: Mapped[bool] = mapped_column(Boolean, default=False)

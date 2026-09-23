@@ -65,6 +65,7 @@ export function Composer({
   // 那份 transcript）。100 MB 是**整個 job 的輸入合計**，不是附件的合計。
   usedBytes = 0,
   note,
+  networkOpen = null,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -79,6 +80,10 @@ export function Composer({
   rows?: number;
   usedBytes?: number;
   note?: ReactNode;
+  // 這個 job 會跑在能連外網的容器裡嗎？false = 選到了白名單模式的代跑者，
+  // 貼連結會打不開，要警告。true 或 null（自動派單、還不知道是誰）都不警告 ——
+  // 2026-09-23 起預設是開的，對每個人都警告等於沒警告（security.md 紅線 3）。
+  networkOpen?: boolean | null;
 }) {
   const [files, setFiles] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -194,15 +199,17 @@ export function Composer({
       )}
 
       {/* 錯誤貼著送出鍵。留在頁尾的話，按了送出失敗的人根本看不到它。 */}
-      {/* 容器的網路是白名單（security.md 紅線 3），只通得到 api.anthropic.com 與站台儲存 ——
+      {/* 選到白名單模式的代跑者時，容器只通得到 api.anthropic.com 與站台儲存 ——
           任何貼進來的連結它都打不開，Claude 會回「我沒辦法開這個網址」然後結束，
           job 照樣計費。2026-09-23 真的發生過：貼一個 claude.ai/artifact 連結要它做簡報，
           US$0.10 換來一句「請把內容貼進來」。
-          只警告不阻擋：RD 把網址當參考文字貼進 prompt 是合理的。 */}
-      {LINK.test(value) && (
+          2026-09-23 起預設是開外網的（security.md 紅線 3 改寫），所以這段只在
+          networkOpen === false 時出現。只警告不阻擋：RD 把網址當參考文字貼進 prompt 是合理的。 */}
+      {networkOpen === false && LINK.test(value) && (
         <p className="warn composer-error">
-          這個 job 跑在沒有網路的容器裡，<strong>貼進來的連結它打不開</strong>
-          （claude.ai、Google Docs、GitHub 都一樣）。把內容貼進來，或存成檔案用 + 附上。
+          你選的這位代跑者<strong>關了外網</strong>，貼進來的連結它打不開
+          （claude.ai、Google Docs、GitHub 都一樣）。把內容貼進來、存成檔案用 + 附上，
+          或改選一位 🌐 的代跑者。
           {/* artifact 是 PM/BD 最常見的來源，所以直接教怎麼拿：左上角標題的下拉選單。
               Copy as Markdown 比 Download 好 —— 連檔案都不用，而且會連同頁面上
               現場追加的內容一起帶出來（那些存在 db 裡，抓 HTML 是拿不到的）。 */}
