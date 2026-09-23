@@ -72,6 +72,15 @@ cd web && npm install && npm run dev        # http://localhost:5173
 不是忘了加：這是用公司帳號、在公司脈絡下寫的 side project，IP 歸屬還沒確認過，
 現在掛一個開源授權等於替公司做了決定。確認完會補上。
 
+## 正式環境
+
+上面那三個終端機是**開發**的跑法。正式環境進容器：`hub/Dockerfile`（非 root、
+`.env` 靠 `.dockerignore` 擋在外面）與 `web/Dockerfile`（vite build → nginx，
+`/api/` 同源轉給 hub，`web/nginx.conf`）。compose、環境範本與 `deploy.sh`
+放在 repo 外的部署目錄（目前是這台機器的 `/home/vivianfan/money/production`）——
+那裡有真的密碑，不該進版控。跟開發環境同一台機器、port 與 volume 全部錯開，
+細節見該目錄的 README。
+
 ## 這不是什麼
 
 - **不是付費市集。** 不收錢、不轉帳。

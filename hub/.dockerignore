@@ -1,0 +1,13 @@
+# 憑證絕不進 image（security.md）。這一行是整份檔案存在的理由。
+.env
+.env.*
+!.env.example
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+tests/
+smoke.sh
+README.md
