@@ -110,8 +110,19 @@ def link(job_id: object) -> str:
     return f"{settings.web_base_url.rstrip('/')}/jobs/{job_id}"
 
 
-def ledger_link() -> str:
-    return f"{settings.web_base_url.rstrip('/')}/ledger"
+def ledger_link(debt_id: object = None) -> str:
+    """帳本，可以指到**某一筆**。
+
+    web-spec §6 要的是「Teams 通知裡也要能直接按」，而真的按鈕做不到 ——
+    `_card()` 上面那行是實測結論：Workflows webhook 不渲染 MessageCard 的按鈕。
+    Adaptive Card 的 `Action.Http` 也不行，它沒地方放使用者的授權標頭。
+
+    所以退到做得到、而且安全的那一版：連結指到那一筆，帳本會把它標出來，
+    按鈕就在眼前。**不做「點連結就直接結清」** —— 那是一個 GET 觸發的寫入，
+    Teams 的連結預覽或任何人轉貼都可能替債主按下去。
+    """
+    base = f"{settings.web_base_url.rstrip('/')}/ledger"
+    return base if debt_id is None else f"{base}#{debt_id}"
 
 
 def test_message(url: str) -> None:
@@ -220,7 +231,7 @@ def job_stopped(borrower, lender_name: str, job_id: object, note: str | None) ->
 
 
 def debt_created(
-    borrower: Any, lender: Any, label: str, amount: object, job_id: object
+    borrower: Any, lender: Any, label: str, amount: object, debt_id: object
 ) -> None:
     """掛債通知。
 
@@ -237,7 +248,7 @@ def debt_created(
             _card(
                 label,
                 f"你欠 {lender.display_name} 一份人情。剛才那個 job 花了 US${amount}。"
-                f"\n\n[看帳本]({ledger_link()})",
+                f"\n\n[看帳本]({ledger_link(debt_id)})",
                 _GOOD,
             ),
         )
@@ -248,7 +259,7 @@ def debt_created(
                 borrower.email,
                 borrower.display_name,
                 f"{label} — {{@}} 欠 {lender.display_name} 一份人情"
-                f"\n\n[看帳本]({ledger_link()})",
+                f"\n\n[看帳本]({ledger_link(debt_id)})",
             ),
         )
 
@@ -257,10 +268,71 @@ def debt_created(
             lender.teams_webhook_url,
             _card(
                 f"{borrower.display_name} 欠你 {label}",
-                f"US${amount}\n\n[看帳本]({ledger_link()})",
+                f"US${amount}\n\n[去帳本結清這筆]({ledger_link(debt_id)})",
                 _GOOD,
             ),
         )
+
+
+def debt_settled(borrower: Any, lender: Any, label: str, debt_id: object) -> None:
+    """債主按了「他還了」→ 告訴借用者。
+
+    在這之前這則通知不存在，而結清是**債主單方面宣告**的（SPEC §4.8）——
+    借用者不主動開網頁就永遠不知道自己被銷帳了。docs/web-spec.md §11 把它
+    寫成明確的功能缺口，這是補上那一條。
+    """
+    _to_person(
+        borrower,
+        "✅ 銷帳了",
+        f"{lender.display_name} 說你那筆「{label}」還清了。",
+        "看帳本",
+        debt_id,
+    )
+
+
+def debt_nudged(lender: Any, borrower: Any, label: str, debt_id: object) -> None:
+    """借用者按了「我請過了」→ 戳債主。
+
+    **這則是整顆按鈕的全部作用。** 沒有它，借用者按下去之後不會有任何事情
+    發生 —— 債主只有剛好開帳本、剛好注意到多一行小字才會知道。
+    """
+    _to_person(
+        lender,
+        "🫵 有人戳你確認",
+        f"{borrower.display_name} 說他請過那筆「{label}」了，確認一下？",
+        "去帳本結清這筆",
+        debt_id,
+    )
+
+
+def _to_person(user: Any, title: str, body: str, cta: str, debt_id: object) -> None:
+    """帳本那兩則的送法：有私訊 webhook 就私訊，否則頻道 + @ 本人。
+
+    **沒設個人通知的人一律退到頻道**，兩則都一樣（2026-09-23 決定）。理由是
+    這兩則都是**單方面宣告**：宣告的人已經做完他那一半，而另一半只有在對方
+    真的收到時才存在。退回「他自己去開網頁」等於讓那半邊隨機發生。
+
+    `teams_channel_debts` 刻意**不**管這兩則 —— 那個開關問的是「掛債要不要
+    公開」，而這兩則講的是還清與催促，不是誰借了誰。
+
+    兩則都不帶金額：私訊其實可以帶（只有本人看得到），但級距本身就是給人看的
+    那層翻譯，而這裡要說的事情是「還了沒」，不是「多少錢」。
+
+    跟 `_to_author`（許願板那兩則）是同一個形狀，沒有合成一支 —— 合起來要把
+    連結建構也參數化，而那會為了省六行去動到許願板的通知。
+    """
+    if user is None:
+        return
+    text = f"{body}\n\n[{cta}]({ledger_link(debt_id)})"
+    if user.teams_webhook_url:
+        _fire(user.teams_webhook_url, _card(title, text, _GOOD))
+        return
+    if not settings.teams_channel_webhook:
+        return
+    _fire(
+        settings.teams_channel_webhook,
+        _mention_card(user.email, user.display_name, f"{title}\n\n{{@}} {text}"),
+    )
 
 
 def wishes_link(wish_id: uuid.UUID) -> str:

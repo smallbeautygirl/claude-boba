@@ -57,7 +57,12 @@ export function Notifications() {
   return (
     <div className="card">
       <h1>Teams 通知</h1>
-      <p className="lede">job 跑完與掛債時的 Teams 通知。這頁決定它送到哪裡。</p>
+      {/* 這句要跟 notify.py 送得出的東西對得上。2026-09-23 加了結清與催促
+          兩則之後，原本的「job 跑完與掛債」就少講了 —— 少講的方向雖然不像
+          多講那麼糟，但這頁的職責就是讓人知道會收到什麼。 */}
+      <p className="lede">
+        job 跑完、掛債，以及帳本上的結清與催促，都會發 Teams 通知。這頁決定它送到哪裡。
+      </p>
 
       {/* 頻道那一側的代價寫得直白：它是隱私成本，不是功能差異（web-spec §9）。 */}
       {dm && (

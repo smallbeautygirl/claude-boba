@@ -383,6 +383,14 @@ h2 { margin: 24px 0 10px; font-size: 14px; font-weight: 700; color: var(--ink); 
   padding: 12px 0; border-bottom: 1px solid var(--line);
 }
 .debt-label { font-size: 16px; }
+/* Teams 通知連到 /ledger#<debt id>，滾到那一列之後要看得出是哪一列 ——
+   一整頁長得一樣的列裡，「已經滾到了」本身不是一個可見的狀態。
+   用 :target 而不是 JS 加 class：它會跟著網址走，重新整理也還在。 */
+.debt:target {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  padding-left: 12px;
+}
 /* worker 那一列右邊的動作群。兩段式刪除會一次出現兩顆，不包起來的話
    flex 會把它們跟左邊的說明擠在一起。 */
 .worker-actions { display: flex; flex-shrink: 0; gap: 8px; align-items: center; }

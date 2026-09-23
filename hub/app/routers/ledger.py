@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from .. import notify
 from ..auth import require_user
 from ..db import get_session
 from ..enums import DebtStatus
@@ -72,9 +73,14 @@ async def settle(
     debt = await _get(debt_id, session)
     if debt.lender_id != user.id:
         raise HTTPException(status_code=403, detail="只有債主能結清這筆")
+    # 已經結清的再按一次就是同一件事，不是錯誤 —— 但**不再送一次通知**。
+    # 兩個分頁、或 Teams 連結點兩下，都會走到這裡。
+    if debt.status is DebtStatus.SETTLED:
+        return {"status": str(debt.status)}
     debt.status = DebtStatus.SETTLED
     debt.settled_at = datetime.now(UTC)
     await session.commit()
+    notify.debt_settled(debt.borrower, user, LABELS[debt.tier], debt.id)
     return {"status": str(debt.status)}
 
 
@@ -88,18 +94,31 @@ async def nudge(
 
     債主通常懶得按結清，所以把催促的責任放在欠債的人身上 —— 這也比較符合
     人情實際運作的方式。
+
+    **戳是一則通知，不是一個狀態切換。** 再戳一次會再送一則 —— 那正是「催促」
+    的意思，而且這個站台只有個位數使用者，防洗版不是現在該花的複雜度。
     """
     debt = await _get(debt_id, session)
     if debt.borrower_id != user.id:
         raise HTTPException(status_code=403, detail="只有欠債的人能戳")
+    # 結清是**債主單方面宣告**的（SPEC §4.8）。讓借用者戳一筆已結清的債，
+    # 等於讓他把別人宣告過的事情撤銷掉 —— 帳本上那筆會從「已結清」跳回
+    # 債主的「別人欠你」，而債主不會知道。這條在 2026-09-23 實測到過。
+    if debt.status is DebtStatus.SETTLED:
+        raise HTTPException(status_code=409, detail="這筆已經結清了，不用再戳")
     debt.status = DebtStatus.NUDGED
     debt.nudged_at = datetime.now(UTC)
     await session.commit()
+    notify.debt_nudged(debt.lender, user, LABELS[debt.tier], debt.id)
     return {"status": str(debt.status)}
 
 
 async def _get(debt_id: uuid.UUID, session: AsyncSession) -> Debt:
-    debt = await session.get(Debt, debt_id)
+    """借貸雙方一起載進來 —— 結清與戳都要通知對方，而 commit 之後
+    再去 lazy load 一個關聯會是 async 下的 `MissingGreenlet`。"""
+    debt = await session.get(
+        Debt, debt_id, options=[selectinload(Debt.borrower), selectinload(Debt.lender)]
+    )
     if debt is None:
         raise HTTPException(status_code=404, detail="debt not found")
     return debt
