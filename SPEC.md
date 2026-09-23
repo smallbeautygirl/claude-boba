@@ -892,6 +892,18 @@ tokenAccount: D.account ? {uuid: D.account.uuid,
 token**（§11 #9）—— 我們從來沒有自己碰過 OAuth 的交換，也沒有 refresh token。
 要走這條得自己實作 PKCE 交換，那是另一件事，而且它會把 §11 #9 的整個前提換掉。
 
+#### 🔬 對照實驗：換一種 token，同一支端點回 200（2026-09-23）
+
+403 是不是 scope 造成的，原本仍然只是推論 —— 端點可能根本不收任何 OAuth token。
+所以拿 `claude /login` 留下的 access token 打**同一支端點**，相隔幾分鐘：
+
+| token 來源 | scopes | `/api/oauth/profile` |
+|---|---|---|
+| `claude setup-token` | `user:inference` | **403** |
+| `claude /login` | `user:file_upload user:inference user:mcp_servers user:plugins **user:profile** user:sessions:claude_code` | **200**，拿到 `account.uuid`、`account.email`、`organization_type` |
+
+唯一的變數是 scope。**這條因果現在是量到的，不是推出來的。**
+
 #### 所以現在怎麼處理
 
 - 程式留著（`hub/app/claude_profile.py`），**自動反查預設關掉**
@@ -902,6 +914,61 @@ token**（§11 #9）—— 我們從來沒有自己碰過 OAuth 的交換，也�
   NULL，所以它現在對所有人都是 no-op，而不是一個要拆掉的東西
 - **「依 Claude 帳號去重」這件事因此還沒有解**。代跑者分辨帳號目前靠的仍然是
   他自己取的名字（授權時必填，見 web-spec §8）
+
+### #13 改用 `claude /login` 的憑證（2026-09-23，**部分實測**）
+
+#12 的結論是「`setup-token` 的 token 問不出身分」。`/login` 的 token 可以 ——
+那是否該換過去？**兩個最關鍵的前提已經實測通過，但代價也一起量出來了。**
+
+#### ✅ 已驗證
+
+- **`/login` 的 token 帶 `user:profile`**，`/api/oauth/profile` 回 200（見 #12 的對照表）
+- **job 跑得動。** 把 `/login` 的 access token 塞進 `CLAUDE_CODE_OAUTH_TOKEN`、
+  **用一個全新的 HOME**（只有這一個憑證來源，模擬 job 容器），`claude -p "pong"`
+  回 `terminal_reason: completed`。
+  這一條非驗不可 —— `apiKeyHelper` 那條路當初也「看起來該通」，實測回 401
+- 它跟 `setup-token` 的 token **格式一樣**（`sk-ant-oat0…`），差別只在 scope。
+  所以現有的儲存、注入、格式檢查全部不用改
+- 順帶量到：一次 no-op job 是 **US$0.14**（36k cache-creation token，全是 CLI 自己的
+  system prompt）。凡是「先探測一下」的提案都要拿這個數字去乘
+
+#### 💰 代價：到期時間短一個數量級
+
+實際讀一份 `/login` 憑證量到的：
+
+| | 有效期 |
+|---|---|
+| `setup-token` | **365 天**（binary 裡的 `vV = 31536000`） |
+| `/login` access token | **8 小時** |
+| `/login` refresh token | **約 30 天** |
+
+所以換過去意味著：**Hub 要自己管 refresh**（每 8 小時一次，加上併發 refresh
+互踩、時鐘偏移這些新的失敗路徑），而且**代跑者可能每 30 天要重新登入一次**。
+
+#### ➕ 它順手解掉一個現在的漏洞
+
+現在按「不再出借這個帳號」只是刪掉我們手上那份 —— **那組一年期 token 在
+Anthropic 那邊照樣有效**。binary 裡有 `POST {TOKEN_URL}/revoke`
+（`token_type_hint: refresh_token`），走 `/login` 的話撤銷是真的撤得掉。
+
+#### ❓ 還沒驗的，而且它決定這條路值不值得
+
+**refresh 會不會順便換一張新的 refresh token（滾動式）。** 會的話，持續出借的人
+永遠不用重新登入，30 天那條就不是問題；不會的話，每個月要騷擾每一位代跑者一次
+—— 而那大概就足以否決整條路。
+
+binary 裡 `yne` 從回應讀 `refresh_token_expires_in`、而且 `refresh_token: U = e`
+（沒回傳就沿用舊的），看起來是會滾動，**但沒有實測**。
+
+⚠️ **這一項不能拿開發者自己的憑證去試** —— refresh 會輪替掉那份還在用的憑證，
+可能當場把他登出。要驗得先準備一個拋棄式的帳號。
+
+#### 還要驗的其他兩項
+
+- Hub 能不能像驅動 `setup-token` 一樣用 pty 驅動 `claude /login`，並讀走它寫進
+  臨時 HOME 的 `.credentials.json`（#9 驗過 `setup-token` 那半）
+- 換過去要改寫 `security.md` 紅線 2 那張表。它現在只有兩列而且明寫「通道不同，
+  不可互換」—— 這會是第三種，規則要重寫不是加一列
 
 ### #10 不起 job 能不能查額度（2026-09-22 提出，未驗）
 
