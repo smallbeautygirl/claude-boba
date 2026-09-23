@@ -1021,6 +1021,49 @@ Hub 已經在用 pty 驅動 CLI 了（#9），refresh 沒有理由自己重寫�
 
 順帶：那次限流在約十五分鐘後自己退掉。
 
+#### ❌ `claude login` 沒有非互動的入口（2026-09-23 實測）
+
+`claude setup-token` 是**專門為非互動場景做的子指令** —— 這就是 #9 那條 pty 路線
+能成立的原因。`claude login` 不是：它會啟動完整的 TUI，然後在裡面說
+`Not logged in · Run /login`。
+
+一路拆掉三道關卡之後仍然到不了授權網址：
+
+| 關卡 | 繞法 | 結果 |
+|---|---|---|
+| 第一次執行的主題選單 | `.claude.json` 寫 `hasCompletedOnboarding: true` | 過了 |
+| 「信任這個資料夾嗎」 | `projects.<cwd>.hasTrustDialogAccepted: true` | 過了 |
+| `claude login` 直接進 REPL | —— | **卡在這裡** |
+
+（第一次測試被自己的環境污染過：Hub 這邊的測試是從 Claude Code 裡跑的，
+`CLAUDE_CODE_CHILD_SESSION` 被子行程繼承。清掉所有 `CLAUDE*` / `ANTHROPIC*`
+之後結果一樣。）
+
+所以要走 CLI 這條，得在 TUI 裡**打 `/login` 再走選單** —— 那比 `setup-token`
+脆弱得多，而且這個 repo 已經被 TUI 擷取咬過一次（§11 的截斷 token 事件）。
+
+#### 🔀 所以 `/login` 有兩條路，而它們的風險完全不同
+
+**A. 驅動 TUI**：spawn `claude`、等 REPL、送 `/login`、走選單、抓網址、貼碼。
+每一步都是 UI 互動，CLI 改版就可能壞，而壞法是安靜的。
+
+**B. 自己實作 OAuth 的手動流程。** 需要的東西現在都有了：
+
+- `CLIENT_ID = 9d1c250a-e61b-44d9-88ed-5944d1962f5e`
+- authorize：`https://claude.com/cai/oauth/authorize`（或 platform 那個）
+- `MANUAL_REDIRECT_URL = https://platform.claude.com/oauth/code/callback` ——
+  **就是現在「貼授權碼」那個 UX**，站台已經有了
+- token：`POST https://platform.claude.com/v1/oauth/token`
+- PKCE（S256）、scope 清單、以及**一定要帶 User-Agent**（不帶會被 Cloudflare
+  擋成 `403 error code: 1010`，那不是 OAuth 的拒絕）
+
+B 還有一個 A 沒有的好處：**token 交換的回應本身就帶 `account`**
+（`tokenAccount:{uuid, emailAddress, organizationUuid}`），身分不用另外打一支。
+
+**B 唯一沒解的是限流。** 我們對 `/v1/oauth/token` 打了幾次之後就一路 429，
+而那到底是短期懲罰還是常態上限，沒有量過 —— 而 Hub 要替每位代跑者每 8 小時
+refresh 一次，這條必須先量。
+
 #### 還要驗的其他兩項
 
 - Hub 能不能像驅動 `setup-token` 一樣用 pty 驅動 `claude /login`，並讀走它寫進
