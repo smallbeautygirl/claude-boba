@@ -27,10 +27,17 @@ class Settings(BaseSettings):
     s3_bucket: str = "claude-boba"
     s3_region: str = "us-east-1"
 
-    observ_base_url: str = (
-        "https://lighthouse-production.visionai.linkervision.ai/observ"
-    )
-    observ_service_id: str = "e39940ea-1fdf-4527-a3b7-c8d6334e5d2e"
+    # 認證來源。**兩個都沒有預設值，沒設就拒絕啟動**（main.py）。
+    #
+    # 2026-09-23 從寫死的預設值改成必填。它們不是憑證，但它們是**某個組織的內部
+    # 位址與服務註冊編號** —— 寫在程式裡等於這個 repo 一旦公開，就連同「這個端點
+    # 在哪、怎麼打、它的 service id 是什麼」一起發布。位址本身擋不住任何人，
+    # 但也沒有任何理由由程式碼提供。
+    #
+    # 不給預設值的第二個理由跟 admin_emails 同一條：有預設值的設定會被人當成
+    # 「不用管」，然後某天有人在另一個環境跑起來，默默打到正式的認證服務。
+    observ_base_url: str = ""
+    observ_service_id: str = ""
     observ_timeout: float = 15.0
 
     # 通知裡連回 job 頁面用。

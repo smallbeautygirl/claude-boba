@@ -29,6 +29,7 @@ Phase 0 的六項 spike 全數通過，紀錄在 SPEC.md §11 —— 其中四�
 # 1. Hub（含 postgres + minio）
 cd hub && docker compose up -d
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env                       # 填 OBSERV_* 與 TOKEN_ENCRYPTION_KEY
 .venv/bin/uvicorn app.main:app --reload --port 8787
 
 # 2. Worker（出租者端。跑在 host 上，不在容器裡）
@@ -41,6 +42,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # 3. Web
 cd web && npm install && npm run dev        # http://localhost:5173
 ```
+
+認證來源（`OBSERV_BASE_URL` / `OBSERV_SERVICE_ID`）**沒設 Hub 就不會啟動** ——
+它們刻意不寫在程式裡（內部位址不該由原始碼提供），而少了它們沒有人登得進來，
+失敗又長得像「帳號密碼錯了」。內部部署的人跟站台管理者要這兩個值。
 
 `hub/smoke.sh` 可以在沒有 worker 的情況下打過一遍協定。
 
@@ -58,6 +63,14 @@ cd web && npm install && npm run dev        # http://localhost:5173
 還成立的：每個人交自己的 token、燒自己的額度，不是一個帳號大家共用；不收錢。
 
 完整的取捨與理由寫在 [SPEC.md §1](SPEC.md)，**動這件事之前先讀它**。
+
+## 授權
+
+**還沒有。** 這個 repo 目前沒有 LICENSE，法律上就是保留所有權利 —— 看得到，
+但不要拿去用。
+
+不是忘了加：這是用公司帳號、在公司脈絡下寫的 side project，IP 歸屬還沒確認過，
+現在掛一個開源授權等於替公司做了決定。確認完會補上。
 
 ## 這不是什麼
 

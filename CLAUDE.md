@@ -94,6 +94,10 @@
 - **MinIO 的 30 天 lifecycle rule 只能掛在 `jobs/` prefix 上**，不能掛整個 bucket ——
   許願板的圖在 `wishes/`，活到牆被拆掉為止。掛整個 bucket 的話圖會在第 31 天消失
   而願望還在，牆上一排破圖且沒人知道為什麼（SPEC §8）
+- **不要把 `OBSERV_BASE_URL` / `OBSERV_SERVICE_ID` 的預設值加回 `config.py`。**
+  2026-09-23 拿掉的，理由不是「設定比較整齊」—— 那是某個組織的內部位址與服務
+  註冊編號，寫在程式裡等於這個 repo 一公開就連它們一起發布。沒設會在啟動時爆，
+  那是刻意的（`main.py::_check_observ`，`tests/test_observ_is_required.py` 釘著）
 - **改 schema 要跑 Alembic**，不要再用 `create_all` 或手動 `ALTER TABLE`。
   Hub 啟動時會檢查版本，落後就拒絕啟動
 - **新增背景迴圈時，`hub/tests/test_sweeper_is_wired.py` 要多守一條。** 這個 repo 已經

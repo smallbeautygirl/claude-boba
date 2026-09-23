@@ -51,9 +51,32 @@ async def _check_migrations() -> None:
     )
 
 
+def _check_observ() -> None:
+    """認證來源沒設就拒絕啟動。
+
+    跟金鑰同一條理由（secrets_box）：**失敗要響亮**。少了它，Hub 會正常起來、
+    登入頁會正常顯示，然後每一次登入都失敗 —— 而錯誤會長得像「帳號密碼錯了」，
+    那是最花時間的一種假象。
+    """
+    missing = [
+        name
+        for name, value in (
+            ("OBSERV_BASE_URL", settings.observ_base_url),
+            ("OBSERV_SERVICE_ID", settings.observ_service_id),
+        )
+        if not value.strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            f"{'、'.join(missing)} 沒有設定，Hub 不會有任何人登得進來。\n"
+            f"請在 hub/.env 填上認證來源（見 .env.example）。"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _check_migrations()
+    _check_observ()
     # 金鑰有問題就在啟動時爆，不要等到有代跑者要授權才爆 —— 那時候他已經
     # 走到一半，而錯誤會長得像「授權失敗」。
     check_configured()
