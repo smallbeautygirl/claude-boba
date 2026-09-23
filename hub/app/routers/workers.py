@@ -445,10 +445,16 @@ async def remove_account(
 ) -> dict:
     """移除一個**從來沒跑過 job** 的出借帳號。
 
-    判定不是「現在沒有進行中的 job」—— 那會讓一個跑過 50 個 job 的帳號只要閒著
-    就能被刪掉，而那 50 筆 job 的「由誰代跑」是人情債的依據。
-
     跑過 job 的帳號改成撤掉 token：它不再接單，紀錄留著。
+
+    ⚠️ **2026-09-23 更正。** 這段原本寫「那些 job 的『由誰代跑』是人情債的依據」——
+    **那是錯的，而且錯了一整天**：人情債掛在**人**身上（`Debt.lender_id` =
+    出借設定的 owner），job 也是 `lending_id`（人）與 `account_id`（帳號）分開存。
+    刪掉帳號不會動到任何一筆債。
+
+    真正會失去的是**每個帳號各跑了幾個 job** —— ADR-0001 要那個，是為了回答
+    「上個月公司帳號跑了幾個」與「被停權時是誰批准的」。那個代價比原本寫的小得多，
+    但它仍然是一個代價，所以預設仍然不硬刪。
     """
     row = await _my_lending(user, session)
     account = next((a for a in row.accounts if a.id == account_id), None)

@@ -290,7 +290,8 @@ function AccountRow({
       {!account.has_token && !account.needs_reauth ? (
         <p className="hint">
           已經不再出借了，token 也撤掉了。<strong>紀錄留著是因為它跑過 job</strong> ——
-          那些 job 的「由誰代跑」是人情債的依據，帳號整列刪掉那條線就斷了。
+          刪掉整列的話，那些 job 就講不出是燒了你哪一個帳號。
+          （人情債不受影響，那是掛在人身上的。）
         </p>
       ) : account.quota_fresh && windows.length > 0 ? (
         <>
