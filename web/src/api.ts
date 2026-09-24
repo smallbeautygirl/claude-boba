@@ -353,11 +353,20 @@ export interface SmallChangeRow {
   last_at: string | null;
 }
 
+/** 級距表的一列。由高到低；最底那格 floor_usd 是 "0"，畫面要顯示成「< US$1」。
+    來源是 hub 的 pricing._TIERS，前端不另抄一份 —— 兩份會各自漂。 */
+export interface TierRow {
+  tier: string;
+  floor_usd: string;
+  label: string;
+}
+
 export interface Ledger {
   i_owe: DebtRow[];
   owed_to_me: DebtRow[];
   settled: DebtRow[];
   small_change: SmallChangeRow[];
+  tiers: TierRow[];
 }
 
 // token 存在 localStorage。Hub 每次都會跟 Observ 驗證（結果快取 60 秒），

@@ -570,3 +570,13 @@ button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
    分出「這段是講給第一次來的人聽的」。**不要**把它做得更醒目 ——
    這一頁的主線是趕快把 job 丟出去。 */
 .first-time { border-left: 3px solid var(--accent-soft); padding-left: 10px; }
+
+/* 帳本最下面的級距表。收合，字比債務小 —— 它是說明，不是要處理的事。 */
+.tiers { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); }
+.tiers summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--muted); }
+.tiers[open] summary { color: var(--ink); margin-bottom: 6px; }
+.tiers table { border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+.tiers td { padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line); }
+.tiers tr:last-child td { border-bottom: 0; }
+.tiers .tier-range { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+.small-change { font-size: 14px; }

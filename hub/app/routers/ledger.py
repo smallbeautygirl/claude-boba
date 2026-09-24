@@ -10,7 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import notify
+from .. import notify, pricing
 from ..auth import require_user
 from ..db import get_session
 from ..enums import DebtStatus, JobStatus
@@ -57,6 +57,10 @@ async def ledger(
         ],
         "settled": [i for i in items if i["status"] == "settled"],
         "small_change": await _small_change(user.id, session),
+        # 級距表本身。帳本是它唯一該出現的地方（介紹頁刻意不放，web-spec §13），
+        # 而沒看過 SPEC 的人不會知道有這張表存在 —— 「他跑了六次為什麼不欠我」
+        # 的答案就在表的最後一列。
+        "tiers": pricing.table(),
     }
 
 

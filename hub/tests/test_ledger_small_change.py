@@ -143,3 +143,14 @@ def test_borrower_sees_the_same_rows_from_the_other_side(people) -> None:
     body = _client(borrower).get("/api/ledger").json()
     rows = [r for r in body["small_change"] if r["counterpart"] == lender.display_name]
     assert len(rows) == 1 and rows[0]["direction"] == "owe" and rows[0]["jobs"] == 3
+
+
+def test_ledger_carries_the_tier_table(people) -> None:
+    """級距表跟著帳本回來，來源是 pricing._TIERS，前端不另抄。"""
+    _borrower, lender = people
+    tiers = _client(lender).get("/api/ledger").json()["tiers"]
+    floors = [Decimal(t["floor_usd"]) for t in tiers]
+    assert floors == sorted(floors, reverse=True), "由高到低"
+    assert floors[-1] == 0 and tiers[-1]["tier"] == "none"
+    assert Decimal(tiers[-2]["floor_usd"]) == MIN_DEBT_USD
+    assert all(t["label"] for t in tiers)

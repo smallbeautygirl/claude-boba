@@ -63,6 +63,18 @@ MIN_DEBT_USD: Decimal = min(
 )
 
 
+def table() -> list[dict]:
+    """級距表，給畫面用。由高到低，跟 `_TIERS` 同一份 —— 前端不另抄。
+
+    2026-09-23 使用者的話：「我也不知道有這個級距」。表只寫在 SPEC 裡等於沒寫。
+    `floor_usd` 是含下限；最底那格是 0，畫面上要顯示成「< US$1」而不是「≥ US$0」。
+    """
+    return [
+        {"tier": str(tier), "floor_usd": str(floor), "label": LABELS[tier]}
+        for floor, tier in _TIERS
+    ]
+
+
 def tier_for(amount_usd: Decimal) -> DebtTier:
     for floor, tier in _TIERS:
         if amount_usd >= floor:

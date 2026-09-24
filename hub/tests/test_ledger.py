@@ -151,7 +151,9 @@ def _fake_observ_id() -> int:
 
 
 def _find(ledger: dict, section: str, debt_id) -> dict | None:
-    return next((d for d in ledger[section] if d["id"] == str(debt_id)), None)
+    # 帳本回應裡不只有債：small_change 與 tiers 的列沒有 id（2026-09-23），
+    # 用 .get 才不會在「掃過所有區塊」的測試裡炸掉。
+    return next((d for d in ledger[section] if d.get("id") == str(debt_id)), None)
 
 
 # ── 1. 一筆債，兩邊看到的是相反的方向 ───────────────────────────────

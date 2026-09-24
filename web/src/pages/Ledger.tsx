@@ -5,7 +5,13 @@
 // 債務不設到期日，但顯示欠了幾天：比自動勾銷更有社交壓力，也更好笑。
 
 import { useCallback, useEffect, useState } from "react";
-import { api, type DebtRow, type Ledger as LedgerData, type SmallChangeRow } from "../api";
+import {
+  api,
+  type DebtRow,
+  type Ledger as LedgerData,
+  type SmallChangeRow,
+  type TierRow,
+} from "../api";
 import { usd } from "../money";
 
 export function Ledger() {
@@ -13,7 +19,10 @@ export function Ledger() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    api.ledger().then(setData).catch((e: Error) => setError(e.message));
+    api
+      .ledger()
+      .then(setData)
+      .catch((e: Error) => setError(e.message));
   }, []);
 
   useEffect(load, [load]);
@@ -28,11 +37,18 @@ export function Ledger() {
     document.getElementById(id)?.scrollIntoView({ block: "center" });
   }, [data]);
 
-  if (error) return <div className="card"><p className="error">{error}</p></div>;
+  if (error)
+    return (
+      <div className="card">
+        <p className="error">{error}</p>
+      </div>
+    );
   if (!data) return <div className="card">載入中…</div>;
 
   const nothing =
-    data.i_owe.length === 0 && data.owed_to_me.length === 0 && data.settled.length === 0;
+    data.i_owe.length === 0 &&
+    data.owed_to_me.length === 0 &&
+    data.settled.length === 0;
   const small = data.small_change ?? [];
 
   return (
@@ -75,8 +91,48 @@ export function Ledger() {
       )}
 
       {small.length > 0 && <SmallChange rows={small} />}
+
+      <TierTable tiers={data.tiers ?? []} />
     </div>
   );
+}
+
+/* 級距表。帳本是它唯一該出現的地方（介紹頁刻意不放，web-spec §13）。
+   2026-09-23 使用者的話：「我也不知道有這個級距」—— 表只寫在 SPEC 裡等於沒寫。
+   收合著放在最後面：常客不用每次看，第一次來的人一眼找得到。
+   數字只到級距的門檻，不出每筆的精確金額（SPEC §4.7：精確會讓人計較）。 */
+function TierTable({ tiers }: { tiers: TierRow[] }) {
+  if (tiers.length === 0) return null;
+  const min = tiers.length >= 2 ? tiers[tiers.length - 2].floor_usd : null;
+  return (
+    <details className="tiers">
+      <summary>級距怎麼算</summary>
+      <p className="hint">
+        看的是<strong>單筆 job 的花費</strong>（Anthropic API
+        等價金額），一筆一筆算、不累計。
+        失敗、中止、自己跑自己的不計。全站同一張表。
+      </p>
+      <table>
+        <tbody>
+          {tiers.map((t) => (
+            <tr key={t.tier}>
+              <td className="tier-range">
+                {t.tier === "none"
+                  ? `< US$${trim(min)}`
+                  : `≥ US$${trim(t.floor_usd)}`}
+              </td>
+              <td>{t.label}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+
+function trim(n: string | null): string {
+  if (n === null) return "?";
+  return String(Number(n));
 }
 
 /* 不到一杯的往來。**沒有按鈕、不會變成債、不累計成一杯** —— 級距表最底下那格
@@ -86,16 +142,22 @@ function SmallChange({ rows }: { rows: SmallChangeRow[] }) {
   return (
     <>
       <h2>不到一杯的</h2>
-      <p className="hint">單筆不到 US$1 不掛債，人情而已。這裡只是讓你知道誰來借過。</p>
+      <p className="hint">
+        單筆不到 US$1 不掛債，人情而已。這裡只是讓你知道誰來借過。
+      </p>
       {rows.map((r) => (
-        <div className="debt small-change" key={`${r.direction}-${r.counterpart}`}>
+        <div
+          className="debt small-change"
+          key={`${r.direction}-${r.counterpart}`}
+        >
           <div className="muted">
             {r.direction === "owed"
               ? `${r.counterpart} 用你的額度跑了 ${r.jobs} 次`
               : `你用 ${r.counterpart} 的額度跑了 ${r.jobs} 次`}
             {" · 合計 "}
             {usd(r.total_usd)}
-            {r.last_at && ` · 最近一次 ${new Date(r.last_at).toLocaleDateString("zh-TW")}`}
+            {r.last_at &&
+              ` · 最近一次 ${new Date(r.last_at).toLocaleDateString("zh-TW")}`}
           </div>
         </div>
       ))}
@@ -139,7 +201,9 @@ function Row({
       <div>
         <div className="debt-label">{debt.label}</div>
         <div className="muted">
-          {debt.direction === "owe" ? `欠 ${debt.counterpart}` : `${debt.counterpart} 欠你`}
+          {debt.direction === "owe"
+            ? `欠 ${debt.counterpart}`
+            : `${debt.counterpart} 欠你`}
           {" · "}
           {usd(debt.amount_usd)}
           {debt.status !== "settled" && ` · 已經 ${debt.days} 天了`}
