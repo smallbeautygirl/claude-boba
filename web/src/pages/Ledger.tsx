@@ -10,8 +10,8 @@ import {
   type DebtRow,
   type Ledger as LedgerData,
   type SmallChangeRow,
-  type TierRow,
 } from "../api";
+import { TierTable } from "../TierTable";
 import { usd } from "../money";
 
 export function Ledger() {
@@ -95,44 +95,6 @@ export function Ledger() {
       <TierTable tiers={data.tiers ?? []} />
     </div>
   );
-}
-
-/* 級距表。帳本是它唯一該出現的地方（介紹頁刻意不放，web-spec §13）。
-   2026-09-23 使用者的話：「我也不知道有這個級距」—— 表只寫在 SPEC 裡等於沒寫。
-   收合著放在最後面：常客不用每次看，第一次來的人一眼找得到。
-   數字只到級距的門檻，不出每筆的精確金額（SPEC §4.7：精確會讓人計較）。 */
-function TierTable({ tiers }: { tiers: TierRow[] }) {
-  if (tiers.length === 0) return null;
-  const min = tiers.length >= 2 ? tiers[tiers.length - 2].floor_usd : null;
-  return (
-    <details className="tiers">
-      <summary>級距怎麼算</summary>
-      <p className="hint">
-        看的是<strong>單筆 job 的花費</strong>（Anthropic API
-        等價金額），一筆一筆算、不累計。
-        失敗、中止、自己跑自己的不計。全站同一張表。
-      </p>
-      <table>
-        <tbody>
-          {tiers.map((t) => (
-            <tr key={t.tier}>
-              <td className="tier-range">
-                {t.tier === "none"
-                  ? `< US$${trim(min)}`
-                  : `≥ US$${trim(t.floor_usd)}`}
-              </td>
-              <td>{t.label}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </details>
-  );
-}
-
-function trim(n: string | null): string {
-  if (n === null) return "?";
-  return String(Number(n));
 }
 
 /* 不到一杯的往來。**沒有按鈕、不會變成債、不累計成一杯** —— 級距表最底下那格

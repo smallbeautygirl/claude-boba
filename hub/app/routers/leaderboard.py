@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import pricing
 from ..auth import require_user
 from ..db import get_session
 from ..enums import DebtStatus, JobStatus
@@ -46,6 +47,9 @@ async def leaderboard(
         "debtors": await _debtors(session),
         "lenders": await _lenders(session),
         "biggest_this_month": await _biggest_this_month(session),
+        # 級距表跟著回：榜上寫「欠著 2 筆」時，旁邊就要看得到一筆是怎麼算出來的
+        # （2026-09-24 回報）。同一份 pricing._TIERS，前端不另抄。
+        "tiers": pricing.table(),
     }
 
 

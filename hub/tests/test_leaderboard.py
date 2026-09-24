@@ -159,6 +159,9 @@ def test_boards_count_the_right_things(world) -> None:
     assert big is not None and Decimal(big["amount_usd"]) >= Decimal("4.0")
     assert big["label"]
 
+    # 級距表跟著回，跟帳本同一份。
+    assert [x["tier"] for x in body["tiers"]][-1] == "none"
+
 
 def test_nothing_from_a_job_leaks(world) -> None:
     borrower, _ = world

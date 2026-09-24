@@ -376,6 +376,8 @@ export interface Leaderboard {
     lender: string;
     finished_at: string | null;
   } | null;
+  /** 級距表，跟帳本同一份（TierTable.tsx）。 */
+  tiers: TierRow[];
 }
 
 export interface Ledger {

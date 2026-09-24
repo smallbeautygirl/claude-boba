@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type Leaderboard as Board } from "../api";
+import { TierTable } from "../TierTable";
 import { usd } from "../money";
 
 export function Leaderboard() {
@@ -86,6 +87,10 @@ export function Leaderboard() {
           )}
         </>
       )}
+
+      {/* 級距表展開放著：榜上寫「欠著 2 筆」，旁邊就要看得到一筆是怎麼算出來的
+          （2026-09-24 回報）。帳本那邊是收合的，這裡是玩心的頁面，表本身就是內容。 */}
+      <TierTable tiers={data.tiers ?? []} open />
     </div>
   );
 }
