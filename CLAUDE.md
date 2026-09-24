@@ -58,7 +58,7 @@
 `web/`（React）。
 怎麼跑見 [README.md](README.md)。
 
-尚未實作：排行榜。
+排行榜於 2026-09-24 實作完成；SPEC 列的功能都做了。
 
 （**附件上傳已完成**，2026-09-22。`.jsonl` 的 session 檔走 `claude --resume`；
 其他檔案平鋪在工作目錄根層。帶 codebase 進來的路徑是「壓成一個含 `.git` 的 zip」——

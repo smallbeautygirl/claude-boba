@@ -361,6 +361,23 @@ export interface TierRow {
   label: string;
 }
 
+/** 排行榜（web-spec §7）。純聚合數字：名字與數量，沒有 job 內容、沒有 job id。 */
+export interface Leaderboard {
+  /** 全站人數。空狀態要分得出「只有你一個人」跟「有人但還沒跨人借過」。 */
+  users: number;
+  /** 欠債王：未結清筆數多的在前，不按金額排（web-spec §7）。 */
+  debtors: { name: string; open_debts: number; total_usd: string; oldest_days: number }[];
+  /** 金主榜：幫別人跑成功的 job 數。不算債 —— 多數 job 不到一杯。 */
+  lenders: { name: string; jobs: number; total_usd: string }[];
+  biggest_this_month: {
+    amount_usd: string;
+    label: string;
+    borrower: string;
+    lender: string;
+    finished_at: string | null;
+  } | null;
+}
+
 export interface Ledger {
   i_owe: DebtRow[];
   owed_to_me: DebtRow[];
@@ -694,6 +711,8 @@ export const api = {
     fetch(`${HUB}/api/admin/stuck-jobs`, { headers: authed() }).then(json<StuckJob[]>),
 
   ledger: () => fetch(`${HUB}/api/ledger`, { headers: authed() }).then(json<Ledger>),
+  leaderboard: () =>
+    fetch(`${HUB}/api/leaderboard`, { headers: authed() }).then(json<Leaderboard>),
 
   settle: (id: string) =>
     fetch(`${HUB}/api/ledger/${id}/settle`, { method: "POST", headers: authed() }).then(
