@@ -1445,3 +1445,26 @@ UI 可以直接避免：`filename` 是客戶端送的（`POST /api/uploads/attac
   但只有一台 worker 時按了沒地方送。等有第二台。
 - **排行榜**：資料與名次整個沒有，`/leaderboard` 現在是一頁招募文案（`03782d9`）。
   等有第二個使用者才有意義 —— 現在只有一個人，而人不能欠自己。
+
+---
+
+## 2026-09-24 認領：「查 Observ 事件」指令（observ-event-lookup）
+
+一個 session 在動這些，別的 session 先不要碰：
+
+- `worker/job-claude/skills/observ-event-lookup/`（新）、`worker/tests/test_observ_lookup.py`（新）
+- hub：`config.py`、`main.py`、`observ.py`、`models.py`（Job.observ_token_enc）、`schemas.py`、
+  `routers/jobs.py`、`routers/worker.py`、`expiry.py`、`alembic/versions/a9d4e7f2c1b8_*`、
+  `data/commands.json`、`tests/test_observ_token_intake.py`（新）、`tests/test_observ_is_required.py`、`tests/conftest.py`
+- worker：`worker.py`、`run-job.sh`
+- web：`api.ts`、`pages/Submit.tsx`
+- 文件：`CONTEXT.md`（Observ 事件查詢一節）、`docs/adr/0002`、`docs/adr/0003`（各補一段）、
+  `SPEC.md` §11 #14、`.claude/rules/security.md`（紅線 2 第四列）、`hub/.env.example`、
+  `worker/job-claude/README.md`、`CLAUDE.md`（地雷一條）
+
+**已定案、不要重開的**：登入 token 直傳（不是另收帳密）、腳本獨占 token、只派給開外網的代跑者、
+`MIDDLEWARE_BASE_URL` 沒設不啟動（預設值只在 hub.env.example）、playground 那五份 linker-task 文件不進 job。
+理由全在 SPEC §11 #14 與兩篇 ADR 的修訂段。
+- 另一個 session（money-e8）同日平行做過同一件事，已停手；它留下的 `hub/tests/test_observ_token_dispatch.py`、
+  `worker/tests/fixtures/observ/`、worker 的 `JOB_EXTRA_HOSTS`（`worker.py`、`run-job.sh`、`production/worker.env.example`）
+  一併保留，兩邊的 SPEC §11 #14 已合併成一節。
