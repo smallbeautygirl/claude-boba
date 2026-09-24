@@ -64,13 +64,18 @@ def _check_observ() -> None:
         for name, value in (
             ("OBSERV_BASE_URL", settings.observ_base_url),
             ("OBSERV_SERVICE_ID", settings.observ_service_id),
+            # 2026-09-24 加。它不是認證來源，但同一類：內網位址，沒設就整個指令
+            # 在跑起來之後才失敗，而且失敗長得像「指令壞了」。硬度跟上面兩個一樣
+            # （Q24 定案：沒設不啟動，預設值放 hub.env.example）。
+            ("MIDDLEWARE_BASE_URL", settings.middleware_base_url),
         )
         if not value.strip()
     ]
     if missing:
         raise RuntimeError(
-            f"{'、'.join(missing)} 沒有設定，Hub 不會有任何人登得進來。\n"
-            f"請在 hub/.env 填上認證來源（見 .env.example）。"
+            f"{'、'.join(missing)} 沒有設定 —— 少了認證來源沒有人登得進來，"
+            f"少了 MIDDLEWARE_BASE_URL「查 Observ 事件」會在花掉額度之後才失敗。\n"
+            f"請在 hub/.env 填上（見 .env.example）。"
         )
 
 

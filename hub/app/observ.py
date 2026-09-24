@@ -9,8 +9,12 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 
@@ -86,6 +90,28 @@ async def whoami(token: str) -> ObservUser:
 
     _cache[token] = (now + _TOKEN_TTL_SECONDS, user)
     return user
+
+
+def token_expires_at(token: str) -> datetime | None:
+    """讀 JWT 的 exp。**不驗簽章** —— 身分由 whoami 向 Observ 驗，這裡只回答「還剩多久」。
+
+    「查 Observ 事件」把委託者登入的 token 派給 job 用（ADR-0002 的 2026-09-24 修訂）。
+    job 排隊最多 15 分鐘、跑最多 10 分鐘；送出時剩不到一小時的 token 會讓 job 跑到
+    一半 401，那是花了代跑者額度才失敗的那種，要在收單時擋。
+    不是 JWT、或沒有 exp → None，呼叫端當「不知道」處理（不擋）。
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        exp = claims.get("exp")
+    except (ValueError, TypeError, binascii.Error):
+        return None
+    if not isinstance(exp, int | float):
+        return None
+    return datetime.fromtimestamp(exp, tz=UTC)
 
 
 def _detail(resp: httpx.Response) -> object:

@@ -14,8 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import events, notify, storage
+from .. import events, notify, observ, secrets_box, storage
 from ..auth import require_user
+from ..config import settings
 from ..db import get_session
 from ..dispatch import auto_candidates, follow_up_target, only_me
 from ..enums import JobStatus, SourceType
@@ -36,6 +37,7 @@ from ..schemas import (
     JobDetail,
     JobSummary,
     StopJob,
+    needs_observ_token,
 )
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -333,6 +335,82 @@ async def _check_model(
     raise HTTPException(400, f"現在線上沒有人開放 {model}，請換一個 model 或稍後再送")
 
 
+async def _observ_token_for(prompt: str, token: str | None, user: User) -> bytes | None:
+    """「查 Observ 事件」的 job 才收 Observ token；收了就要驗（ADR-0002 修訂，2026-09-24）。
+
+    三道檢查，都在**花掉代跑者額度之前**（SPEC §4.13 的原則）：
+    1. prompt 不是那個指令 → 不收。瀏覽器不該送，送了也不存 —— 一張 72 小時的
+       Observ 身分沒有理由躺在一個用不到它的 job 上。
+    2. token 必須是**本人**的。不驗這條的話，任何登入者都能把別人的 token 塞進來，
+       讓 job 用別人的身分查事件。
+    3. 剩餘效期要夠 job 排隊＋跑完（settings.observ_token_min_remaining_seconds）。
+       送出時還活著、跑到一半 401，是花了額度才失敗的那種，要在這裡擋。
+    回傳加密後的 bytes；直到派單前都只以這個形狀存在。
+    """
+    if not needs_observ_token(prompt):
+        return None
+    if not token:
+        raise HTTPException(
+            400,
+            "「查 Observ 事件」需要你的 Observ 登入。這一頁沒有帶上它 —— "
+            "請重新登入 boba 後再送一次。",
+        )
+    try:
+        who = await observ.whoami(token)
+    except observ.ObservError as exc:
+        if exc.status_code == 401:
+            raise HTTPException(
+                400, "你的 Observ 登入已經過期，請重新登入 boba 後再送一次。"
+            ) from exc
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    if who.id != user.observ_user_id:
+        raise HTTPException(403, "這張 Observ 登入不是你的。")
+    expires_at = observ.token_expires_at(token)
+    if expires_at is not None:
+        remaining = (expires_at - datetime.now(UTC)).total_seconds()
+        if remaining < settings.observ_token_min_remaining_seconds:
+            raise HTTPException(
+                400,
+                "你的 Observ 登入快過期了（剩不到一小時），job 可能跑到一半就失效。"
+                "請重新登入 boba 後再送一次。",
+            )
+    return secrets_box.seal(token)
+
+
+async def _check_network(
+    requested_lending_id: uuid.UUID | None,
+    borrower_id: uuid.UUID,
+    session: AsyncSession,
+) -> None:
+    """帶 Observ token 的 job 要連 Observ 與 middleware，只能派給開外網的代跑者
+    （SPEC §4.13「選了指令就收窄派單範圍」的第一個實例，2026-09-24）。
+
+    在這裡擋而不是排隊：排到一位白名單代跑者手上，容器連不到、花了額度才失敗，
+    而錯誤會長得像「指令壞了」。
+    """
+    stmt = select(LendingSetting).where(
+        LendingSetting.accepting.is_(True),
+        LendingSetting.allow_full_network.is_(True),
+    )
+    if requested_lending_id is not None:
+        stmt = stmt.where(LendingSetting.id == requested_lending_id)
+    open_ones = list(await session.scalars(stmt))
+    if requested_lending_id is not None:
+        if not open_ones:
+            raise HTTPException(
+                400,
+                "你指定的代跑者關掉了外網，「查 Observ 事件」在他那裡連不到 Observ。"
+                "請改選「自動」或另一位開放外網的代跑者。",
+            )
+        return
+    if not any(s.owner_user_id != borrower_id for s in open_ones):
+        raise HTTPException(
+            400,
+            "目前線上沒有開放外網的代跑者，「查 Observ 事件」需要連到 Observ。"
+            "請稍後再送，或在代跑者那一欄指定自己（如果你自己有開）。",
+        )
+
+
 @router.post("", response_model=JobDetail, status_code=201)
 async def create_job(
     body: JobCreate,
@@ -346,6 +424,9 @@ async def create_job(
         transcript_bytes = storage.stat(body.transcript_key) or 0
     if body.attachment_keys:
         _check_attachments(body.attachment_keys, user, transcript_bytes)
+    observ_token_enc = await _observ_token_for(body.prompt, body.observ_token, user)
+    if observ_token_enc is not None:
+        await _check_network(body.requested_lending_id, user.id, session)
 
     job = Job(
         borrower_id=user.id,
@@ -357,6 +438,7 @@ async def create_job(
         attachment_keys=list(body.attachment_keys),
         requested_lending_id=body.requested_lending_id,
         borrower_cli_version=body.borrower_cli_version,
+        observ_token_enc=observ_token_enc,
         status=JobStatus.QUEUED,
     )
     session.add(job)
@@ -447,6 +529,11 @@ async def follow_up(
         borrower_id=user.id,
     )
     await _check_model(parent.model, requested, user.id, session)
+    # 接著問「查 Observ 事件」：看的是**這一輪**的 prompt 開頭。上一輪的 token 派單時
+    # 就清掉了，所以瀏覽器要再送一張當下的；沒有就走一般續問，腳本會說缺環境變數。
+    observ_token_enc = await _observ_token_for(body.prompt, body.observ_token, user)
+    if observ_token_enc is not None:
+        await _check_network(requested, user.id, session)
 
     job = Job(
         borrower_id=user.id,
@@ -457,6 +544,7 @@ async def follow_up(
         transcript_key=parent.transcript_key,
         attachment_keys=body.attachment_keys,
         requested_lending_id=requested,
+        observ_token_enc=observ_token_enc,
         status=JobStatus.QUEUED,
     )
     session.add(job)
@@ -497,6 +585,7 @@ async def stop_job(
         )
 
     job.status = JobStatus.CANCELLED
+    job.observ_token_enc = None
     job.stop_note = (body.note or "").strip() or None
     job.error_kind = "cancelled_by_lender"
     job.finished_at = datetime.now(UTC)

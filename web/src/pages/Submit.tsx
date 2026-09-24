@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, DEFAULT_MODELS, SITE_MODELS, type LenderRow } from "../api";
+import { api, DEFAULT_MODELS, SITE_MODELS, type LenderRow, observTokenFor } from "../api";
 import { useAuth } from "../auth";
 import { Composer, fmtSize } from "../Composer";
 
@@ -376,6 +376,8 @@ export function Submit() {
         requested_lending_id: lendingId || null,
         transcript_key: session?.key ?? null,
         attachment_keys: attachmentKeys,
+        // 只有「查 Observ 事件」帶 Observ token（api.ts 的 observTokenFor）。
+        observ_token: observTokenFor(prompt),
       });
       navigate(`/jobs/${job.id}`);
     } catch (err) {

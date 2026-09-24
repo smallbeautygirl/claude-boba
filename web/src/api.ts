@@ -85,6 +85,26 @@ export interface CreateJobInput {
   transcript_key?: string | null;
   // 要它處理的檔案。worker 放進工作目錄根層，Claude 一進去就看得到。
   attachment_keys?: string[];
+  /** 「查 Observ 事件」用：登入 boba 的那張 Observ token。**只在 prompt 以那個指令
+      開頭時送**（見 withObservToken），其他 job 一律不帶 —— 一張 72 小時的 Observ 身分
+      沒有理由躺在一個用不到它的 job 上。hub 收單時會驗它是本人的、還剩夠久。 */
+  observ_token?: string | null;
+}
+
+/** 「查 Observ 事件」的指令名。跟 hub 的 schemas.OBSERV_COMMAND 一致；hub 的測試
+    釘著 commands.json 裡有它，這裡只是鏡像。 */
+export const OBSERV_COMMAND = "/observ-event-lookup";
+
+/** 這個 prompt 是不是「查 Observ 事件」。只看開頭 —— worker 把整個文字框當一個
+    prompt，Claude Code 也只認開頭那一個指令。 */
+export function needsObservToken(prompt: string): boolean {
+  const head = prompt.trimStart().split(/\s+/, 1)[0];
+  return head === OBSERV_COMMAND;
+}
+
+/** 要送 Observ token 的話，就是登入 boba 用的那一張（同一個 localStorage）。 */
+export function observTokenFor(prompt: string): string | null {
+  return needsObservToken(prompt) ? tokenStore.get() : null;
 }
 
 export interface UploadTicket {
@@ -604,7 +624,12 @@ export const api = {
     fetch(`${HUB}/api/jobs/${id}/follow-up`, {
       method: "POST",
       headers: authed({ "content-type": "application/json" }),
-      body: JSON.stringify({ prompt, attachment_keys }),
+      // 接著問「查 Observ 事件」要再帶一張**當下**的 token：上一輪那張 hub 派單時就清掉了。
+      body: JSON.stringify({
+        prompt,
+        attachment_keys,
+        observ_token: observTokenFor(prompt),
+      }),
     }).then(json<JobDetail>),
 
   listJobs: () => fetch(`${HUB}/api/jobs`, { headers: authed() }).then(json<JobSummary[]>),

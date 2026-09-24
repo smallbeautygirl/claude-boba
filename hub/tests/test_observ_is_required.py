@@ -23,28 +23,34 @@ def test_no_endpoint_is_baked_into_the_code() -> None:
     fresh = Settings(_env_file=None)
     assert fresh.observ_base_url == ""
     assert fresh.observ_service_id == ""
+    # 2026-09-24：middleware 的位址同一條規則。它是內網位址，「不用想就有值」由
+    # hub.env.example 負責，不由程式碼負責。
+    assert fresh.middleware_base_url == ""
 
 
 @pytest.mark.parametrize(
-    ("base_url", "service_id", "expected"),
+    ("base_url", "service_id", "middleware", "expected"),
     [
-        ("", "sid", "OBSERV_BASE_URL"),
-        ("https://x.example.com", "", "OBSERV_SERVICE_ID"),
-        ("   ", "sid", "OBSERV_BASE_URL"),
+        ("", "sid", "https://mw.example.com", "OBSERV_BASE_URL"),
+        ("https://x.example.com", "", "https://mw.example.com", "OBSERV_SERVICE_ID"),
+        ("   ", "sid", "https://mw.example.com", "OBSERV_BASE_URL"),
+        ("https://x.example.com", "sid", "", "MIDDLEWARE_BASE_URL"),
     ],
 )
 def test_startup_refuses_when_missing(
-    monkeypatch, base_url: str, service_id: str, expected: str
+    monkeypatch, base_url: str, service_id: str, middleware: str, expected: str
 ) -> None:
     monkeypatch.setattr(settings, "observ_base_url", base_url)
     monkeypatch.setattr(settings, "observ_service_id", service_id)
+    monkeypatch.setattr(settings, "middleware_base_url", middleware)
     with pytest.raises(RuntimeError) as err:
         main._check_observ()
     # 訊息要點名是哪一個沒設，不然設了一個漏一個的人會重跑三次才問對問題。
     assert expected in str(err.value)
 
 
-def test_startup_passes_when_both_are_set(monkeypatch) -> None:
+def test_startup_passes_when_all_are_set(monkeypatch) -> None:
     monkeypatch.setattr(settings, "observ_base_url", "https://x.example.com")
     monkeypatch.setattr(settings, "observ_service_id", "sid")
+    monkeypatch.setattr(settings, "middleware_base_url", "https://mw.example.com")
     main._check_observ()

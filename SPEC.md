@@ -852,6 +852,72 @@ worker                                   Hub
 | ~~8~~ | ✅ **已解**：長期 OAuth token 當環境變數可行，`total_cost_usd` 還在。但撞出一個既有漏洞：`availableModels` 根本不擋 model（見下方）| — |
 | 9 | ⚠️ **部分可行**：`setup-token` 可以用 pty 驅動、授權網址解析得出來，但流程要求把**授權碼**貼回來（見下方）| — |
 | 10 | ❓ **待驗**：不起 job 能不能拿到 `rate_limit_info`？那次呼叫算不算額度？一支程式代 N 個帳號輪詢會不會被當異常（見下方）| 額度面板退成只在 job 跑完時更新，主動輪詢取消 |
+| ~~14~~ | ✅ **已解**：Observ 事件紀錄與截圖查得到，middleware 直接吃 Observ token；「查 Observ 事件」指令據此實作（見下方） | — |
+
+### ~~#14 PM 要的「查事件截圖」查得到嗎~~ → 已解（2026-09-24 對 production 實測）
+
+起因：PM 日常在 Observ 查「客戶收到的那筆事件背後是什麼」，問能不能用 boba 的 job 查。
+手上的 linker-task 文件（RD 建偵測用的 CLI skill）明講「事件明細、截圖的 API 尚未研究」，
+而且整份建立在一支不在 job image 裡的 CLI 上 —— 所以不是把那些文件放進 job，是另外查清楚。
+
+#### ✅ 查得到，而且 API 早有文件，只是不在那些檔案裡
+
+`lighthouse-saas-api/apps/fde-smart-copilot-final/data/observ-openapi.json` 有 apiserver 的 spec。實測：
+
+| 事實 | 結果 |
+|---|---|
+| `POST /observ/apiserver/users/token` | Keycloak JWT，**效期 72 小時** |
+| `GET /observ/apiserver/v2/events/record` | Bearer + `x-service-id` 可；`?auth_token=&service_id=` 也可。篩 `ids`（**重複帶**，逗號分隔 422）、`event_type_ids`、`start_time`/`end_time`、`in_hours`，一頁最多 50 |
+| 截圖 `image_url` | 絕對網址（`/observ/media-provider/file/<service_id>/image/…jpg`）。**只認 query 上的 `auth_token`**，Bearer header 回 401 |
+| PM 例子 `event_type_id=1111954` | 那是**事件紀錄** id（類型是 10650）。詞用錯層，後續 glossary 釘住「事件類型／事件紀錄」（CONTEXT.md） |
+| 量級 | 該類型單日 611 筆；全站近 24 小時 26 萬筆 → 類型級查詢必帶時間窗、每次上限 40 張 |
+| middleware（`192.168.80.136`，將搬 `.80.120:8443`） | **直接吃 Observ token**（它拿去問 Observ `auth/users/me`），header 是 `X-Service-Id`。`/v2/processed-event-logs?event_record_id=`、`/pm/event-flow`（轉發結果、二次驗證；7 天窗）、`/pm/event-flow/{id}/image`、`/pm/annotations/vlm-labels/{type}` 都通 |
+| middleware TLS | 兩台同一張 CN=localhost 自簽憑證（到 2036）。**釘憑證驗**，不用 verify=False（`skills/observ-event-lookup/scripts/middleware-ca.pem`） |
+| `/v2/event-translate` | 在 repo 裡、**正式站兩台都 404**（沒部署）。腳本試一次、404 就改掃 `event-flow` 的 `new_event_name` |
+| 客戶「結束」訊息的 `event_record_id` | 合成的（epoch 毫秒），Observ 查不到 → 用 `tracking_id` |
+
+#### 🚨 job 容器連不到 Observ，hub 卻連得到（2026-09-24 實測，差點漏掉）
+
+腳本在主機上跑通之後，放進真的 job image（`--network bridge`）跑：**TCP 到 Observ 直接 timeout**，
+`api.anthropic.com` 卻通。查出來是 DNS：這台主機的 `/etc/hosts` 把
+`lighthouse-production.visionai.linkervision.ai` 指到內網 `192.168.80.79`；compose 網路上的容器
+（hub）透過 Docker 內建 DNS 繼承這份，**預設 bridge 上的 job 容器不會** —— 它直接問上游 DNS
+（`10.1.58.11`），解到公網 `60.249.169.36`，而那個 IP 從內網連不出去（hub 容器打它也 timeout）。
+
+修法：worker 新增 `JOB_EXTRA_HOSTS`（`host:ip,…` → `docker run --add-host`），值放
+`worker/.env`（`production/worker.env.example` 有），不寫進程式碼。加了之後在 image 裡實跑
+`record 1111954` 成功。**部署時 worker/.env 要補這一行，否則指令在 job 裡永遠 timeout，
+而 hub 登入正常，會查很久。**
+
+#### 🔑 憑證那條路因此改了（ADR-0002 的 2026-09-24 修訂）
+
+登入 boba 用的就是 Observ 帳密，瀏覽器手上那張 token 72 小時有效、job 最多活 25 分鐘 ——
+另收帳密、hub 保管、派單換票全都多餘。改成瀏覽器只在 `/observ-event-lookup` 時把登入 token
+帶上，hub 驗本人＋剩餘效期 ≥ 1 小時，加密存到派單、交出去就清，環境變數注入 job。
+
+#### ⚠️ 一個做這個指令時才看清楚的既有事實
+
+hub 把 job 的整條 stream-json（含每個 Bash 指令原文）存進 `job_events` 並重播給瀏覽器。
+所以 job 裡任何一張憑證只要進了指令列，就等於進了資料庫。「查 Observ 事件」因此只讓
+一支腳本碰 token（SKILL.md 明令），而這條約束對**未來每一個**要帶憑證的指令都成立 —— 寫進了
+security.md 紅線 2 的表。
+
+#### 📎 腳本用到、上面表格沒寫的幾個細節
+
+- 紀錄欄位：`event_record_id`、`event_type_id`、`event_name`、`timestamp`、`timezone`、
+  `event_record_status`（TBC / Confirmed / False Alarm）、`image_url`、`image_urls`（VLM flow 有進入點那張）、
+  `video_url`、`vlms`、`coordinates`、`note`。
+- `/pm/event-flow` **沒有** `event_record_id` 篩選：找回某一筆要用「發生時間 ± 2 分鐘 ＋ 該類型」自己配對；
+  一頁 500、最多 7 天；回的是每次發生（`tracking_id`）的 `anchor` + `members`，列清單只取 anchor。
+- `/v2/processed-event-logs` 對 vendor 身分回 403（middleware 靠身分分內部／vendor）。
+- `/pm/annotations/vlm-labels/{type}` 回 `{keys: {英文問題: {question: 中文, answers: {英文: 中文}}}}`，
+  boolean 回答也對得到（`"True"` / `"False"` 當 key）。
+- 兩邊抓到的截圖是同一個檔（147,842 bytes）。Observ 歷史頁深連結：
+  `{BASE_DOMAIN}/observ/history?eventLogModalId=<event_record_id>`。
+- 實作落點：`worker/job-claude/skills/observ-event-lookup/`（SKILL.md、`boba.json`、腳本、釘住的 PEM）；
+  hub `Job.observ_token_enc`（只在排隊期間有值）、`_observ_token_for`（驗本人、剩餘效期 ≥ 1 小時）、
+  `_check_network`＋`_claim` 收窄、`MIDDLEWARE_BASE_URL` 必要設定；worker `OBSERV_*` 四個環境變數＋
+  `JOB_EXTRA_HOSTS`；web 只在 prompt 以 `/observ-event-lookup` 開頭時送 token。
 
 ### ~~#12 能不能問出一個出借帳號是哪個 Claude 帳號~~ → 已解，**不能**（2026-09-23 實測）
 

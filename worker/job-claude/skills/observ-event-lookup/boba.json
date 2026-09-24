@@ -1,0 +1,10 @@
+{
+  "note": "指令宣告（SPEC §4.13、ADR-0003）。目前只有 domains 會被讀：它是這個指令要連去哪裡的**具名紀錄**，worker 還沒有 per-job 的 allowlist 生成（ADR-0003 的 2026-09-24 註記）。secrets 不在這裡：這個指令用的是委託者登入 boba 的 Observ token（ADR-0002 的 2026-09-24 修訂），由 hub 以環境變數注入。",
+  "domains": [
+    "lighthouse-production.visionai.linkervision.ai",
+    "192.168.80.120",
+    "192.168.80.136"
+  ],
+  "env": ["OBSERV_TOKEN", "OBSERV_BASE_URL", "OBSERV_SERVICE_ID", "MIDDLEWARE_BASE_URL"],
+  "needs_network": true
+}

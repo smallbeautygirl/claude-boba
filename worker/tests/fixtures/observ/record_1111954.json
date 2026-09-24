@@ -1,0 +1,49 @@
+{
+ "event_record_id": 1111954,
+ "task_id": 6053,
+ "event_type_id": 10650,
+ "event_name": "B-80-道路鋪面坑洞辨識-BUS-v17.1-flow-L-M",
+ "event_description": "",
+ "event_record_status": "TBC",
+ "timestamp": "2026-07-24T09:47:03.516859Z",
+ "updated_timestamp": "2026-07-24T09:47:03.516859Z",
+ "video_time": null,
+ "image_url": "https://observ.example.com/observ/media-provider/file/00000000-0000-0000-0000-000000000000/image/vlm/6053/entry/2026/07/24/1bf3de91.jpg",
+ "image_urls": [
+  "https://observ.example.com/observ/media-provider/file/00000000-0000-0000-0000-000000000000/image/vlm/6053/entry/2026/07/24/1bf3de91.jpg"
+ ],
+ "video_url": null,
+ "location_id": 13,
+ "camera_id": 5180,
+ "video_id": null,
+ "timezone": "Asia/Taipei",
+ "vlms": [
+  {
+   "vlm_template_id": 10239,
+   "vlm_template_name": "B-80-道路鋪面坑洞辨識-v17.1",
+   "results": [
+    {
+     "key": "what is the weather condition",
+     "val": [
+      "B. Cloudy"
+     ]
+    },
+    {
+     "key": "what is the size of the potholes",
+     "val": [
+      "A. Small"
+     ]
+    },
+    {
+     "key": "is the pothole on the drivable lane",
+     "val": true
+    }
+   ]
+  }
+ ],
+ "coordinates": {
+  "latitude": 22.0,
+  "longitude": 120.0
+ },
+ "note": ""
+}

@@ -19,13 +19,14 @@ These rules are always active. Violations must be fixed before merging.
 
 出租者的 Anthropic 憑證是這整個系統裡最敏感的東西 —— 它被盜等於帳號被停權。
 
-**憑證有三種，通道不可互換：**
+**憑證有四種，通道不可互換：**
 
 | 憑證 | 怎麼進 job 容器 | 為什麼 |
 |---|---|---|
 | `.credentials.json`（在自己機器上 `claude /login` 的成果） | **只以唯讀 volume 掛入** | 它是檔案，Claude Code 會就地讀它 |
 | 長期 OAuth token（`claude setup-token`，`sk-ant-oat01-…`，一年期） | **只以環境變數 `CLAUDE_CODE_OAUTH_TOKEN` 注入該 job 的容器** | 那是 Anthropic 官方為非互動場景設計的唯一通道 |
 | **站台自己跑 OAuth 拿到的 access token**（2026-09-23，SPEC §11 #13） | **同上：環境變數 `CLAUDE_CODE_OAUTH_TOKEN`** | 它跟上一列**格式完全相同**（`sk-ant-oat0…`），差別在 scope 與效期，不在通道 |
+| **委託者的 Observ token**（2026-09-24，「查 Observ 事件」；ADR-0002 修訂） | **環境變數 `OBSERV_TOKEN`**，只進 prompt 以 `/observ-event-lookup` 開頭的那個 job 的容器 | 它不是 Claude 的憑證，是**委託者對公司系統的身分**（72 小時 JWT）。瀏覽器只在那個指令時送；hub 驗本人、加密存到派單、交出去就清；容器裡只有 `observ_lookup.py` 碰它 —— job 的每行指令都會進 `job_events` 表，token 進了指令列就等於進了資料庫 |
 
 > **2026-09-23 新增第三列。** 它不是一個新通道 —— 注入方式跟第二列逐字相同，
 > 實測也是用同一個環境變數跑過 job 的（§11 #13）。真正不同的是**站台手上多了

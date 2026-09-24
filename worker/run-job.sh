@@ -48,6 +48,23 @@ fi
 resume=()
 [[ -n "$TRANSCRIPT" ]] && resume=(--resume "/job/$TRANSCRIPT")
 
+# 「查 Observ 事件」的 job 才有：委託者的 Observ token 與位址（skills/observ-event-lookup）。
+# 只用 -e NAME（不寫值）讓 docker 從這個行程的環境帶進去，值不會出現在指令列或 ps 裡。
+OBSERV_ARGS=()
+if [[ -n "${OBSERV_TOKEN:-}" ]]; then
+  OBSERV_ARGS=(-e OBSERV_TOKEN -e OBSERV_BASE_URL -e OBSERV_SERVICE_ID -e MIDDLEWARE_BASE_URL)
+fi
+
+# 主機 /etc/hosts 裡的內網對應，job 容器在 bridge 上拿不到（見 worker.py 的 job_extra_hosts）。
+# 格式 host:ip,host:ip → 每一組一個 --add-host。
+HOST_ARGS=()
+if [[ -n "${JOB_EXTRA_HOSTS:-}" ]]; then
+  IFS=',' read -ra _pairs <<< "$JOB_EXTRA_HOSTS"
+  for _pair in "${_pairs[@]}"; do
+    [[ -n "$_pair" ]] && HOST_ARGS+=(--add-host "$_pair")
+  done
+fi
+
 mkdir -p "$WORKDIR/.home/.claude"
 
 # availableModels 吃 JSON 陣列
@@ -72,6 +89,8 @@ exec timeout --signal=TERM --kill-after=20 "$TIMEOUT" \
     --user "$(id -u):$(id -g)" \
     -e HOME=/job/.home \
     "${CRED_ARGS[@]}" \
+    "${OBSERV_ARGS[@]}" \
+    "${HOST_ARGS[@]}" \
     -v "$WORKDIR:/job" \
     -w /job \
     "$IMAGE" \

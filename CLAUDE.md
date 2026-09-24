@@ -103,6 +103,10 @@
   用 Adobe 的 CID 字型 —— 那種字型**引用而不內嵌**，做出來的 PDF 文字抽得出來、
   頁面全白，而 `check.py` 還說它是乾淨的。現在裝的是 `fonts-arphic-uming`（+30MB）。
   **不要換成 `fonts-noto-cjk`**：它是 PostScript outline，reportlab 拒絕內嵌
+- **委託者的 Observ token 只在 job 排隊那段留在 hub 上**（2026-09-24，「查 Observ 事件」）。
+  `Job.observ_token_enc` 在派單交給 worker 的那一行就清成 None，過期、取消也清。不要為了
+  「接著問方便」把它留下來 —— 接著問時瀏覽器會再送一張當下的。容器裡只有
+  `observ_lookup.py` 碰它；SKILL.md 明令 Claude 不得自己組網址，因為每行指令都進 `job_events`
 - **改 schema 要跑 Alembic**，不要再用 `create_all` 或手動 `ALTER TABLE`。
   Hub 啟動時會檢查版本，落後就拒絕啟動
 - **新增背景迴圈時，`hub/tests/test_sweeper_is_wired.py` 要多守一條。** 這個 repo 已經

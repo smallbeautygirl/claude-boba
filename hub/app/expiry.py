@@ -51,6 +51,8 @@ async def sweep_once(session: AsyncSession) -> int:
     for job in stale:
         job.status = JobStatus.EXPIRED
         job.finished_at = now
+        # 「查 Observ 事件」排隊期間暫存的委託者 Observ token：沒派出去就用不到了。
+        job.observ_token_enc = None
     await session.commit()
 
     # 通知放在 commit 之後：先確保狀態真的寫進去了，再去講。反過來的話，

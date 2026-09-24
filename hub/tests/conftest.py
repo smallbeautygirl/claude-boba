@@ -41,6 +41,10 @@ def _observ_placeholder():
     """
     settings.observ_base_url = settings.observ_base_url or "https://observ.example.com"
     settings.observ_service_id = settings.observ_service_id or "test-service-id"
+    # 2026-09-24 起 MIDDLEWARE_BASE_URL 同一條規則（「查 Observ 事件」用）。
+    settings.middleware_base_url = (
+        settings.middleware_base_url or "https://middleware.example.com"
+    )
 
 
 def _db_name(url: str) -> str:

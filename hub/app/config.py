@@ -40,6 +40,18 @@ class Settings(BaseSettings):
     observ_service_id: str = ""
     observ_timeout: float = 15.0
 
+    # middleware（Observ 下游、把事件轉給客戶的那一層）的位址，「查 Observ 事件」指令用。
+    # 例：https://192.168.80.120:8443 —— **不含路徑**，job 裡的腳本自己接 /observ/apiserver。
+    #
+    # 跟上面兩個同一條規則：**沒有預設值，沒設就拒絕啟動**（main.py）。它是一個內網位址，
+    # 沒有理由由程式碼提供；「不用想就有值」由 hub.env.example 負責，不由這裡負責
+    # （2026-09-24 決定，見 docs/adr/0002 的修訂段）。
+    # 搬家（.80.136 → .80.120）就是改這一個 env。
+    middleware_base_url: str = ""
+    # 委託者的 Observ token 剩不到這麼久就不收單。job 排隊上限 15 分鐘、執行上限 10 分鐘，
+    # 留一小時是讓「送出時還活著、跑到一半死掉」這種花了額度才失敗的情況不會發生。
+    observ_token_min_remaining_seconds: int = 3600
+
     # 通知裡連回 job 頁面用。
     web_base_url: str = "http://localhost:5173"
 

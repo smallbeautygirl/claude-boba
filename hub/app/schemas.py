@@ -50,6 +50,20 @@ SITE_MODELS = ("sonnet", "haiku", "fable")
 DEFAULT_MODELS = ["sonnet", "haiku"]
 
 
+# 「查 Observ 事件」的指令名。前端據此決定要不要把 Observ token 一起送，hub 據此
+# 決定要不要收。兩邊要一致，所以由 hub 在 /api/commands 回給前端，不在前端寫死。
+OBSERV_COMMAND = "/observ-event-lookup"
+# Keycloak 的 JWT 一般 1–2 KB；給 8 KB 是餘量，不是規格。
+OBSERV_TOKEN_MAX_CHARS = 8192
+
+
+def needs_observ_token(prompt: str) -> bool:
+    """這個 prompt 是不是「查 Observ 事件」。只看開頭 —— worker 把整個文字框當一個
+    prompt，Claude Code 也只認開頭那一個指令（CONTEXT.md「指令」）。"""
+    head = prompt.lstrip().split(maxsplit=1)
+    return bool(head) and head[0] == OBSERV_COMMAND
+
+
 class JobCreate(BaseModel):
     # 借用者身分由 Authorization header 決定，不接受從 body 指定 ——
     # 否則任何人都能用別人的名義掛債。
@@ -66,6 +80,10 @@ class JobCreate(BaseModel):
     borrower_cli_version: str | None = Field(default=None, max_length=32)
     # 借用者先把檔案 PUT 進 MinIO，再把 key 帶過來。Hub 在這裡驗歸屬與大小。
     attachment_keys: list[str] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
+    # 「查 Observ 事件」用：委託者登入 boba 的那張 Observ token（瀏覽器 localStorage 裡
+    # 的同一張），**只在 prompt 以 /observ-event-lookup 開頭時送**。hub 收單時驗它是
+    # 本人的、還剩夠久，加密存到派單為止，然後以環境變數注入 job（ADR-0002 修訂）。
+    observ_token: str | None = Field(default=None, max_length=OBSERV_TOKEN_MAX_CHARS)
 
 
 class AttachmentUploadRequest(BaseModel):
@@ -165,6 +183,9 @@ class FollowUp(BaseModel):
     # 接著問也可以帶新的附件 —— 跟完一輪之後想再給它一份參考檔案，
     # 是很具體的情境。沒有這個的話輸入列會少一顆 +，使用者會找不到。
     attachment_keys: list[str] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
+    # 同 JobCreate.observ_token。接著問時瀏覽器送**當下**那張 token，不是上一輪的 ——
+    # 上一輪那張 hub 派單時就清掉了。
+    observ_token: str | None = Field(default=None, max_length=OBSERV_TOKEN_MAX_CHARS)
 
 
 class Attachment(BaseModel):
@@ -200,6 +221,13 @@ class WorkerJob(BaseModel):
     transcript_put_url: str | None = None
     # 借用者的輸入檔。worker 下載進工作目錄，Claude 才有東西可讀。
     attachments: list[Attachment] = Field(default_factory=list)
+    # 「查 Observ 事件」的 job 才有：委託者的 Observ token 與它要打的位址。
+    # 🚨 跟 oauth_token 同一條規則：worker 收到就立刻 pop、只進該 job 容器的環境變數、
+    # 不 log（security.md 紅線 2 的 2026-09-24 新增列）。
+    observ_token: str | None = None
+    observ_base_url: str | None = None
+    observ_service_id: str | None = None
+    middleware_base_url: str | None = None
 
 
 class EventBatch(BaseModel):

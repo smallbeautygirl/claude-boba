@@ -91,3 +91,23 @@ plugin 不會、也不該被載入。要讓大家共用某個 skill，就放進�
 **版本釘死在 1.2.3，不追 main。** 理由同 Dockerfile 釘版本：上游更新會無聲改變
 每個 job 的行為，而這裡的內容是會指導 Claude 用 Bash 的 —— 要進來就要被看過。
 升級 = 一個 PR。
+
+## `skills/observ-event-lookup/` 是第一個會連外部服務的指令（2026-09-24）
+
+給 PM 用的只讀查詢：事件紀錄的截圖、VLM 回答、審核狀態，加上 middleware 的二次驗證與
+轉發結果。它跟其他 skill 有三個不一樣的地方，改它之前要知道：
+
+- **它需要一張不屬於代跑者的憑證**：委託者登入 boba 的 Observ token，由 hub 以環境變數
+  `OBSERV_TOKEN` 注入（只在 prompt 以 `/observ-event-lookup` 開頭時；ADR-0002 修訂）。
+  容器裡**只有 `scripts/observ_lookup.py` 碰它**。SKILL.md 明令 Claude 不得自己組網址 ——
+  job 的每一行指令都進 `job_events` 表，token 進了指令列就等於進了資料庫。
+- **它有 `boba.json`**（SPEC §4.13 的指令宣告）。目前只有 `domains` 被當文件讀：worker 還
+  沒做 per-job allowlist（ADR-0003 的 2026-09-24 註記），帶 token 的 job 改由 hub 只派給
+  開外網的代跑者。
+- **`scripts/middleware-ca.pem` 是 middleware 的自簽憑證**（CN=localhost，兩台主機同一張，
+  到 2036）。腳本用它做 TLS 驗證，**不是** `verify=False`。憑證換了就更新這個檔（PR）。
+
+測試在 `worker/tests/test_observ_lookup.py`，用 2026-09-24 對 production 抓回來、去識別化的
+回應當 fixture。要對真環境跑一次：登入拿 token，放進子行程環境變數（不落地），
+`observ_lookup.py record 1111954`。
+

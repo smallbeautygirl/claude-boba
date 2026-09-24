@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .. import credentials, events, notify, storage
+from .. import credentials, events, notify, secrets_box, storage
 from ..config import settings
 from ..db import get_session
 from ..dispatch import auto_candidates
@@ -153,9 +153,22 @@ async def poll(
         await session.commit()
         return Response(status_code=204)
 
+    # 「查 Observ 事件」的 job：委託者的 Observ token 只在排隊期間存在 hub 上，
+    # 交給 worker 的這一刻就清掉 —— job 跑起來之後 hub 沒有任何理由再握著它
+    # （models.Job.observ_token_enc）。解密只發生在這一行。
+    observ_token: str | None = None
+    if job.observ_token_enc is not None:
+        observ_token = secrets_box.open_(job.observ_token_enc)
+        job.observ_token_enc = None
+        await session.commit()
+
     return WorkerJob(
         # 託管模型：job 跑在這台主機上，用 Hub 挑中的那個出借帳號的 token。
         oauth_token=token,
+        observ_token=observ_token,
+        observ_base_url=settings.observ_base_url if observ_token else None,
+        observ_service_id=settings.observ_service_id if observ_token else None,
+        middleware_base_url=settings.middleware_base_url if observ_token else None,
         job_id=job.id,
         prompt=job.prompt,
         model=job.model,
@@ -284,6 +297,10 @@ async def _claim(
                 continue
             if job.model not in (setting.available_models or []):
                 continue
+            # 帶 Observ token 的 job 要連外網（Observ 與 middleware）。派給關了外網的
+            # 代跑者只會在容器裡連不到、花了額度才失敗（SPEC §4.13 收窄，2026-09-24）。
+            if job.observ_token_enc is not None and not setting.allow_full_network:
+                continue
             account = await _pick_account(setting, session, job.model)
             if account is None:
                 continue
@@ -391,6 +408,8 @@ async def push_result(
     job = await _owned_job(job_id, session)
 
     job.status = body.status
+    # 派單時就該清掉了；這裡再保證一次，不讓任何路徑把它留到終態之後。
+    job.observ_token_enc = None
     job.result_text = body.result_text
     job.total_cost_usd = body.total_cost_usd
     job.error_kind = body.error_kind

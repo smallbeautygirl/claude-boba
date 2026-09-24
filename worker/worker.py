@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     # 開放外網時用哪個 docker network。預設 bridge：白名單那條路走 proxy，
     # 這條路不走 —— 兩者不能共用同一個網路。
     open_network: str = "bridge"
+    # job 容器要額外知道的 host → ip 對應，逗號分隔（`host:ip,host2:ip2`），會變成
+    # `docker run --add-host`。
+    #
+    # 2026-09-24 查出來的：這台主機的 /etc/hosts 把 Observ 的網域指到內網 IP，compose
+    # 網路上的容器（hub）繼承得到，**預設 bridge 上的 job 容器拿不到** —— 它直接問上游
+    # DNS、解到公網 IP，而那個 IP 從內網連不出去（TCP 直接 timeout）。少了這條，
+    # 「查 Observ 事件」在 job 裡永遠連不到 Observ，而 hub 自己登入卻正常，非常難查。
+    # 值是站台的內網事實，放 worker/.env，不寫進程式碼（同 hub 的 OBSERV_BASE_URL 理由）。
+    job_extra_hosts: str = ""
     job_root: Path = Path(".jobs")
 
     # ⚠️ 出借條件（花費上限、可用 model、外網）**不再由這裡設定**。
@@ -478,6 +487,9 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     # 任何一個把 job 放進例外訊息的地方，都會變成外洩（security.md 紅線 2）。
     # pop 之後 dict 就是安全的，只有下面這個區域變數需要小心。
     oauth_token = job.pop("oauth_token", None)
+    # 同一句話再說一次：「查 Observ 事件」的 job 帶著委託者 72 小時的 Observ token。
+    # 一樣立刻 pop、只進該容器的環境變數、不 log。
+    observ_token = job.pop("observ_token", None)
 
     # 出租者自己的最後一道防線。Hub 已經擋過一次，但燒的是**這台機器的**額度，
     # 所以不能只靠上游。
@@ -505,6 +517,7 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         # 網路模式也是那位代跑者的條件。空字串 = 走白名單 proxy（預設）。
         "OPEN_NETWORK": settings.open_network if job.get("allow_full_network") else "",
         "WORKER_IMAGE": settings.worker_image,
+        "JOB_EXTRA_HOSTS": settings.job_extra_hosts,
         "PATH": "/usr/bin:/bin:/usr/local/bin",
     }
 
@@ -512,6 +525,13 @@ async def run_job(client: httpx.AsyncClient, job: dict[str, Any]) -> None:
     # 沒有就沿用掛載 .credentials.json 的舊路。
     if oauth_token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    # 「查 Observ 事件」：token 與它要打的位址一起下去。run-job.sh 看到 OBSERV_TOKEN
+    # 才會把這四個 -e 進容器；沒有的 job 容器裡完全沒有這組變數。
+    if observ_token:
+        env["OBSERV_TOKEN"] = observ_token
+        env["OBSERV_BASE_URL"] = job.get("observ_base_url") or ""
+        env["OBSERV_SERVICE_ID"] = job.get("observ_service_id") or ""
+        env["MIDDLEWARE_BASE_URL"] = job.get("middleware_base_url") or ""
 
     proc = await asyncio.create_subprocess_exec(
         str(HERE / "run-job.sh"),

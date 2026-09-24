@@ -349,6 +349,14 @@ class Job(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 委託者登入 boba 的 Observ token，加密存放，**只在「查 Observ 事件」的 job 上有值**
+    # （prompt 以 /observ-event-lookup 開頭時瀏覽器才送；ADR-0002 的 2026-09-24 修訂）。
+    #
+    # 它在這裡只停留「排隊」那一段：派單交給 worker 的當下就清成 None（routers/worker.py
+    # poll），排到過期也清（expiry.py）。job 跑起來之後 hub 手上不該再有這張 token ——
+    # 它 72 小時有效，而 hub 沒有任何理由在 job 之外用它。
+    # 絕不進 JobDetail、不進 log；解密只發生在派單那一行（security.md）。
+    observ_token_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
     # worker 最後一次為這個 job 打回來的時間（事件批次或空的心跳，每 ~3 秒一次）。
     # 沒有它，hub 無法分辨「還在跑」與「worker 死了、沒人會來結案」——
     # 2026-09-23 一個 job 就因此停在「執行中」超過半小時（見 app/orphans.py）。

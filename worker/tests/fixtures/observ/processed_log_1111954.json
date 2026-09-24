@@ -1,0 +1,23 @@
+{
+ "page": 1,
+ "size": 5,
+ "total": 1,
+ "total_pages": 1,
+ "results": [
+  {
+   "id": 1,
+   "tracking_id": "6053-1111954",
+   "status": "start",
+   "source": "observ_socket",
+   "event_record_id": 1111954,
+   "task_id": 6053,
+   "event_type_id": 10650,
+   "event_record_status": "TBC",
+   "gemma_answer": "[ \"false\" ]",
+   "ensemble_decision": null,
+   "verification_source": "gemma4",
+   "created_at": "2026-07-24T17:47:06.131634",
+   "cctv_id": "BT000000   F2"
+  }
+ ]
+}

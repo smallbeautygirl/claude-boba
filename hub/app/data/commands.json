@@ -1,5 +1,5 @@
 {
-  "note": "推薦清單，不是完整清單。CLI 內建的指令有 30 幾個，全列出來只會讓人不知所措 —— 這裡只挑對這個平台的使用情境真的有用的。新增前請先實測該指令在 job 容器裡跑得動。 來源有兩種，都在容器裡、都釘版本（SPEC §4.13）：job-claude/（走 PR；mattpocock 那組釘 v1.2.3，文件類的 pptx/xlsx/docx/pdf 是我們自己寫的）、CLI 內建（由 image 的 claude-code 2.1.278 釘住）。 anthropic-skills:* 那組 2026-09-23 拿掉了：託管模型的 token 讀不到 org 同步的 skill，而授權條款不允許複製進來，見 worker/job-claude/README.md。 chip: true 的會在文字框空著時直接露在框內（docs/web-spec.md §3）。",
+  "note": "推薦清單，不是完整清單。CLI 內建的指令有 30 幾個，全列出來只會讓人不知所措 —— 這裡只挑對這個平台的使用情境真的有用的。新增前請先實測該指令在 job 容器裡跑得動。 來源有兩種，都在容器裡、都釘版本（SPEC §4.13）：job-claude/（走 PR；mattpocock 那組釘 v1.2.3，文件類的 pptx/xlsx/docx/pdf 是我們自己寫的）、CLI 內建（由 image 的 claude-code 2.1.278 釘住）。 anthropic-skills:* 那組 2026-09-23 拿掉了：託管模型的 token 讀不到 org 同步的 skill，而授權條款不允許複製進來，見 worker/job-claude/README.md。 chip: true 的會在文字框空著時直接露在框內（docs/web-spec.md §3）。 observ 那組（2026-09-24）是第一個要連外部服務的指令：它用委託者登入 boba 的 Observ token（ADR-0002 修訂），只派給開外網的代跑者（SPEC §4.13 收窄）；指令宣告在 worker/job-claude/skills/observ-event-lookup/boba.json。",
   "groups": [
     {
       "id": "office",
@@ -28,6 +28,21 @@
           "name": "/pdf",
           "label": "處理 PDF",
           "desc": "讀出文字與表格、合併、拆分、加水印、填表、加密；掃描檔沒有 OCR"
+        }
+      ]
+    },
+    {
+      "id": "observ",
+      "title": "查 Observ",
+      "audience": "PM",
+      "hint": "客戶說收到／沒收到一個事件？貼事件紀錄 id、tracking_id 或客戶端的事件名稱＋時間，拿回截圖、VLM 回答、有沒有轉給中華／資拓與為什麼。只讀，不會改 Observ 上的東西；會用你登入 boba 的 Observ 身分去查。",
+      "commands": [
+        {
+          "name": "/observ-event-lookup",
+          "chip": true,
+          "label": "查 Observ 事件",
+          "desc": "貼事件紀錄 id、tracking_id 或客戶端事件名稱＋時間，拿回截圖、VLM 回答、審核狀態、有沒有轉給客戶",
+          "needs_observ_token": true
         }
       ]
     },

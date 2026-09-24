@@ -1,0 +1,26 @@
+{
+ "event_type_id": 10650,
+ "keys": {
+  "what is the weather condition": {
+   "question": "天氣狀態",
+   "answers": {
+    "A. Sunny": "晴天",
+    "B. Cloudy": "陰天"
+   }
+  },
+  "what is the size of the potholes": {
+   "question": "坑洞大小",
+   "answers": {
+    "A. Small": "小",
+    "B. Large": "大"
+   }
+  },
+  "is the pothole on the drivable lane": {
+   "question": "坑洞是否在車道上",
+   "answers": {
+    "True": "是",
+    "False": "否"
+   }
+  }
+ }
+}
