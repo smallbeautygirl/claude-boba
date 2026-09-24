@@ -34,9 +34,14 @@ python3 .claude/skills/observ-event-lookup/scripts/observ_lookup.py <子指令> 
 
 **先判斷編號是哪一層。** Observ 的事件類型 id 多半是三到五位數（139、10650），
 事件紀錄 id 是七位數以上（1111954、9482466）。使用者說「event_type_id=1111954」時，
-那幾乎一定是事件紀錄 id，直接用 `record`；查不到再問。
+那幾乎一定是事件紀錄 id，直接用 `record`。
 
-**客戶的「結束」訊息帶的紀錄編號是合成的**（epoch 毫秒），Observ 查不到。
+**Observ 查不到不代表沒有這筆。** Observ 的查詢 API 有時不回某些紀錄（可能被刪除或篩掉），
+但 middleware 還留著完整內容。腳本會自動改從 middleware 補，每筆的 `data_source` 是
+`middleware` 時要跟使用者講明「Observ 查不到，以下取自 middleware」。
+只有腳本的 notes 說「Observ 與 middleware 都查不到」時，才請使用者確認編號，不要自己猜是打錯字。
+
+**客戶的「結束」訊息帶的紀錄編號是合成的**（epoch 毫秒，13 位數），Observ 查不到。
 那種情況要用訊息裡的 `tracking_id`（`tracking` 子指令）。
 
 ## 時間
@@ -64,8 +69,19 @@ python3 .claude/skills/observ-event-lookup/scripts/observ_lookup.py <子指令> 
 - `summary.md`：每筆一節，內容跟 stdout 的 JSON 一致
 
 你的回覆**把 `summary.md` 的內容貼出來**（使用者在 job 頁面下載檔案，但摘要要在對話裡就看得到），
-語言跟使用者一樣（通常是中文）。每筆至少講：發生時間（台北時間）、事件類型與客戶端名稱、
-攝影機、審核狀態、轉發結果與轉給誰、二次驗證有沒有過、VLM 回答（中文對照）、Observ 歷史頁連結。
+語言跟使用者一樣（通常是中文）。每筆依這個順序講：
+
+1. **Observ 事件頁連結**（`observ_url`）放在最前面，讓 PM 一鍵點過去。它是 `null` 時代表
+   Observ 查不到這筆，**不要自己組一個連結**，改講「Observ 查不到，以下取自 middleware」。
+2. 發生時間（台北時間）、事件類型與客戶端名稱、攝影機、審核狀態、VLM 回答（中文對照）。
+3. **middleware 的資訊**，這是 PM 最需要的細節，不要省略：
+   - 轉發結果與轉給誰（中華排前面）、在不在白名單上，以及腳本給的**原因**（`outcome_why`）
+   - 二次驗證有沒有過、用哪個模型、模型的原始回答
+   - middleware 收到的時間與「發生後幾秒」、收到管道、訊息狀態、走到哪一關
+   - 一次發生的起訖時間與訊息數（開始、進行中、結束）
+   - middleware 歷史事件頁連結（`middleware.ui_url`），並附註它是依事件類型篩選、
+     頁面預設只顯示最近 24 小時，較舊的事件要在頁面上調時間
+   `middleware` 是 `null` 時講「middleware 沒有這筆」。
 
 ## 結束碼與該說的話
 

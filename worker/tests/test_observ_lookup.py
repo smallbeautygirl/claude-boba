@@ -259,7 +259,7 @@ def test_record_is_enriched_from_both_sides(env, monkeypatch, tmp_path, capsys) 
     assert item["review_status_zh"] == "待確認"
     assert item["customer_event_name"] == "道路鋪面坑洞辨識"
     assert item["tracking_id"] == "6053-1111954"
-    assert item["forwarding"]["outcome_zh"] == "被二次驗證擋下"
+    assert item["forwarding"]["outcome_zh"] == "被模型擋下"
     assert item["forwarding"]["delivered_to"] == []
     assert item["forwarding"]["whitelisted_for"] == ["中華"]
     assert item["verification"]["passed_zh"] == "沒通過"
@@ -276,7 +276,7 @@ def test_record_is_enriched_from_both_sides(env, monkeypatch, tmp_path, capsys) 
     assert (tmp_path / "event_1111954_20260724-174703.jpg").read_bytes() == JPEG
     assert "summary.md" in data["files"]
     summary = (tmp_path / "summary.md").read_text()
-    assert "被二次驗證擋下" in summary and "中華" in summary and "陰天" in summary
+    assert "被模型擋下" in summary and "中華" in summary and "陰天" in summary
 
 
 def test_tracking_id_resolves_to_its_start_record(
@@ -477,3 +477,171 @@ def test_missing_env_is_exit_2_and_names_the_variables(monkeypatch, capsys) -> N
 def test_naive_times_are_taipei(env) -> None:
     assert ol.iso_utc(ol.parse_time("2026-07-24T08:00:00")) == "2026-07-24T00:00:00Z"
     assert ol.iso_utc(ol.parse_time("2026-07-24T00:00:00Z")) == "2026-07-24T00:00:00Z"
+
+
+# --- Observ 查不到、middleware 有（2026-09-24，1111955 的實例）---------------------
+
+# 1111955 的真實形狀：Observ 的查詢 API 回 0 筆，middleware 的 processed-event-logs 有完整一列。
+PLOG_1111955 = {
+    "id": 2,
+    "event_record_id": 1111955,
+    "tracking_id": "8053-1111955",
+    "status": "start",
+    "source": "observ_socket",
+    "task_id": 8053,
+    "event_type_id": 10717,
+    "event_name": "B-13-單向或雙向交通阻斷-CCTV-v17.1-flow-time60",
+    "event_description": "",
+    "event_record_status": "TBC",
+    "timestamp": "2026-07-24T09:47:11.571803Z",
+    # middleware 的 created_at 沒帶時區，是它主機的台北時間。
+    "created_at": "2026-07-24T17:47:14.215196",
+    "image_url": f"{OBSERV}/media-provider/file/{SID}/image/vlm/8053/entry/x.jpg",
+    "video_url": None,
+    "location_id": 81,
+    "camera_id": 405,
+    "timezone": "Asia/Taipei",
+    "vlms": [],
+    "detected_objects": [],
+    "coordinates_lat": 22.0,
+    "coordinates_lon": 120.0,
+    "note": "",
+    "gemma_answer": '[ "True" ]',
+    "ensemble_decision": None,
+    "verification_source": "gemma4",
+    "cctv_id": "CCTV-405",
+}
+
+
+def _plog_by_id(url):
+    rid = int(url.split("event_record_id=")[1].split("&")[0])
+    return _page([PLOG_1111955] if rid == 1111955 else [])
+
+
+def test_record_missing_in_observ_is_filled_from_middleware(
+    env, monkeypatch, tmp_path, capsys
+) -> None:
+    client = _client(
+        env,
+        observ={"/v2/events/record": _page([])},
+        middleware={
+            "/v2/processed-event-logs": _plog_by_id,
+            "/pm/event-flow": _page([]),
+            "/pm/annotations/vlm-labels/10717": {"keys": {}},
+        },
+    )
+    code, data, _ = _run(monkeypatch, client, ["record", "1111955"], tmp_path, capsys)
+    assert code == 0
+    (item,) = data["records"]
+    assert item["data_source"] == "middleware"
+    assert item["event_name"].startswith("B-13-單向或雙向交通阻斷")
+    assert item["timestamp_local"] == "2026-07-24 17:47:11 CST"
+    assert item["coordinates"] == {"latitude": 22.0, "longitude": 120.0}
+    # Observ 查不到的紀錄不給 Observ 連結：那一頁開起來是空的。
+    assert item["observ_url"] is None
+    assert item["verification"]["answer"] == '[ "True" ]'
+    # 截圖照樣抓（middleware 記的是 Observ 的 media-provider 網址）。
+    assert item["files"] == ["event_1111955_20260724-174711.jpg"]
+    note = " ".join(data["notes"])
+    assert "Observ 查不到事件紀錄 1111955" in note and "middleware" in note
+    # 7 位數的編號不該被猜成合成的「結束」訊息編號。
+    assert "合成" not in note
+    summary = (tmp_path / "summary.md").read_text()
+    assert "Observ 查不到這筆" in summary and "**Observ 事件頁**" not in summary
+    assert "eventLogModalId" not in summary
+
+
+def test_missing_in_both_says_so_without_guessing(
+    env, monkeypatch, tmp_path, capsys
+) -> None:
+    client = _client(
+        env,
+        observ={"/v2/events/record": _page([])},
+        middleware={"/v2/processed-event-logs": _page([])},
+    )
+    code, data, _ = _run(monkeypatch, client, ["record", "1234567"], tmp_path, capsys)
+    assert code == 0 and data["records"] == []
+    (note,) = data["notes"]
+    assert "Observ 與 middleware 都查不到事件紀錄 1234567" in note
+    assert "合成" not in note and "tracking_id" not in note
+
+
+def test_processed_log_ignores_rows_for_another_record(env) -> None:
+    """上游篩選沒生效、回了別筆時，不能把別筆當成這筆。"""
+    client = _client(env)  # processed-event-logs 永遠回 1111954 那列
+    assert ol.processed_log(client, 1111955) is None
+    assert ol.processed_log(client, 1111954)["tracking_id"] == "6053-1111954"
+
+
+# --- middleware 細節給 PM ---------------------------------------------------------
+
+
+def test_found_in_observ_gets_the_link_and_middleware_details(
+    env, monkeypatch, tmp_path, capsys
+) -> None:
+    occ = {
+        **FLOW_OCC,
+        "started_at": "2026-07-24T09:47:03.516859Z",
+        "ended_at": "2026-07-24T09:48:03.516859Z",
+        "duration_seconds": 60,
+        "statuses": ["start", "end"],
+        "message_count": 2,
+    }
+    plog = {**PLOG, "created_at": "2026-07-24T17:47:06.131634"}
+    client = _client(
+        env,
+        middleware={
+            "/pm/event-flow": _page([occ]),
+            "/v2/processed-event-logs": _page([plog]),
+        },
+    )
+    code, data, _ = _run(
+        monkeypatch, client, ["record", "1111954", "--no-images"], tmp_path, capsys
+    )
+    assert code == 0
+    (item,) = data["records"]
+    assert item["data_source"] == "observ"
+    assert item["observ_url"].endswith("eventLogModalId=1111954")
+    mw = item["middleware"]
+    assert mw["received_at_local"] == "2026-07-24 17:47:06 CST"
+    assert mw["delay_seconds"] == 2.6
+    assert mw["source_zh"] == "Observ WS 即時推送"
+    assert mw["message_status_zh"] == "開始"
+    assert mw["stage_zh"] == "已設定白名單"
+    assert mw["occurrence"]["tracking_id"] == "6053-1111954"
+    assert mw["occurrence"]["message_count"] == 2
+    assert mw["occurrence"]["ended_at_local"] == "2026-07-24 17:48:03 CST"
+    assert mw["ui_url"] == f"{MW}/middleware-ui/#/event-flow?event_type=10650"
+    summary = (tmp_path / "summary.md").read_text()
+    assert "**Observ 事件頁**" in summary
+    assert "收到時間：2026-07-24 17:47:06 CST（發生後 2.6 秒）" in summary
+    assert "共 2 則訊息（開始、結束）" in summary
+    assert "middleware 歷史事件頁" in summary
+
+
+def test_name_listing_keeps_rows_observ_does_not_return(
+    env, monkeypatch, tmp_path, capsys
+) -> None:
+    """客戶端名稱從 middleware 起查；Observ 沒回的那筆不能被默默丟掉。"""
+    client = _client(env, observ={"/v2/events/record": _page([])})
+    code, data, _ = _run(
+        monkeypatch,
+        client,
+        [
+            "name",
+            "坑洞",
+            "--start",
+            "2026-07-24T00:00:00+08:00",
+            "--end",
+            "2026-07-25T00:00:00+08:00",
+            "--no-images",
+        ],
+        tmp_path,
+        capsys,
+    )
+    assert code == 0
+    (item,) = data["records"]
+    assert item["event_record_id"] == 1111954
+    assert item["data_source"] == "middleware" and item["observ_url"] is None
+    assert item["forwarding"]["outcome_zh"] == "被模型擋下"
+    assert any("Observ 查不到" in n for n in data["notes"])

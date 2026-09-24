@@ -26,6 +26,12 @@ SKILL.md 因此規定：Claude 只能透過這支腳本查，不得自己組網�
 共同選項：--limit N（預設 20、上限 40）、--no-images、--out DIR（預設 .）、
           --vendor cht|iisi、--outcome <轉發結果>（type / name 專用；有帶就從 middleware 那邊起查）
 
+資料來源（2026-09-24 起）：先查 Observ；**Observ 查不到但 middleware 有的紀錄，改用 middleware
+的內容補出來**，並在 notes 與每筆的 `data_source` 講明。實例：1111955 在 Observ 的查詢 API 回 0 筆，
+middleware 卻有完整紀錄、截圖也抓得到。Observ 歷史頁連結只在 Observ 真的查得到時才給。
+每筆都附 `middleware` 區塊（收到時間、一次發生的起訖、轉發與二次驗證、middleware UI 連結），
+給 PM 看比較細的資訊。
+
 結束碼：0 正常；2 參數錯；3 Observ 登入過期（stdout 會有固定訊息，照抄給使用者）；
         4 上游錯誤（Observ / middleware 回了非 2xx 或連不上）。
 """
@@ -67,17 +73,51 @@ SYNTHETIC_ID_FLOOR = 10**12
 VENDOR_LABELS = {"cht": "中華", "iisi": "資拓"}
 # 中華排前面：PM 目前比較關心中華（2026-09-24）。
 VENDOR_ORDER = ("cht", "iisi")
+# 轉發結果、處理階段、收到管道的中文與原因，**照抄 middleware UI 的用詞**
+# （visionai_middleware/app/ui_static/js/flow/meta.js）。PM 平常看的是那個介面，
+# 兩邊講同一件事要用同一個字。
 OUTCOME_LABELS = {
-    "delivered": "已轉發",
-    "gate_blocked": "被二次驗證擋下",
-    "gps_filtered": "位置過濾掉",
-    "unconfigured": "未設定轉發",
-    "awaiting_confirmation": "等待確認",
-    "verification_error": "二次驗證出錯",
-    "bus_duplicate": "重複（同車）",
-    "not_whitelisted": "不在轉發名單",
+    "delivered": "已發送",
+    "gps_filtered": "被 GPS 過濾",
+    "unconfigured": "未設定白名單",
+    "awaiting_confirmation": "等待人工確認",
+    "gate_blocked": "被模型擋下",
+    "verification_error": "驗證無法完成",
+    "bus_duplicate": "重複事件",
+    "not_whitelisted": "白名單未勾選",
+}
+OUTCOME_WHY = {
+    "delivered": "通過所有關卡，並已依白名單發送給客戶。",
+    "gps_filtered": "事件座標落在設定的 GPS 排除範圍內，不視為一次真實事件。",
+    "unconfigured": "middleware 沒有這個事件型別的設定，因此無從判斷要發送給誰。",
+    "awaiting_confirmation": "這是需要人工確認的事件型別，尚未取得確認結果，因此暫不發送。",
+    "gate_blocked": "二次驗證模型看過畫面後認為不符合，依設定不發送。",
+    "verification_error": "模型沒能取得或判讀畫面（抓圖失敗、逾時等），依「失敗即不發送」處理。",
+    "bus_duplicate": "公車路線上另一台車在既有事件附近再次偵測到同一個狀況，屬於重複通報。",
+    "not_whitelisted": "通過所有關卡，但沒有任何一家客戶的白名單勾選這個事件型別。",
 }
 STATUS_LABELS = {"TBC": "待確認", "Confirmed": "已確認", "False Alarm": "誤報"}
+MESSAGE_STATUS_LABELS = {
+    "start": "開始",
+    "in progress": "進行中",
+    "end": "結束",
+    "skip": "略過",
+}
+SOURCE_LABELS = {
+    "observ_socket": "Observ WS 即時推送",
+    "observ_polling": "Observ 輪詢",
+    "repeat_socket": "Raw socket",
+}
+# 一筆事件在 middleware 裡走到的最遠一關，依序。
+STAGE_LABELS = {
+    "received": "接收",
+    "geo_passed": "通過 GPS",
+    "configured": "已設定白名單",
+    "verified": "通過驗證",
+    "delivered": "已發送",
+}
+# middleware 存的時間（created_at 等）沒帶時區，是 middleware 主機的本地時間。
+MIDDLEWARE_TZ = "Asia/Taipei"
 
 EXPIRED_MESSAGE = "Observ 登入已過期，請重新登入 boba 後用「接著問」重試。"
 
@@ -401,6 +441,16 @@ def flow_rows(
                 ):
                     row = dict(row)
                     row["_tracking_id"] = occ.get("tracking_id")
+                    row["_occurrence"] = {
+                        k: occ.get(k)
+                        for k in (
+                            "started_at",
+                            "ended_at",
+                            "duration_seconds",
+                            "statuses",
+                            "message_count",
+                        )
+                    }
                     rows[rid] = row
         if len(results) < FLOW_PAGE or page >= int(data.get("total_pages") or 1):
             break
@@ -421,7 +471,10 @@ def processed_log(client: Client, record_id: int) -> dict | None:
                 "你的 Observ 身分在 middleware 是 vendor 使用者，看不到二次驗證明細。"
             )
         return None
-    results = data.get("results") or []
+    # 只收同一個紀錄 id 的列 —— 不信任上游的篩選一定生效。
+    results = [
+        r for r in (data.get("results") or []) if r.get("event_record_id") == record_id
+    ]
     # 同一個紀錄 id 可能有 start / end 兩列，取 start（有二次驗證答案的那一列）。
     results.sort(key=lambda r: (r.get("status") != "start", r.get("id") or 0))
     return results[0] if results else None
@@ -494,11 +547,123 @@ def translated_type_ids(client: Client, name: str) -> list[int]:
     return ids
 
 
+def record_from_middleware(row: dict) -> dict:
+    """把 middleware 的一列（processed-event-logs 或 event-flow）轉成 Observ 紀錄的形狀。
+
+    Observ 查不到、middleware 有的時候用（1111955 就是這樣）。欄位名兩邊大多一樣；
+    座標 middleware 拆成 lat / lon 兩欄。審核狀態 middleware 記的是收到當下的值，
+    之後在 Observ 上改過的不一定跟上 —— describe 會把來源標出來。
+    """
+    rec = {
+        k: row.get(k)
+        for k in (
+            "event_record_id",
+            "task_id",
+            "event_type_id",
+            "event_name",
+            "event_description",
+            "event_record_status",
+            "timestamp",
+            "image_url",
+            "video_url",
+            "video_time",
+            "location_id",
+            "camera_id",
+            "timezone",
+            "vlms",
+            "detected_objects",
+            "note",
+        )
+    }
+    if not isinstance(row.get("coordinates"), dict):
+        lat, lon = row.get("coordinates_lat"), row.get("coordinates_lon")
+        rec["coordinates"] = (
+            {"latitude": lat, "longitude": lon} if lat is not None else None
+        )
+    else:
+        rec["coordinates"] = row["coordinates"]
+    rec["timezone"] = rec.get("timezone") or MIDDLEWARE_TZ
+    return rec
+
+
+def _parse_any(ts: str | None, naive_tz: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=_tz(naive_tz))
+
+
+def _local(dt: datetime | None, tz_name: str | None) -> str | None:
+    if dt is None:
+        return None
+    return dt.astimezone(_tz(tz_name)).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def middleware_block(
+    client: Client, record: dict, flow: dict | None, plog: dict | None
+) -> dict | None:
+    """給 PM 看的 middleware 細節。middleware 完全沒有這筆時回 None。"""
+    if not flow and not plog:
+        return None
+    flow, plog = flow or {}, plog or {}
+    tz = record.get("timezone") or MIDDLEWARE_TZ
+    happened = _parse_any(record.get("timestamp"), "UTC")
+    received = _parse_any(
+        plog.get("created_at") or flow.get("created_at"), MIDDLEWARE_TZ
+    )
+    delay = (
+        round((received - happened).total_seconds(), 1)
+        if happened and received
+        else None
+    )
+    occ = flow.get("_occurrence") or {}
+    source = plog.get("source") or flow.get("source")
+    status = plog.get("status") or flow.get("status")
+    stage = flow.get("stage")
+    type_id = record.get("event_type_id")
+    ui = client.env.middleware
+    return {
+        "received_at_local": _local(received, tz),
+        "delay_seconds": delay,
+        "source": source,
+        "source_zh": SOURCE_LABELS.get(source or "", source),
+        "message_status": status,
+        "message_status_zh": MESSAGE_STATUS_LABELS.get(status or "", status),
+        "stage": stage,
+        "stage_zh": STAGE_LABELS.get(stage or "", stage),
+        "occurrence": {
+            "tracking_id": flow.get("_tracking_id") or plog.get("tracking_id"),
+            "started_at_local": _local(_parse_any(occ.get("started_at"), "UTC"), tz),
+            "ended_at_local": _local(_parse_any(occ.get("ended_at"), "UTC"), tz),
+            "duration_seconds": occ.get("duration_seconds"),
+            "statuses": occ.get("statuses"),
+            "message_count": occ.get("message_count"),
+        }
+        if occ
+        else None,
+        "log_id": plog.get("id") or flow.get("id"),
+        # middleware UI 的歷史事件頁只吃 event_type（與 outcome）這種 hash 參數，
+        # 沒有單筆事件的深連結；頁面預設只顯示最近 24 小時。
+        "ui_url": (
+            f"{ui}/middleware-ui/#/event-flow?event_type={type_id}"
+            if ui and isinstance(type_id, int)
+            else None
+        ),
+    }
+
+
 # --- 組一筆的完整交代 ---------------------------------------------------------------
 
 
 def describe(
-    client: Client, record: dict, flow: dict | None, plog: dict | None
+    client: Client,
+    record: dict,
+    flow: dict | None,
+    plog: dict | None,
+    data_source: str = "observ",
 ) -> dict:
     rid = record.get("event_record_id")
     tz = record.get("timezone")
@@ -534,6 +699,8 @@ def describe(
     status = record.get("event_record_status")
     return {
         "event_record_id": rid,
+        # observ = Observ 查得到；middleware = Observ 查不到，內容取自 middleware。
+        "data_source": data_source,
         "tracking_id": (flow or {}).get("_tracking_id")
         or (plog or {}).get("tracking_id"),
         "event_type_id": type_id,
@@ -556,6 +723,7 @@ def describe(
         "forwarding": {
             "outcome": outcome,
             "outcome_zh": OUTCOME_LABELS.get(outcome or "", outcome),
+            "outcome_why": OUTCOME_WHY.get(outcome or ""),
             "delivered_to": delivered_to,
             "whitelisted_for": whitelisted_for,
             "annotation": (flow or {}).get("annotation"),
@@ -563,7 +731,13 @@ def describe(
         if flow
         else None,
         "verification": verification,
-        "observ_url": f"{client.env.base_domain}/observ/history?eventLogModalId={rid}",
+        "middleware": middleware_block(client, record, flow, plog),
+        # 只在 Observ 真的查得到時給：查不到的紀錄，那一頁開起來是空的。
+        "observ_url": (
+            f"{client.env.base_domain}/observ/history?eventLogModalId={rid}"
+            if data_source == "observ"
+            else None
+        ),
         "video_url": record.get("video_url") or None,
         "_image_urls": _image_urls(record),
     }
@@ -622,6 +796,13 @@ def write_summary(
         vf = it.get("verification") or {}
         lines.append(f"## 事件紀錄 {it['event_record_id']}")
         lines.append("")
+        if it.get("observ_url"):
+            lines.append(f"- **Observ 事件頁**：{it['observ_url']}")
+        if it.get("data_source") == "middleware":
+            lines.append(
+                "- ⚠️ **Observ 查不到這筆**，以下內容取自 middleware"
+                "（審核狀態是 middleware 收到當下的值）。"
+            )
         lines.append(
             f"- 發生時間：{it.get('timestamp_local') or it.get('timestamp_utc')}"
         )
@@ -648,6 +829,8 @@ def write_summary(
                     else ""
                 )
             )
+            if fw.get("outcome_why"):
+                lines.append(f"  - 原因：{fw['outcome_why']}")
         else:
             lines.append("- 轉發結果：（middleware 沒有這筆，或這次查不到）")
         if vf:
@@ -666,7 +849,40 @@ def write_summary(
             lines.append("- 截圖：" + "、".join(f"`{f}`" for f in it["files"]))
         if it.get("video_url"):
             lines.append("- 影片片段：有（沒下載，Observ 歷史頁可看）")
-        lines.append(f"- Observ 歷史頁：{it['observ_url']}")
+        mw = it.get("middleware")
+        if mw:
+            lines.append("- middleware：")
+            if mw.get("received_at_local"):
+                delay = mw.get("delay_seconds")
+                lines.append(
+                    f"  - 收到時間：{mw['received_at_local']}"
+                    + (f"（發生後 {delay:g} 秒）" if delay is not None else "")
+                )
+            if mw.get("source_zh"):
+                lines.append(f"  - 收到管道：{mw['source_zh']}")
+            if mw.get("message_status_zh"):
+                lines.append(f"  - 訊息狀態：{mw['message_status_zh']}")
+            if mw.get("stage_zh"):
+                lines.append(f"  - 走到哪一關：{mw['stage_zh']}")
+            occ = mw.get("occurrence") or {}
+            if occ:
+                span = occ.get("started_at_local") or "—"
+                if occ.get("ended_at_local") and occ.get("ended_at_local") != span:
+                    span += f" ～ {occ['ended_at_local']}"
+                statuses = "、".join(
+                    MESSAGE_STATUS_LABELS.get(x, x) for x in (occ.get("statuses") or [])
+                )
+                lines.append(
+                    f"  - 一次發生：{span}；共 {occ.get('message_count') or '—'} 則訊息"
+                    + (f"（{statuses}）" if statuses else "")
+                )
+            if mw.get("ui_url"):
+                lines.append(
+                    f"  - middleware 歷史事件頁：{mw['ui_url']}"
+                    "（依事件類型篩選，頁面預設只顯示最近 24 小時）"
+                )
+        else:
+            lines.append("- middleware：沒有這筆（或這次查不到）")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -724,7 +940,7 @@ def assemble(
         plog = (
             processed_log(client, rid) if (with_plog and isinstance(rid, int)) else None
         )
-        item = describe(client, rec, flow, plog)
+        item = describe(client, rec, flow, plog, rec.pop("_source", "observ"))
         item["files"] = save_images(client, item, out_dir) if save else []
         if not save:
             item.pop("_image_urls", None)
@@ -755,6 +971,58 @@ def _flow_for_record(client: Client, rec: dict) -> dict | None:
         if row.get("event_record_id") == rec.get("event_record_id"):
             return row
     return None
+
+
+def _ids(records: list[dict]) -> set:
+    return {r.get("event_record_id") for r in records}
+
+
+def fallback_from_middleware(client: Client, missing: list[int]) -> list[dict]:
+    """Observ 查不到的紀錄 id，改從 middleware 補。每一種下場都寫進 notes。"""
+    out: list[dict] = []
+    for rid in missing:
+        if rid >= SYNTHETIC_ID_FLOOR:
+            client.notes.append(
+                f"{rid} 是 middleware 合成的「結束」訊息編號（13 位數），Observ 沒有這筆。"
+                "請改用同一則訊息裡的 tracking_id 查。"
+            )
+            continue
+        plog = processed_log(client, rid)
+        if plog is None:
+            client.notes.append(
+                f"Observ 與 middleware 都查不到事件紀錄 {rid}，請確認編號。"
+                if client.middleware_ok
+                else f"Observ 查不到事件紀錄 {rid}，middleware 這次連不上、沒辦法補查。"
+            )
+            continue
+        rec = record_from_middleware(plog)
+        rec["_source"] = "middleware"
+        out.append(rec)
+        client.notes.append(
+            f"Observ 查不到事件紀錄 {rid}（可能已被刪除或被 Observ 篩掉），"
+            "內容改取自 middleware，所以不附 Observ 事件頁連結。"
+        )
+    return out
+
+
+def fallback_from_flow(
+    client: Client, rows: list[dict], records: list[dict]
+) -> list[dict]:
+    """列表查詢（name / type 帶篩選）裡，middleware 有、Observ 沒回的那幾筆。"""
+    have = _ids(records)
+    extra: list[dict] = []
+    for row in rows:
+        if row.get("event_record_id") in have:
+            continue
+        rec = record_from_middleware(row)
+        rec["_source"] = "middleware"
+        extra.append(rec)
+    if extra:
+        client.notes.append(
+            f"有 {len(extra)} 筆 Observ 查不到（可能已被刪除或被 Observ 篩掉），"
+            "內容改取自 middleware，那幾筆不附 Observ 事件頁連結。"
+        )
+    return extra
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -826,11 +1094,10 @@ def main(argv: list[str] | None = None) -> int:
                 client.notes.append(f"一次最多 {limit} 筆，只查前 {limit} 筆。")
                 ids = ids[:limit]
             records = observ_records_by_ids(client, ids)
-            found = {r.get("event_record_id") for r in records}
-            for missing in [i for i in ids if i not in found]:
-                client.notes.append(
-                    f"Observ 沒有事件紀錄 {missing}。如果它來自客戶的「結束」訊息，那個編號是合成的，請改用 tracking_id 查。"
-                )
+            records += fallback_from_middleware(
+                client, [i for i in ids if i not in _ids(records)]
+            )
+            records.sort(key=lambda r: ids.index(r["event_record_id"]))
             items = assemble(
                 client,
                 records,
@@ -864,6 +1131,7 @@ def main(argv: list[str] | None = None) -> int:
                 records = observ_records_by_ids(
                     client, [r["event_record_id"] for r in rows[:limit]]
                 )
+                records += fallback_from_flow(client, rows[:limit], records)
             else:
                 records, total = observ_records_by_type(
                     client, args.type_ids, start, end, limit
@@ -912,6 +1180,7 @@ def main(argv: list[str] | None = None) -> int:
             records = observ_records_by_ids(
                 client, [r["event_record_id"] for r in rows[:limit]]
             )
+            records += fallback_from_flow(client, rows[:limit], records)
             records.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
             if not client.middleware_ok:
                 client.notes.append(
