@@ -5,7 +5,7 @@
 // 債務不設到期日，但顯示欠了幾天：比自動勾銷更有社交壓力，也更好笑。
 
 import { useCallback, useEffect, useState } from "react";
-import { api, type DebtRow, type Ledger as LedgerData } from "../api";
+import { api, type DebtRow, type Ledger as LedgerData, type SmallChangeRow } from "../api";
 import { usd } from "../money";
 
 export function Ledger() {
@@ -33,11 +33,19 @@ export function Ledger() {
 
   const nothing =
     data.i_owe.length === 0 && data.owed_to_me.length === 0 && data.settled.length === 0;
+  const small = data.small_change ?? [];
 
   return (
     <div className="card">
       <h1>帳本</h1>
-      {nothing && <p className="lede">乾乾淨淨，不欠任何人 ✨</p>}
+      {nothing && (
+        <p className="lede">
+          乾乾淨淨，不欠任何人 ✨
+          {/* 有小額往來時要接一句：不然「沒人來借過」跟「來借過六次但都不到一杯」
+              長得一模一樣，債主會以為記帳壞了（2026-09-23 正式站第一天）。 */}
+          {small.length > 0 && "（有幾筆不到一杯的，在下面）"}
+        </p>
+      )}
 
       {data.i_owe.length > 0 && (
         <>
@@ -65,7 +73,33 @@ export function Ledger() {
           ))}
         </>
       )}
+
+      {small.length > 0 && <SmallChange rows={small} />}
     </div>
+  );
+}
+
+/* 不到一杯的往來。**沒有按鈕、不會變成債、不累計成一杯** —— 級距表最底下那格
+   「< US$1 不用還」是刻意的（SPEC §4.7），這裡只是把「人情而已」讓兩邊看得到。
+   放在最後面、字比債務小：它是脈絡，不是要處理的事。 */
+function SmallChange({ rows }: { rows: SmallChangeRow[] }) {
+  return (
+    <>
+      <h2>不到一杯的</h2>
+      <p className="hint">單筆不到 US$1 不掛債，人情而已。這裡只是讓你知道誰來借過。</p>
+      {rows.map((r) => (
+        <div className="debt small-change" key={`${r.direction}-${r.counterpart}`}>
+          <div className="muted">
+            {r.direction === "owed"
+              ? `${r.counterpart} 用你的額度跑了 ${r.jobs} 次`
+              : `你用 ${r.counterpart} 的額度跑了 ${r.jobs} 次`}
+            {" · 合計 "}
+            {usd(r.total_usd)}
+            {r.last_at && ` · 最近一次 ${new Date(r.last_at).toLocaleDateString("zh-TW")}`}
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 

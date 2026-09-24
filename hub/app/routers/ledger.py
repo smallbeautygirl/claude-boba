@@ -6,16 +6,16 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .. import notify
 from ..auth import require_user
 from ..db import get_session
-from ..enums import DebtStatus
-from ..models import Debt, User
-from ..pricing import LABELS
+from ..enums import DebtStatus, JobStatus
+from ..models import Debt, Job, LendingSetting, User
+from ..pricing import LABELS, MIN_DEBT_USD
 
 router = APIRouter(prefix="/api/ledger", tags=["ledger"])
 
@@ -56,7 +56,67 @@ async def ledger(
             i for i in items if i["direction"] == "owed" and i["status"] != "settled"
         ],
         "settled": [i for i in items if i["status"] == "settled"],
+        "small_change": await _small_change(user.id, session),
     }
+
+
+async def _small_change(me: uuid.UUID, session: AsyncSession) -> list[dict]:
+    """不到一杯的往來，按人加總。
+
+    級距表最底下那格「< US$1 不用還」是刻意的（SPEC §4.7），所以這些 job 沒有債。
+    但 2026-09-23 正式站第一天：同事借了六次、合計 US$0.62，債主的帳本寫著
+    「乾乾淨淨，不欠任何人」—— 對的時候跟壞掉的時候長得一模一樣，債主以為
+    記帳沒在動。這一段只是把「人情而已」讓兩邊都看得到，**不改規則**：
+    這裡沒有按鈕、不會變成債，也不累計成一杯。
+
+    只算成功、且不是自己跑自己的 job（跟掛債同一個入口的兩條規則）；
+    金額門檻用 pricing.MIN_DEBT_USD，級距表改了這裡跟著動。
+    """
+    cost = Job.total_cost_usd
+    stmt = (
+        select(
+            Job.borrower_id,
+            LendingSetting.owner_user_id,
+            func.count(Job.id),
+            func.sum(cost),
+            func.max(Job.finished_at),
+        )
+        .join(LendingSetting, LendingSetting.id == Job.lending_id)
+        .where(
+            Job.status.in_([st for st in JobStatus if st.creates_debt]),
+            cost.is_not(None),
+            cost < MIN_DEBT_USD,
+            Job.borrower_id != LendingSetting.owner_user_id,
+            or_(Job.borrower_id == me, LendingSetting.owner_user_id == me),
+        )
+        .group_by(Job.borrower_id, LendingSetting.owner_user_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return []
+    others = {b if b != me else o for b, o, *_ in rows}
+    names = dict(
+        (
+            await session.execute(
+                select(User.id, User.display_name).where(User.id.in_(others))
+            )
+        ).all()
+    )
+    out = []
+    for borrower_id, owner_id, n, total, last in rows:
+        direction = "owe" if borrower_id == me else "owed"
+        other = owner_id if direction == "owe" else borrower_id
+        out.append(
+            {
+                "direction": direction,
+                "counterpart": names.get(other, "？"),
+                "jobs": int(n),
+                "total_usd": str(total),
+                "last_at": last.isoformat() if last else None,
+            }
+        )
+    out.sort(key=lambda r: (r["direction"], -r["jobs"]))
+    return out
 
 
 @router.post("/{debt_id}/settle")

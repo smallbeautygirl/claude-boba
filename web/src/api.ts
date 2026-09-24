@@ -343,10 +343,21 @@ export interface CommandCatalog {
   groups: CommandGroup[];
 }
 
+/** 不到一杯的往來，按人加總。**沒有債、沒有按鈕**（SPEC §4.7 最底那格是刻意的），
+    只是讓「乾乾淨淨」跟「他借過六次但每次都不到一杯」長得不一樣。 */
+export interface SmallChangeRow {
+  direction: "owe" | "owed";
+  counterpart: string;
+  jobs: number;
+  total_usd: string;
+  last_at: string | null;
+}
+
 export interface Ledger {
   i_owe: DebtRow[];
   owed_to_me: DebtRow[];
   settled: DebtRow[];
+  small_change: SmallChangeRow[];
 }
 
 // token 存在 localStorage。Hub 每次都會跟 Observ 驗證（結果快取 60 秒），
