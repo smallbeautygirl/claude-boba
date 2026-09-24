@@ -22,7 +22,12 @@ from app.routers.admin import QUEUED_STUCK_SECONDS, RUNNING_STUCK_SECONDS
 from fastapi.testclient import TestClient
 
 ADMIN = "boss@example.com"
-ENDPOINTS = ["/api/admin/health", "/api/admin/stats", "/api/admin/stuck-jobs"]
+ENDPOINTS = [
+    "/api/admin/health",
+    "/api/admin/stats",
+    "/api/admin/stuck-jobs",
+    "/api/admin/lending-accounts",
+]
 
 
 def _client(email: str) -> TestClient:
@@ -99,6 +104,38 @@ def test_stuck_jobs_carry_no_job_content() -> None:
     assert isinstance(rows, list)
     for row in rows:
         assert set(row) == {"id", "status", "stuck_seconds", "worker"}
+
+
+def test_lending_accounts_carry_identity_and_status_only() -> None:
+    """管理者看出借帳號是維運視角（CONTEXT.md）：身分、狀態、批准者、最近用量筆數。
+
+    **沒有用量百分比**（那是代跑者自己的事，燈號跟委託者同一級）、沒有 job 內容、
+    不指名委託者（紅線 1）。欄位集合釘死：多回一個欄位就是侵蝕這條線。
+    """
+    rows = _client(ADMIN).get("/api/admin/lending-accounts").json()
+    assert isinstance(rows, list)
+    allowed = {
+        "account_id",
+        "name",
+        "lender",
+        "status",
+        "claude_email",
+        "claude_plan",
+        "quota",
+        "last_assigned_at",
+        "credits_required_models",
+        "approver_note",
+        "days",
+        "jobs",
+        "cost_usd",
+    }
+    for row in rows:
+        assert set(row) == allowed
+        assert row["status"] in {"needs_reauth", "usable", "retired"}
+        assert row["quota"] in {"green", "yellow", "red", "unknown"}
+    # 等重新授權的在最前面，已停用的在最後。
+    order = [{"needs_reauth": 0, "usable": 1, "retired": 2}[r["status"]] for r in rows]
+    assert order == sorted(order)
 
 
 def test_health_separates_measured_from_unknown() -> None:

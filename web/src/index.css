@@ -590,3 +590,13 @@ button.small.danger:hover:not(:disabled) { background: var(--bad-ink); }
 .board li:first-child .rank { color: var(--ink); }
 .board .who { font-weight: 600; }
 .board .stat { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+
+/* 管理頁的出借帳號表。寬表可以橫捲，頁面本身不捲；已停用的列淡掉。 */
+.table-scroll { overflow-x: auto; margin-bottom: 10px; }
+table.accounts { border-collapse: collapse; font-size: 13.5px; min-width: 720px; width: 100%; }
+table.accounts th { text-align: left; font-weight: 600; color: var(--muted); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.accounts td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.accounts tr:last-child td { border-bottom: 0; }
+table.accounts tr.retired td { opacity: 0.55; }
+table.accounts tr.needs_reauth td:first-child { font-weight: 600; }
+.small-note { font-size: 12px; margin-top: 2px; }

@@ -282,6 +282,24 @@ export interface AdminStats {
   twd_note: string;
 }
 
+/** 管理頁的出借帳號清單：維運視角（CONTEXT.md「出借帳號」）。身分與狀態，
+    **用量只有燈號**、沒有百分比；沒有 job 內容、不指名委託者。 */
+export interface AdminLendingAccount {
+  account_id: string;
+  name: string;
+  lender: string;
+  status: "needs_reauth" | "usable" | "retired";
+  claude_email: string | null;
+  claude_plan: string | null;
+  quota: "green" | "yellow" | "red" | "unknown";
+  last_assigned_at: string | null;
+  credits_required_models: string[];
+  approver_note: string | null;
+  days: number;
+  jobs: number;
+  cost_usd: string;
+}
+
 export interface StuckJob {
   id: string;
   status: string;
@@ -711,6 +729,10 @@ export const api = {
     fetch(`${HUB}/api/admin/stats`, { headers: authed() }).then(json<AdminStats>),
   adminStuckJobs: () =>
     fetch(`${HUB}/api/admin/stuck-jobs`, { headers: authed() }).then(json<StuckJob[]>),
+  adminLendingAccounts: () =>
+    fetch(`${HUB}/api/admin/lending-accounts`, { headers: authed() }).then(
+      json<AdminLendingAccount[]>,
+    ),
 
   ledger: () => fetch(`${HUB}/api/ledger`, { headers: authed() }).then(json<Ledger>),
   leaderboard: () =>

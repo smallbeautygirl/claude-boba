@@ -29,7 +29,7 @@ from ..db import get_session
 from ..enums import JobStatus
 from ..fxrate import usd_to_twd
 from ..models import Job, LendingAccount, LendingSetting, User, WorkerHost
-from .workers import host_online
+from .workers import _fresh_utilization, _light, host_online
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -348,6 +348,80 @@ async def approved_accounts(
         }
         for aid, name, note, lender, n, cost in rows
     ]
+
+
+@router.get("/lending-accounts")
+async def lending_accounts(
+    days: int = 30,
+    _: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """站台上所有出借帳號，維運視角（2026-09-24，CONTEXT.md「出借帳號」）。
+
+    回答三件事，照這個順序：哪個壞了（等重新授權）、誰放的（批准者，ADR-0001）、
+    有幾個（代跑者、方案、最近有沒有被派到）。
+
+    **給的是身分與狀態，不給用量百分比**：燈號跟委託者在下拉看到的同一級。
+    百分比是代跑者自己的事，管理者拿到它沒有維運用途（web-spec §3 的理由同樣適用）。
+    **不含 job 內容、不指名委託者**（紅線 1）。已停用的（按過「不再出借」、
+    紀錄留著因為跑過 job）也列，排最後 —— 查「上個月那筆是哪個帳號跑的」時要在。
+    """
+    since = datetime.now(UTC) - timedelta(days=days)
+    rows = (
+        await session.execute(
+            select(
+                LendingAccount,
+                User.display_name,
+                func.count(Job.id),
+                func.coalesce(func.sum(Job.total_cost_usd), 0),
+            )
+            .join(LendingSetting, LendingAccount.lending_id == LendingSetting.id)
+            .join(User, LendingSetting.owner_user_id == User.id)
+            .join(
+                Job,
+                (Job.account_id == LendingAccount.id) & (Job.created_at >= since),
+                isouter=True,
+            )
+            .group_by(LendingAccount.id, User.display_name)
+        )
+    ).all()
+
+    def status_of(a: LendingAccount) -> str:
+        if a.needs_reauth:
+            return "needs_reauth"
+        if a.usable:
+            return "usable"
+        return "retired"
+
+    order = {"needs_reauth": 0, "usable": 1, "retired": 2}
+    out = [
+        {
+            "account_id": str(a.id),
+            "name": a.name,
+            "lender": lender,
+            "status": status_of(a),
+            "claude_email": a.claude_email,
+            "claude_plan": a.claude_plan,
+            "quota": _light(_fresh_utilization(a)) if a.usable else "unknown",
+            "last_assigned_at": (
+                a.last_assigned_at.isoformat() if a.last_assigned_at else None
+            ),
+            "credits_required_models": list(a.credits_required_models or []),
+            "approver_note": a.approver_note,
+            "days": days,
+            "jobs": int(n),
+            "cost_usd": str(cost),
+        }
+        for a, lender, n, cost in rows
+    ]
+    out.sort(
+        key=lambda r: (
+            order[r["status"]],
+            r["lender"],
+            r["last_assigned_at"] or "",
+        )
+    )
+    return out
 
 
 @router.get("/stats")

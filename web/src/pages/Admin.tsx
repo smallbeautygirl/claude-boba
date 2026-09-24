@@ -9,7 +9,13 @@
 // 比沒有那一項危險，因為它會被相信。
 
 import { useEffect, useState } from "react";
-import { api, type AdminHealth, type AdminStats, type StuckJob } from "../api";
+import {
+  api,
+  type AdminHealth,
+  type AdminLendingAccount,
+  type AdminStats,
+  type StuckJob,
+} from "../api";
 import { useAuth } from "../auth";
 import { usd } from "../money";
 
@@ -23,6 +29,7 @@ export function Admin() {
   const [health, setHealth] = useState<AdminHealth | null>(null);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [stuck, setStuck] = useState<StuckJob[]>([]);
+  const [accounts, setAccounts] = useState<AdminLendingAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const admin = me?.is_admin ?? false;
@@ -32,13 +39,19 @@ export function Admin() {
     // 空的管理頁殼了。**這不是權限控制**（真正的防線是後端那三個 403），
     // 只是不要讓走錯路的人看到一頁半成品。
     if (!admin) return;
+    api
+      .adminLendingAccounts()
+      .then(setAccounts)
+      .catch(() => setAccounts([]));
     Promise.all([api.adminHealth(), api.adminStats(), api.adminStuckJobs()])
       .then(([h, s, j]) => {
         setHealth(h);
         setStats(s);
         setStuck(j);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "讀不到系統狀態"));
+      .catch((e) =>
+        setError(e instanceof Error ? e.message : "讀不到系統狀態"),
+      );
   }, [admin]);
 
   if (!admin) {
@@ -142,8 +155,8 @@ export function Admin() {
             這頁之外的地方不會出現那個連結，原因就是這個。
           </p>
           <p className="hint">
-            一個 job 一個資料夾：<code>jobs/&lt;job id&gt;/</code>，
-            job id 就在該 job 詳情頁的網址列上。
+            一個 job 一個資料夾：<code>jobs/&lt;job id&gt;/</code>， job id
+            就在該 job 詳情頁的網址列上。
           </p>
           {/* 「帳密跟 vvn 拿」以前在這裡，2026-09-23 搬到上面那顆〔開啟 ↗〕
               旁邊了 —— 它是操作性的答案，要貼著觸發它的那個動作。
@@ -192,8 +205,9 @@ export function Admin() {
         <p className="hint">
           {stats.twd ? (
             <>
-              台幣是<strong>粗估</strong>：{stats.twd.source}，{stats.twd.quoted_on}{" "}
-              的 {stats.twd.rate}。帳單是美金，<strong>對帳以美金為準</strong>。
+              台幣是<strong>粗估</strong>：{stats.twd.source}，
+              {stats.twd.quoted_on} 的 {stats.twd.rate}。帳單是美金，
+              <strong>對帳以美金為準</strong>。
               {stats.twd_note && `（${stats.twd_note}）`}
             </>
           ) : (
@@ -205,6 +219,70 @@ export function Admin() {
         這裡只有總數。<strong>誰用得兇、誰欠誰，這頁查不到</strong>，那是帳本上
         當事人之間的事。
       </p>
+
+      {/* 出借帳號，維運視角（2026-09-24，CONTEXT.md）。排序：等重新授權的在最前面
+          （這一頁的用途是看什麼壞了），已停用的在最後、字淡掉。
+          用量只有燈號 —— 百分比是代跑者自己的事。沒有 job 內容、不指名委託者。 */}
+      <h2>出借帳號</h2>
+      {accounts === null ? (
+        <p className="hint">載入中…</p>
+      ) : accounts.length === 0 ? (
+        <p className="hint">還沒有人授權任何帳號。</p>
+      ) : (
+        <>
+          <div className="table-scroll">
+            <table className="accounts">
+              <thead>
+                <tr>
+                  <th>狀態</th>
+                  <th>代跑者</th>
+                  <th>帳號</th>
+                  <th>Claude 帳號</th>
+                  <th>額度</th>
+                  <th>上次派到</th>
+                  <th>近 {accounts[0].days} 天</th>
+                  <th>批准者</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.map((a) => (
+                  <tr key={a.account_id} className={a.status}>
+                    <td>{STATUS[a.status]}</td>
+                    <td>{a.lender}</td>
+                    <td>
+                      {a.name}
+                      {a.credits_required_models.length > 0 && (
+                        <div className="muted small-note">
+                          {a.credits_required_models.join("、")} 要買 credits
+                        </div>
+                      )}
+                    </td>
+                    <td className="muted">
+                      {a.claude_email ?? "—"}
+                      {a.claude_plan && ` · ${a.claude_plan}`}
+                    </td>
+                    <td>{LIGHT[a.quota]}</td>
+                    <td className="muted">
+                      {a.last_assigned_at
+                        ? ago(a.last_assigned_at)
+                        : "還沒被派到過"}
+                    </td>
+                    <td className="muted">
+                      {a.jobs} 個 job · {usd(a.cost_usd)}
+                    </td>
+                    <td className="muted">{a.approver_note ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="hint">
+            身分與狀態而已：用量只有燈號，沒有百分比；哪個 job
+            是誰委託的，這裡沒有。 要停某人的帳號，去找那個人 ——
+            撤銷是代跑者自己的事。
+          </p>
+        </>
+      )}
 
       <h2>卡住的 job</h2>
       {stuck.length === 0 ? (
@@ -231,7 +309,26 @@ export function Admin() {
           <p className="hint">只有狀態與時間 —— job 的內容不會出現在這裡。</p>
         </>
       )}
-
     </div>
   );
+}
+
+const STATUS: Record<AdminLendingAccount["status"], string> = {
+  needs_reauth: "⚠️ 等重新授權",
+  usable: "🟢 可用",
+  retired: "已停用",
+};
+
+const LIGHT: Record<AdminLendingAccount["quota"], string> = {
+  green: "🟢",
+  yellow: "🟡",
+  red: "🔴",
+  unknown: "—",
+};
+
+function ago(iso: string): string {
+  const sec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 3600) return `${Math.round(sec / 60)} 分鐘前`;
+  if (sec < 86400) return `${Math.round(sec / 3600)} 小時前`;
+  return `${Math.round(sec / 86400)} 天前`;
 }
